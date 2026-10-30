@@ -2048,7 +2048,8 @@ class OperationalScriptTests(unittest.TestCase):
             if not path or not Path(path).exists():
                 continue
             probe = subprocess.run([path, "-c", "uname -s"],
-                                   capture_output=True, text=True, encoding="utf-8", check=False)
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", check=False)
             if probe.returncode == 0 and (sys.platform != "win32" or "linux" not in probe.stdout.casefold()):
                 shells.append(path)
         self.assertTrue(shells)
