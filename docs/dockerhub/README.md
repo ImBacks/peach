@@ -49,8 +49,8 @@ services:
     stop_grace_period: 75s
     environment:
       PEACH_IMAGE_TAG: ${PEACH_VERSION:-edge}
-      PEACH_UID: "${PEACH_UID:-1000}"
-      PEACH_GID: "${PEACH_GID:-1000}"
+      PEACH_UID: "${PEACH_UID-1000}"
+      PEACH_GID: "${PEACH_GID-1000}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     ports:

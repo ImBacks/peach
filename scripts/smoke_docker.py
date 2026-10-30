@@ -255,6 +255,8 @@ def main() -> None:
         assert code != 0 and "不可写" in output, output
 
         for values in (
+            ["-e", "PEACH_UID="],
+            ["-e", "PEACH_GID="],
             ["-e", "PEACH_UID=0"],
             ["-e", "PEACH_GID=-1"],
             ["-e", "PEACH_UID=abc"],
