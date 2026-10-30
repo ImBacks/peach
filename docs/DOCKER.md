@@ -10,11 +10,28 @@ NAS 的 SMB 共享也可作为[SMB 媒体来源](SMB.md)直接连接，按账号
 
 `/data` 保存配置、SQLite 数据库、凭据和图片缓存，必须使用数据卷保存，重建容器时保留该卷。媒体目录单独挂到 `/media`；默认只读，扫描和播放不需要媒体写权限。整理、移动与删除需要使用者明确提供可写挂载。
 
-CloudDrive2 与 Peach 分别运行。NAS 已有 CloudDrive2 时直接复用；全新机器按 [CloudDrive2 官方 Docker 指南](https://www.clouddrive2.com/docker.html) 安装并绑定网盘。让 Peach 容器也能读取 CloudDrive2 后续挂上的网盘目录，需要 Linux 宿主机支持 FUSE，并将 CloudDrive2 的挂载目录配置为可共享挂载变化；Compose 中的 `rslave` 用于让这些变化进入 Peach 容器。此机制不适用于 Docker Desktop，详见 [Docker 挂载传播说明](https://docs.docker.com/engine/storage/bind-mounts/#configure-bind-propagation)。Peach 容器不需要 FUSE 或特权模式。目录权限必须允许容器用户 UID 1000 读取。
+CloudDrive2 与 Peach 分别运行。NAS 已有 CloudDrive2 时直接复用；全新机器按 [CloudDrive2 官方 Docker 指南](https://www.clouddrive2.com/docker.html) 安装并绑定网盘。让 Peach 容器也能读取 CloudDrive2 后续挂上的网盘目录，需要 Linux 宿主机支持 FUSE，并将 CloudDrive2 的挂载目录配置为可共享挂载变化；Compose 中的 `rslave` 用于让这些变化进入 Peach 容器。此机制不适用于 Docker Desktop，详见 [Docker 挂载传播说明](https://docs.docker.com/engine/storage/bind-mounts/#configure-bind-propagation)。Peach 容器不需要 FUSE 或特权模式。目录权限必须允许实际运行 Peach 的 UID/GID 读取；默认是 `1000:1000`。
 
 需要云下载或推送发现时，Peach 配置中的 CloudDrive2 API 地址使用同一容器网络的服务名或可达的宿主机地址；容器里的 `127.0.0.1` 只指向 Peach 自己。
 
-仓库根的 `compose.yaml` 使用 `PEACH_MEDIA_ROOT` 指定宿主机已有媒体根；容器中固定为 `/media`。先完成 CloudDrive2 挂载，再启动 Peach。命名卷 `peach-data` 保存 `/data`，不要执行删除该卷的操作。需要绑定现有数据目录时，先做完整备份并确保 UID 1000 可写；不要让另一台 Peach 同时写这份 Peach 数据库。
+仓库根的 `compose.yaml` 使用 `PEACH_MEDIA_ROOT` 指定宿主机已有媒体根；容器中固定为 `/media`。先完成 CloudDrive2 挂载，再启动 Peach。命名卷 `peach-data` 保存 `/data`，不要执行删除该卷的操作。需要绑定现有数据目录时，先做完整备份并确保配置的 UID/GID 可写；不要让另一台 Peach 同时写这份 Peach 数据库。
+
+### 运行 UID/GID
+
+镜像默认以非 root 的 `1000:1000` 运行。NAS 目录由其他固定 UID/GID 持有时，在 Compose 的 `.env` 或 NAS 面板中设置：
+
+```dotenv
+PEACH_UID=1026
+PEACH_GID=1027
+```
+
+这两个值必须是十进制数字，不能是用户名或组名。`PEACH_UID`/`PEACH_GID` 优先；未设置时可使用 `UID`/`GID`，两者同时出现且数值不同会拒绝启动。`0`、负数和超出 Linux ID 范围的值也会在 Peach 初始化前失败。
+
+启动入口只在准备阶段使用 root。它会在必要时把 `/data` 及其现有内容改为目标所有者，然后把补充组、GID 和 UID 固定下来，再以目标身份启动 Peach 及其子进程。`/media` 不参与递归改所有者；媒体权限应通过宿主机所有者、ACL 或 `group_add` 提供。
+
+绑定已有的 `/data` 宿主机目录前先停止 Peach 并完整备份。所有者迁移会修改宿主机文件的所有者；不愿接受时，应预先让该目录和内容对目标 UID/GID 可写。环境变量要写在持久的 `.env` 或 NAS 配置中，否则容器重建后会回到 `1000:1000`，并可能再次迁移数据所有者。
+
+rootless Docker 和 `userns-remap` 仍受宿主机 ID 映射限制；容器内设置数值 ID 不会绕过映射范围外的 NAS ACL。需要先在目标机器确认 `PEACH_UID`/`PEACH_GID` 对应的宿主权限。
 
 ### 迁移数据目录
 
@@ -22,7 +39,7 @@ CloudDrive2 与 Peach 分别运行。NAS 已有 CloudDrive2 时直接复用；�
 
 1. 查出数据卷的名字，以 `_peach-data` 结尾：`docker volume ls`。
 2. 在 `compose.yaml` 所在目录停止 Peach：`docker compose down`。
-3. 把数据卷复制到新文件夹，新文件夹要让 UID 1000 可写：`docker run --rm -v <数据卷名>:/from -v <新文件夹>:/to alpine cp -a /from/. /to/`。
+3. 把数据卷复制到新文件夹；启动时入口会按 `PEACH_UID`/`PEACH_GID` 修正 `/data` 所有者：`docker run --rm -v <数据卷名>:/from -v <新文件夹>:/to alpine cp -a /from/. /to/`。
 4. 把 `compose.yaml` 里的 `peach-data:/data` 改成 `<新文件夹>:/data`，再启动：`docker compose up -d`。
 
 确认新位置一切正常之前，不要删除旧数据卷。
@@ -82,7 +99,7 @@ PEACH_MEDIA_ROOT=/srv/videos
 容器已更新并重新启动后，在 `compose.yaml` 所在目录运行以下命令，可查看新版注释与当前配置值；命令只显示内容，不改写 `/data/config.toml`：
 
 ```sh
-docker compose exec peach python -c "from peach import settings_file as s; print(s.render(s.active()), end='')"
+docker compose exec peach python -m peach.docker_entrypoint python -c "from peach import settings_file as s; print(s.render(s.active()), end='')"
 ```
 
 默认模板只包含初始值，不包含已有部署的媒体目录和自定义设置。用默认模板整份替换会同时替换这些值，可能使已有影片无法读取。只更新说明时可以替换注释，保留配置值；需要替换整个文件时，先备份并逐项核对差异。
@@ -137,7 +154,7 @@ Linux 首次重编码时会探测实际可用的硬件编码器，整片 MP4 与
       PEACH_VAAPI_DEVICE: /dev/dri/renderD128
 ```
 
-`PEACH_RENDER_GID` 填宿主机渲染节点所属组的数字 GID。容器以 UID 1000 运行，需要该节点的读写权限；只透传设备但没有组权限仍会初始化失败。Unraid 在容器设置中添加同样的设备映射、环境变量和额外组，无需开启特权模式。默认 Compose 不挂设备，无 GPU 的机器可直接运行。
+`PEACH_RENDER_GID` 填宿主机渲染节点所属组的数字 GID。运行用户（默认 `1000:1000`，也可由 `PEACH_UID`/`PEACH_GID` 指定）需要该节点的读写权限；入口降权时保留 Docker `group_add` 的补充组。只透传设备但没有组权限仍会初始化失败。Unraid 在容器设置中添加同样的设备映射、环境变量和额外组，无需开启特权模式。默认 Compose 不挂设备，无 GPU 的机器可直接运行。
 
 生成器对应参数为 `--render-device /dev/dri/renderD128 --render-gid <数字 GID>`。若 NAS 节点模式为 `0600`，额外组也没有读写权限，可以显式改用 `--render-device /dev/dri/renderD128 --prepare-render`。此选项只在启动阶段使用 root，核对透传节点为容器 `/dev` 文件系统中的独立 DRM 渲染节点后，赋予 peach 组读写权限，再永久降权到 UID/GID 1000 启动原服务。非 root 的补充组保留，组 0 移除。媒体和数据卷不参与权限修改；宿主节点权限不变。绑定宿主机的 `/dev/dri`、符号链接、非 DRM 设备和未完成降权的启动均拒绝。
 
@@ -194,7 +211,7 @@ Docker 部署使用网页「Peach 配置 → 系统诊断 → 下载诊断报告
 网页不可用时，在 Compose 文件所在目录执行下面的命令，在正在运行的 `peach` 服务容器中生成脱敏 ZIP。目标文件已存在会拒绝覆盖；再次导出时同时更换两条命令中的文件名。
 
 ```text
-docker compose exec peach python -m peach.support_bundle /tmp/peach-support.zip
+docker compose exec peach python -m peach.docker_entrypoint python -m peach.support_bundle /tmp/peach-support.zip
 ```
 
 将 ZIP 复制到当前目录：
@@ -233,7 +250,7 @@ Linux 容器不读取用户电脑上的浏览历史，也不包含交互式浏�
 
 ## 镜像发布
 
-构建使用官方 Python `3.14.8-slim-trixie` 与 uv `0.13.1`，应用依赖与 amane 独立依赖分别由各自的 `uv.lock` 锁定。应用以非 editable 包安装，包含 Web 与迁移资源。镜像以 UID/GID 1000 运行，内置 FFmpeg、FFprobe、OpenSSL 和 amane 独立环境。uv 与 Git 只用于构建阶段。构建上下文只允许代码与资源，不包含工作树、媒体、真实 Peach 数据库或凭据。
+构建使用官方 Python `3.14.8-slim-trixie` 与 uv `0.13.1`，应用依赖与 amane 独立依赖分别由各自的 `uv.lock` 锁定。应用以非 editable 包安装，包含 Web 与迁移资源。镜像默认以 UID/GID 1000 运行，可通过 `PEACH_UID`/`PEACH_GID` 覆盖；内置 FFmpeg、FFprobe、OpenSSL 和 amane 独立环境。uv 与 Git 只用于构建阶段。构建上下文只允许代码与资源，不包含工作树、媒体、真实 Peach 数据库或凭据。
 
 GitHub Actions 的 `Docker` 工作流在拉取请求和主线上分别于 amd64 与 arm64 原生 runner 构建并运行临时卷验收，只验收不发布。版本提交的 `Release` 演练用同样方式构建两个架构的候选镜像并保存；标签流水线在 GitHub Release 成功后核对两个候选的 image ID，推送 `<版本>-amd64`、`<版本>-arm64`，再合成一个多架构 index，版本号、`edge` 与 `latest` 都指向它（[ADR-0121](adr/0121-release-rehearsal-and-atomic-publication.md)）。仓库变量 `DOCKERHUB_USERNAME` 和机密 `DOCKERHUB_TOKEN` 用于 Docker Hub 发布；机密只保存在 GitHub，不进入项目文件。未配置发布身份时仍执行构建验收。
 

@@ -27,7 +27,7 @@ Movie demo data; see [asset credits and licenses](https://peach.video/en/credits
 | Version tags | One per release, built from the release commit |
 | `edge`, `latest` | Both move to the latest complete release; NAS container managers check `latest` for updates |
 | Platform | `linux/amd64` and `linux/arm64` in one multi-arch image |
-| User | UID/GID `1000`, non-root |
+| User | UID/GID `1000` by default; override with `PEACH_UID`/`PEACH_GID` |
 | Port | `8900/tcp` |
 | `/data` | Settings, database, credentials and image cache; must be persistent |
 | `/media` | Your media, mounted read-only by default |
@@ -36,7 +36,7 @@ The image includes Peach, the web UI, FFmpeg, FFprobe, OpenSSL and the amane scr
 
 ## Quick start with Docker Compose
 
-This example targets a Linux host with Docker Engine and Docker Compose. The media folder must already exist and be readable by UID 1000. If you use CloudDrive2, finish binding and mounting your cloud drives on the host first.
+This example targets a Linux host with Docker Engine and Docker Compose. The media folder must already exist and be readable by the configured UID/GID. If you use CloudDrive2, finish binding and mounting your cloud drives on the host first.
 
 Save this as `compose.yaml` in an empty folder:
 
@@ -49,6 +49,8 @@ services:
     stop_grace_period: 75s
     environment:
       PEACH_IMAGE_TAG: ${PEACH_VERSION:-edge}
+      PEACH_UID: "${PEACH_UID:-1000}"
+      PEACH_GID: "${PEACH_GID:-1000}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     ports:
@@ -75,7 +77,11 @@ Save `.env` next to it and replace the path with the absolute media path on your
 PEACH_MEDIA_ROOT=/absolute/path/to/media
 PEACH_BIND=127.0.0.1
 PEACH_PORT=8900
+PEACH_UID=1000
+PEACH_GID=1000
 ```
+
+Set `PEACH_UID` and `PEACH_GID` to numeric IDs when NAS ownership cannot be changed to 1000. The entrypoint updates ownership of `/data` when needed, then runs Peach as the requested non-root user. It never recursively changes `/media`. Keep these values in the persistent `.env`; changing them later can change ownership under a bind-mounted `/data`. Rootless Docker and `userns-remap` remain subject to the host's ID mapping.
 
 Pull the image:
 
@@ -92,7 +98,7 @@ docker compose up -d
 Show the first sign-in token. It is private, so run this in your own terminal only:
 
 ```console
-docker compose exec peach peach token
+docker compose exec peach python -m peach.docker_entrypoint peach token
 ```
 
 Open `http://127.0.0.1:8900` on the host, or reach it through a private VPN or SSH tunnel. Sign in, set an access password, then add a media folder inside the container, such as `/media`, on the settings page.
@@ -101,7 +107,7 @@ Open `http://127.0.0.1:8900` on the host, or reach it through a private VPN or S
 
 `PEACH_BIND=127.0.0.1` only accepts connections from the host itself. To open Peach from another computer, set `PEACH_BIND` to the NAS's LAN IP, recreate the container and open `http://<NAS LAN IP>:<PEACH_PORT>`. Set an access password first. The image has no multi-user accounts; for public hosting, read the [security policy](https://github.com/peach-mitao/peach/blob/master/SECURITY.md).
 
-On NAS container UIs, run `peach token` in the Peach container's terminal to get the sign-in token.
+On NAS container UIs, run `peach token` in the Peach container's terminal to get the sign-in token. A plain `docker compose exec` runs as the image's root bootstrap user, so use the command above or pass an explicit non-root `--user` when running management commands from the host.
 
 For a new NAS installation, `python -m peach.nas_setup --bind <NAS IP> --media <host media directory>` inside the image generates a Compose file with a persistent data volume, read-only media and a stable hostname. The amd64 image includes Intel iHD and Mesa VAAPI drivers. GPU access is optional: use the render node's numeric group, or explicitly select `--prepare-render` for a mode-0600 node; this prepares only the container device and drops to the non-root service user. See the [NAS installation and hardware guide](https://github.com/peach-mitao/peach/blob/master/docs/DOCKER.md) for prerequisites, preserving an existing deployment and verification.
 

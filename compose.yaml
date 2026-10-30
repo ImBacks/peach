@@ -20,6 +20,8 @@ services:
     environment:
       # Watchtower 只换同一标签的新镜像；标签不是 edge 时配置页不给「一键更新」。
       PEACH_IMAGE_TAG: ${PEACH_VERSION:-edge}
+      PEACH_UID: "${PEACH_UID:-1000}"
+      PEACH_GID: "${PEACH_GID:-1000}"
       # 可选：还没有访问设置时，启动就用它设访问密码（8–256 个字符），首次设置页不再问；已有访问设置时忽略。
       # 密码写在 .env 的 PEACH_ACCESS_PASSWORD，再取消下一行的注释。
       # PEACH_ACCESS_PASSWORD: ${PEACH_ACCESS_PASSWORD}

@@ -59,9 +59,11 @@ ENV PATH="/app/.venv/bin:$PATH" PEACH_DATA_ROOT=/data PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 PYTHONUTF8=1 PEACH_FACE_MODELS=/app/tools/face-models PEACH_DISTRIBUTION=docker \
     PEACH_AMANE_RUNTIME=/app/amane-runtime PEACH_UPDATE_DIR=/update
 WORKDIR /data
-USER peach
+# 入口先以 root 修正已有 /data 卷的所有者，再降权到 PEACH_UID/PEACH_GID。
+USER root
 EXPOSE 8900
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/healthz?ready=1', timeout=3).read()"]
-ENTRYPOINT ["python", "-m", "peach.server"]
+ENTRYPOINT ["python", "-m", "peach.docker_entrypoint"]
+CMD ["python", "-m", "peach.server"]
