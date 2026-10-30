@@ -16,6 +16,7 @@ DEFAULT_UID = 1000
 DEFAULT_GID = 1000
 MAX_ID = 2**32 - 2
 DATA_ROOT = Path("/data")
+MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 
 EX_CONFIG = 64
 EX_DATA = 73
@@ -120,6 +121,39 @@ def _raise_walk_error(error: OSError) -> None:
     raise error
 
 
+def _mountinfo_field(value: str) -> str:
+    """解码 mountinfo 中空白字符和反斜杠的八进制转义。"""
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+
+def _nested_mounts(root: Path) -> set[Path]:
+    """读取 Linux 挂载表；同一文件系统上的 bind mount 也必须在迁移时跳过。"""
+    try:
+        lines = MOUNTINFO_PATH.read_text(
+            encoding="utf-8", errors="surrogateescape"
+        ).splitlines()
+    except OSError:
+        return set()
+
+    root = Path(root)
+    nested: set[Path] = set()
+    for line in lines:
+        before, separator, _after = line.partition(" - ")
+        if not separator:
+            continue
+        fields = before.split()
+        if len(fields) < 5:
+            continue
+        mountpoint = Path(_mountinfo_field(fields[4]))
+        if mountpoint != root:
+            try:
+                mountpoint.relative_to(root)
+            except ValueError:
+                continue
+            nested.add(mountpoint)
+    return nested
+
+
 def prepare_data(root: Path, identity: Identity) -> DataPreparation:
     """仅在数据根仍属于旧身份时迁移整棵树，成功后最后再改数据根。"""
     try:
@@ -135,12 +169,17 @@ def prepare_data(root: Path, identity: Identity) -> DataPreparation:
 
     changed = 0
     skipped_mounts: list[str] = []
+    nested_mounts = _nested_mounts(root)
     try:
         walker = os.walk(root, topdown=True, onerror=_raise_walk_error, followlinks=False)
         for current_root, directories, files in walker:
             current_path = Path(current_root)
             for name in list(directories):
                 path = current_path / name
+                if path in nested_mounts:
+                    skipped_mounts.append(str(path))
+                    directories.remove(name)
+                    continue
                 child = os.lstat(path)
                 if stat.S_ISLNK(child.st_mode):
                     changed += _lchown_changed(path, child, identity)
@@ -153,6 +192,9 @@ def prepare_data(root: Path, identity: Identity) -> DataPreparation:
                 changed += _lchown_changed(path, child, identity)
             for name in files:
                 path = current_path / name
+                if path in nested_mounts:
+                    skipped_mounts.append(str(path))
+                    continue
                 child = os.lstat(path)
                 if child.st_dev != root_stat.st_dev:
                     skipped_mounts.append(str(path))

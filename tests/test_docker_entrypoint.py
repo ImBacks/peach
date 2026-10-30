@@ -190,6 +190,55 @@ class DataPreparationTests(unittest.TestCase):
             Path("/data"),
         ])
 
+    def test_mountinfo_skips_same_device_bind_mounts(self):
+        root = Path("/data")
+        root_stat = SimpleNamespace(
+            st_uid=1000, st_gid=1000, st_dev=1,
+            st_mode=stat.S_IFDIR | 0o755,
+        )
+        database = SimpleNamespace(
+            st_uid=1000, st_gid=1000, st_dev=1,
+            st_mode=stat.S_IFDIR | 0o755,
+        )
+        regular = SimpleNamespace(
+            st_uid=1000, st_gid=1000, st_dev=1,
+            st_mode=stat.S_IFREG | 0o600,
+        )
+        stats = {
+            root: root_stat,
+            root / "database": database,
+            root / "database" / "ledger.db": regular,
+        }
+        changed = []
+        with tempfile.TemporaryDirectory() as directory:
+            mountinfo = Path(directory) / "mountinfo"
+            mountinfo.write_text(
+                "36 1 0:32 / /data/bind\\040mount rw,relatime - xfs /dev/x rw\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(docker_entrypoint, "MOUNTINFO_PATH", mountinfo), \
+                    mock.patch.object(docker_entrypoint.os, "lstat",
+                                      side_effect=lambda path: stats[Path(path)]), \
+                    mock.patch.object(docker_entrypoint.os, "walk",
+                                      return_value=[
+                                          (str(root), ["bind mount", "database"], []),
+                                          (str(root / "database"), [], ["ledger.db"]),
+                                      ]), \
+                    mock.patch.object(docker_entrypoint.os, "lchown",
+                                      side_effect=lambda path, uid, gid:
+                                      changed.append((Path(path), uid, gid)), create=True):
+                preparation = docker_entrypoint.prepare_data(
+                    root, docker_entrypoint.Identity(1026, 1027)
+                )
+
+        self.assertEqual(preparation.changed_entries, 3)
+        self.assertEqual(preparation.skipped_mounts, (str(root / "bind mount"),))
+        self.assertEqual([item[0] for item in changed], [
+            root / "database",
+            root / "database" / "ledger.db",
+            root,
+        ])
+
     def test_write_probe_uses_the_final_identity_and_removes_its_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
