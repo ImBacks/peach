@@ -149,8 +149,8 @@ export const submitSetup = async (submission: SetupSubmission) =>
 export const restoreSetup = async (dataRoot: string) =>
   localizedDone(await request<SetupDone>(`${SETUP_URL}/restore`, { method: 'POST', body: JSON.stringify({ data_root: dataRoot }) }, t('shell:setupErrors.restoreFailed')));
 
-export const pickFolder = async (initial: string) =>
-  pickServerFolder(initial, path => request<FolderReply>(PICK_FOLDER_URL,
-    { method: 'POST', body: JSON.stringify({ initial: path }) }, t('shell:setupErrors.pickFolderFailed')));
+export const pickFolder = async (initial: string, purpose: 'media' | 'data' = 'media') =>
+  pickServerFolder(initial, body => request<FolderReply>(PICK_FOLDER_URL,
+    { method: 'POST', body: JSON.stringify(body) }, t('shell:setupErrors.pickFolderFailed')), purpose);
 
 export const describeFailure = (cause: unknown) => (cause instanceof Error && cause.message) || t('shell:setupErrors.requestFailed');

@@ -118,7 +118,7 @@ def _attributes(stat):
 def _read(operation, path, value):
     if operation == 'browse':
         from .nas_directories import list_directory
-        return list_directory(path, json.loads(value))
+        return list_directory(path, **json.loads(value))
     if operation == 'directory':
         from .smb_media import SmbResource
         if isinstance(path, SmbResource):

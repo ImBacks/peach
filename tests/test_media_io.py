@@ -29,7 +29,7 @@ class MediaIoTests(unittest.TestCase):
         media.mkdir()
         (media / '子目录').mkdir()
         (media / 'video.mp4').write_bytes(b'not-read')
-        config = SimpleNamespace(mounts={'local': (str(media),)})
+        config = SimpleNamespace(mounts={'local': (str(media),)}, locations={})
         reply = browse(config, str(media))
         self.assertEqual(reply['directories'], [{'name': '子目录', 'path': str(media / '子目录')}])
         self.assertIsNone(reply['parent'])
@@ -56,11 +56,62 @@ class MediaIoTests(unittest.TestCase):
         with patch('peach.nas_directories.os.scandir', return_value=manager):
             result = list_directory(self.root, [str(self.root)])
         self.assertEqual(len(result['directories']), 500)
-        self.assertTrue(result['truncated'])
-        config = SimpleNamespace(mounts={'local': (str(self.root),)})
+        self.assertEqual(result['next_offset'], 500)
+        config = SimpleNamespace(mounts={'local': (str(self.root),)}, locations={})
         with patch('peach.media_io.subprocess.run', side_effect=subprocess.TimeoutExpired('media-read', 10)):
             with self.assertRaises(TimeoutError):
                 browse(config, str(self.root))
+
+    def test_nas_browser_can_reach_directories_after_a_page_of_files(self):
+        from peach.nas_directories import list_directory
+        entries = [SimpleNamespace(name=str(index), is_dir=lambda **kwargs: False) for index in range(500)]
+        entries.append(SimpleNamespace(name='后面的目录', is_dir=lambda **kwargs: True))
+        manager = Mock()
+        manager.__enter__ = Mock(side_effect=lambda: iter(entries))
+        manager.__exit__ = Mock(return_value=False)
+        with patch('peach.nas_directories.os.scandir', return_value=manager):
+            first = list_directory(self.root, [str(self.root)])
+            second = list_directory(self.root, [str(self.root)], first['next_offset'])
+        self.assertEqual(first['directories'], [])
+        self.assertEqual(second['directories'], [{'name': '后面的目录', 'path': str(self.root / '后面的目录')}])
+        self.assertIsNone(second['next_offset'])
+
+    def test_nas_browser_start_does_not_read_a_missing_initial_path(self):
+        from peach.nas_directories import browse
+        config = SimpleNamespace(mounts={'local': (str(self.root),)}, locations={})
+        with patch('peach.media_io._request') as reader:
+            result = browse(config, '/missing/old-path', start=True)
+        reader.assert_not_called()
+        self.assertEqual(result['roots'], [str(self.root)])
+        self.assertIsNone(result['path'])
+        with self.assertRaises(ValueError):
+            browse(config, str(self.root), offset=-1)
+
+    def test_nas_local_directory_does_not_probe_an_unrelated_offline_mount(self):
+        from peach.nas_directories import list_directory
+        offline = self.root.parent / 'offline-cloud'
+        resolve = Path.resolve
+        def checked(path, **kwargs):
+            if path == offline:
+                raise TimeoutError('离线挂载不能参与本地目录浏览')
+            return resolve(path, **kwargs)
+        with patch.object(Path, 'resolve', checked):
+            result = list_directory(self.root, [str(offline), str(self.root)])
+        self.assertEqual(result['path'], str(self.root))
+
+    def test_server_position_uses_the_declared_root_and_relative_location(self):
+        from peach.nas_directories import file_position
+        from peach import settings_file
+        from dataclasses import replace
+        config = replace(settings_file.load_config(),
+                         locations={'local': ('R:\\media',)},
+                         mounts={'local': (str(self.root),)})
+        with patch('peach.settings_file.active', return_value=config), \
+                patch.dict('os.environ', {'PEACH_DISTRIBUTION': 'docker'}):
+            result = file_position(self.root / 'series' / 'video.mp4', 'R:\\media\\series\\video.mp4')
+        self.assertTrue(result['container'])
+        self.assertEqual(result['media_root'], str(self.root))
+        self.assertEqual(result['relative_path'], 'series/video.mp4')
 
     def test_worker_reads_unicode_nfo_and_directory_attributes(self):
         source = self.root / '影片.nfo'

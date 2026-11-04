@@ -182,3 +182,17 @@ it('空目录自动读取 CloudDrive，填入表单后由保存写入设置', as
   await settle();
   expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toEqual({ ...policy, external_cache_path: '/detected-cache' });
 });
+
+it('服务端迁移选择数据目录，确认前不提交迁移', async () => {
+  const seen = confirmWith(false);
+  const fetcher = fetchMock(200, { mode: 'manual', path: '/data', editable: true, message: '填写服务端数据目录' });
+  vi.stubGlobal('fetch', fetcher);
+  const host = await mount(<StorageSettings initial={measured} receipt={vi.fn()} />);
+  await click(buttonNamed('更改位置', host));
+  expect(sentBody(fetcher)).toEqual({ initial: measured.data_root, purpose: 'data', start: true });
+  await type(document.querySelector<HTMLInputElement>('input[aria-label="服务端数据目录"]'), '/srv/peach-data');
+  await click(buttonNamed('使用此目录'));
+  await settle();
+  expect(String(seen[0]!.body)).toContain('/srv/peach-data');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

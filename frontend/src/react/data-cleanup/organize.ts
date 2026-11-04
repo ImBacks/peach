@@ -82,7 +82,7 @@ export const previewOrganize = (request: OrganizeRequest) =>
   apiSend<OrganizePlan>(ORGANIZE_PREVIEW_URL, request);
 
 export const pickOrganizeFolder = async (initial: string) => ({ path: await pickServerFolder(initial,
-  path => apiSend<FolderReply>(PICK_FOLDER_URL, { initial: path })) });
+  body => apiSend<FolderReply>(PICK_FOLDER_URL, body)) });
 
 export const startOrganize = (command: OrganizeCommand) => command.kind === 'apply'
   ? apiSend<OrganizeJob>(ORGANIZE_APPLY_URL, { ...command.request, confirm: true })

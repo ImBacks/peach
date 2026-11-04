@@ -1572,10 +1572,20 @@ def pick_folder(request: Request, body: dict[str, Any] = Body(default_factory=di
     local_only(request)
     same_origin(request)
     initial = body.get("initial")
+    purpose = body.get('purpose', 'media')
+    if not isinstance(purpose, str) or purpose not in {'media', 'data'}:
+        raise HTTPException(400, '请选择媒体目录或数据目录')
     from . import nas_directories
     if not nas_directories.available():
+        if purpose == 'data':
+            return {'mode': 'manual', 'path': initial if isinstance(initial, str) else '',
+                    'editable': os.environ.get('PEACH_DISTRIBUTION') != 'docker',
+                    'message': ('容器数据位置由宿主机的数据卷挂载决定，请在 NAS 容器管理器中配置。'
+                                if os.environ.get('PEACH_DISTRIBUTION') == 'docker' else
+                                '请填写运行 Peach 的服务器上的数据目录；保存时会检查目录是否可用。')}
         try:
-            return nas_directories.browse(settings_file.active(), initial if isinstance(initial, str) else '')
+            return nas_directories.browse(settings_file.active(), initial if isinstance(initial, str) else '',
+                                          start=body.get('start') is True, offset=body.get('offset', 0))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         except TimeoutError as exc:

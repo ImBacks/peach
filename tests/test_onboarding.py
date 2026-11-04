@@ -1547,6 +1547,26 @@ class StandaloneConfigurationTests(_Case):
             self.assertEqual(client.post('/api/pick-folder', headers=headers,
                 json={'initial': str(self.media.parent)}).status_code, 400)
 
+    def test_headless_data_picker_is_separate_from_media_browsing(self):
+        headers = {'X-Token': 'test-token'}
+        with mock.patch.dict(os.environ, {'PEACH_HEADLESS_MANAGED': '1', 'PEACH_DISTRIBUTION': 'source'}), self.client() as client:
+            response = client.post('/api/pick-folder', headers=headers,
+                json={'initial': str(self.data_root), 'purpose': 'data', 'start': True})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()['mode'], 'manual')
+            self.assertEqual(response.json()['path'], str(self.data_root))
+            self.assertTrue(response.json()['editable'])
+            started = client.post('/api/pick-folder', headers=headers,
+                json={'initial': '/missing/old-path', 'purpose': 'media', 'start': True})
+            self.assertEqual(started.status_code, 200, started.text)
+            self.assertIsNone(started.json()['path'])
+            self.assertEqual(client.post('/api/pick-folder', headers=headers,
+                json={'purpose': ['invalid']}).status_code, 400)
+        with mock.patch.dict(os.environ, {'PEACH_HEADLESS_MANAGED': '1', 'PEACH_DISTRIBUTION': 'docker'}), self.client() as client:
+            response = client.post('/api/pick-folder', headers=headers,
+                json={'initial': '/data', 'purpose': 'data'})
+            self.assertFalse(response.json()['editable'])
+
     def test_standalone_tray_uses_its_own_binary_and_configured_loopback_port(self):
         import sys
         from peach.tray import _peach_executable, configured_service_specs, normal_url

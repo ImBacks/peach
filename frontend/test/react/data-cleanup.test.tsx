@@ -729,7 +729,7 @@ describe('整理', () => {
     const path = host.querySelector<HTMLInputElement>('input[name="organize-path"]');
     await click(host.querySelector('[aria-label="选择整理路径"]'));
     await settle();
-    expect(server.posts('/api/pick-folder')).toEqual([{ initial: 'R:\\media' }]);
+    expect(server.posts('/api/pick-folder')).toEqual([{ initial: 'R:\\media', purpose: 'media', start: true }]);
     expect(path?.value).toBe('R:\\media\\合集');
     await click(buttonNamed('预览', host));
     await settle();

@@ -65,7 +65,7 @@ const sourceOptions = [...MEDIA_SOURCES, ['smb', t('settings:mediaLibraries.smbS
 /** 媒体库在下拉里的图标：选过就用选的，否则按来源自动识别，和标题行的图标键一致。 */
 const libraryMark = (row: { library_icon: string; location: string; transport?: string }) => row.library_icon || libraryAutoChoice(row.transport === 'smb' ? 'smb' : row.location)[0];
 const pickFolder = async (initial: string) =>
-  pickServerFolder(initial, path => apiSend<FolderReply>(PICK_FOLDER_URL, { initial: path }));
+  pickServerFolder(initial, body => apiSend<FolderReply>(PICK_FOLDER_URL, body));
 
 interface MediaRow {
   transport: 'smb' | 'filesystem';
