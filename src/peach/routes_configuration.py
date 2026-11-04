@@ -1565,14 +1565,23 @@ def save_tunnel(request: Request, body: dict[str, Any] = Body(default_factory=di
 @router.post("/api/pick-folder")
 def pick_folder(request: Request, body: dict[str, Any] = Body(default_factory=dict),
                 _args=Depends(require_auth)):
-    """让运行 Peach 的这台电脑弹系统文件夹对话框，选中的绝对路径交回页面。
+    """桌面返回系统选择结果，无桌面返回媒体根内的只读目录快照。
 
-    只对本机连接开放：系统对话框显示在运行 Peach 的电脑上。首启页和配置页共用这一条，
-    所以不要求独立包。对话框是模态的，一次只开一个；用户取消时 `path` 为 None。
+    两种模式共用认证、本机或受管局域网访问、同源检查。首启页与配置页共用此入口。
     """
     local_only(request)
     same_origin(request)
     initial = body.get("initial")
+    from . import nas_directories
+    if not nas_directories.available():
+        try:
+            return nas_directories.browse(settings_file.active(), initial if isinstance(initial, str) else '')
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(504, '媒体目录读取超时，请稍后重试或手动填写路径') from exc
+        except OSError as exc:
+            raise HTTPException(409, '媒体目录不可读取，请检查挂载与目录权限') from exc
     try:
         path = folder_picker.pick_folder(initial if isinstance(initial, str) and initial else None)
     except folder_picker.PickerBusy as exc:

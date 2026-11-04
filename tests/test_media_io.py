@@ -23,6 +23,45 @@ class MediaIoTests(unittest.TestCase):
         self.config.locations = {'local': (str(self.root),)}
         self.config.media_costs = {}
 
+    def test_nas_browser_reads_only_directories_and_refuses_escape(self):
+        from peach.nas_directories import browse
+        media = self.root / 'media'
+        media.mkdir()
+        (media / '子目录').mkdir()
+        (media / 'video.mp4').write_bytes(b'not-read')
+        config = SimpleNamespace(mounts={'local': (str(media),)})
+        reply = browse(config, str(media))
+        self.assertEqual(reply['directories'], [{'name': '子目录', 'path': str(media / '子目录')}])
+        self.assertIsNone(reply['parent'])
+        with self.assertRaises(ValueError):
+            browse(config, str(media / '..'))
+        with self.assertRaises(ValueError):
+            browse(config, 'relative')
+        with patch('peach.media_io._request') as reader:
+            with self.assertRaises(ValueError):
+                browse(config, 'smb://example.test/share')
+            reader.assert_not_called()
+        if sys.platform != 'win32':
+            (media / 'escape').symlink_to(self.root, target_is_directory=True)
+            self.assertNotIn('escape', [entry['name'] for entry in browse(config, str(media))['directories']])
+            with self.assertRaises(ValueError):
+                browse(config, str(media / 'escape'))
+
+    def test_nas_browser_bounds_listing_and_inherits_killable_io(self):
+        from peach.nas_directories import browse, list_directory
+        entries = [SimpleNamespace(name=str(index), is_dir=lambda **kwargs: True) for index in range(502)]
+        manager = Mock()
+        manager.__enter__ = Mock(return_value=iter(entries))
+        manager.__exit__ = Mock(return_value=False)
+        with patch('peach.nas_directories.os.scandir', return_value=manager):
+            result = list_directory(self.root, [str(self.root)])
+        self.assertEqual(len(result['directories']), 500)
+        self.assertTrue(result['truncated'])
+        config = SimpleNamespace(mounts={'local': (str(self.root),)})
+        with patch('peach.media_io.subprocess.run', side_effect=subprocess.TimeoutExpired('media-read', 10)):
+            with self.assertRaises(TimeoutError):
+                browse(config, str(self.root))
+
     def test_worker_reads_unicode_nfo_and_directory_attributes(self):
         source = self.root / '影片.nfo'
         raw = '<movie><title>测试影片</title><num>ABW-101</num></movie>'.encode()

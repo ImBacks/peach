@@ -3802,6 +3802,16 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gone.json()["message"], "这个位置已经不在了")
         self.assertIn("不归 Peach 管", refused.json()["message"])
 
+    async def test_headless_reveal_returns_the_server_resolved_asset_path(self):
+        source = self._seed_photo()
+        headers = {'X-Token': 'secret'}
+        with patch('peach.routes_api.reveal_path', return_value=False):
+            response = await self.client.post('/api/reveal', headers=headers,
+                json={'id': 9, 'path': '/client-controlled'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['mode'], 'server')
+        self.assertEqual(response.json()['path'], str(source))
+
     async def test_photo_thumbnail_is_generated_once_and_cached(self):
         source = self._seed_photo()
         headers = {"X-Token": "secret"}

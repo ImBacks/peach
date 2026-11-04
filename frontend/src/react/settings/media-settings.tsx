@@ -45,6 +45,7 @@ import {
 import { busyProps, useAction } from './use-action';
 import { bodyFieldErrors } from '../../core/server-text';
 import { confirmModal } from '@peach/legacy/ui';
+import { pickServerFolder, type FolderReply } from '../components/server-path-dialog';
 import { fetchLibraryProcessing, processingActive, restartEffectText } from '../library-processing/library-processing';
 import { t } from '../../i18n';
 
@@ -64,7 +65,7 @@ const sourceOptions = [...MEDIA_SOURCES, ['smb', t('settings:mediaLibraries.smbS
 /** 媒体库在下拉里的图标：选过就用选的，否则按来源自动识别，和标题行的图标键一致。 */
 const libraryMark = (row: { library_icon: string; location: string; transport?: string }) => row.library_icon || libraryAutoChoice(row.transport === 'smb' ? 'smb' : row.location)[0];
 const pickFolder = async (initial: string) =>
-  (await apiSend<{ path: string | null }>(PICK_FOLDER_URL, { initial })).path;
+  pickServerFolder(initial, path => apiSend<FolderReply>(PICK_FOLDER_URL, { initial: path }));
 
 interface MediaRow {
   transport: 'smb' | 'filesystem';

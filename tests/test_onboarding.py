@@ -746,7 +746,8 @@ class SetupJsonContractTests(_SetupHttpCase):
                      access_confirm="should-not-be-used")
         self.assertEqual(access.load(self.data_root / "secrets" / "access.json")["mode"], "open")
 
-    def test_the_setup_service_opens_the_folder_dialog_for_each_row(self):
+    @mock.patch('peach.nas_directories.available', return_value=True)
+    def test_the_setup_service_opens_the_folder_dialog_for_each_row(self, _available):
         with mock.patch("peach.folder_picker.pick_folder", return_value=str(self.media)) as picker:
             response = self._send("POST", "/api/pick-folder", json={"initial": "E:/old"})
         self.assertEqual(response.status_code, 200, response.text)
@@ -1502,7 +1503,8 @@ class StandaloneConfigurationTests(_Case):
             self.assertEqual(api.status_code, 401)
             self.assertEqual(api.headers["content-type"], "application/json")
 
-    def test_the_folder_dialog_is_opened_by_this_machine_for_loopback_callers_only(self):
+    @mock.patch('peach.nas_directories.available', return_value=True)
+    def test_the_folder_dialog_is_opened_by_this_machine_for_loopback_callers_only(self, _available):
         """对话框弹在运行 Peach 的电脑上；局域网、跨站与没登录的请求都不能让它弹。"""
         from peach import folder_picker
         headers = {"X-Token": "test-token"}
@@ -1529,6 +1531,21 @@ class StandaloneConfigurationTests(_Case):
         with mock.patch("peach.folder_picker.pick_folder", side_effect=busy):
             with self.client() as client:
                 self.assertEqual(client.post("/api/pick-folder", headers=headers, json={}).status_code, 409)
+
+    def test_headless_picker_browses_media_and_keeps_auth_origin_and_path_boundaries(self):
+        child = self.media / '子目录'
+        child.mkdir()
+        headers = {'X-Token': 'test-token'}
+        with mock.patch.dict(os.environ, {'PEACH_HEADLESS_MANAGED': '1'}), self.client() as client, \
+                mock.patch('peach.folder_picker.pick_folder', side_effect=AssertionError('不弹系统窗口')):
+            listed = client.post('/api/pick-folder', headers=headers, json={'initial': str(self.media)})
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual(listed.json()['mode'], 'server')
+            self.assertIn(str(child), [entry['path'] for entry in listed.json()['directories']])
+            self.assertEqual(client.post('/api/pick-folder', json={}).status_code, 401)
+            self.assertEqual(client.post('/api/pick-folder', headers={**headers, 'Origin': 'https://example.org'}, json={}).status_code, 403)
+            self.assertEqual(client.post('/api/pick-folder', headers=headers,
+                json={'initial': str(self.media.parent)}).status_code, 400)
 
     def test_standalone_tray_uses_its_own_binary_and_configured_loopback_port(self):
         import sys

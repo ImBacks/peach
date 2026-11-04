@@ -108,7 +108,7 @@ def _own_data_path(raw: str) -> Path | None:
 
 @router.post("/api/reveal")
 def reveal(request: Request, body: dict[str, Any] = Body(default_factory=dict), args: dict[str, str] = Depends(require_auth)):
-    """在本机文件管理器里定位一个文件：媒体资产按 `id`，Peach 自己的数据按 `path`。
+    """定位文件；无桌面时返回服务端路径。媒体按 `id`，应用数据按 `path`。
 
     媒体那条用于「跳过去自己整理网盘目录」：A:/B: 是 CloudDrive 挂上来的盘符，在
     资源管理器里和本地目录没有区别。它的路径一律由服务端按 asset id 查出来——
@@ -133,8 +133,7 @@ def reveal(request: Request, body: dict[str, Any] = Body(default_factory=dict), 
                                  **message_fields("api.routes.revealMissing")}, status_code=410)
         try:
             if not reveal_path(target):
-                return JSONResponse({"error": "unsupported platform",
-                                     **message_fields("api.routes.revealUnsupported")}, status_code=501)
+                return {"ok": True, "mode": "server", "path": str(target)}
         except OSError as error:
             LOGGER.warning("reveal failed for %s: %s", target, error)
             return JSONResponse({"error": "reveal failed",
@@ -159,7 +158,8 @@ def reveal(request: Request, body: dict[str, Any] = Body(default_factory=dict), 
             status_code=410)
     try:
         if not reveal_path(target):
-            return JSONResponse({"error": "unsupported platform"}, status_code=501)
+            return {"ok": True, "mode": "server", "path": str(target), "id": asset_id,
+                    "location": asset.location}
     except OSError as error:
         LOGGER.warning("reveal failed for asset %s: %s", asset_id, error)
         return JSONResponse({"error": "reveal failed"}, status_code=500)
