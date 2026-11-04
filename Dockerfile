@@ -28,7 +28,7 @@ LABEL org.opencontainers.image.title="Peach" \
       org.opencontainers.image.source="https://github.com/peach-mitao/peach" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 # amane 独立环境在构建阶段准备，空数据卷可直接调用。
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg openssl ca-certificates mesa-va-drivers vainfo \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg openssl ca-certificates mesa-va-drivers vainfo intel-media-va-driver=25.2.3+dfsg1-1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 peach && useradd --uid 1000 --gid 1000 --create-home peach \
     && mkdir /data && chown peach:peach /data

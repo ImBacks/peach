@@ -29,6 +29,20 @@ CloudDrive2 与 Peach 分别运行。NAS 已有 CloudDrive2 时直接复用；�
 
 ## 首次运行与访问
 
+### 生成 NAS 安装配置
+
+镜像中的生成器可以输出一份可导入 Container Station、Container Manager 或其他 NAS 容器管理器的 Compose。它不启动 Docker，不读取媒体，也不修改已有部署。无需在 NAS 上另装 Python。在新建的安装文件夹运行：
+
+```sh
+docker run --rm --entrypoint python longmeidao/peach:edge -m peach.nas_setup --bind 192.0.2.10 --media /srv/videos
+```
+
+把输出保存为新建的 `compose.yaml`，将示例 IP 与媒体目录替换为宿主机实际值，然后在该目录执行 `docker compose up -d`。也可以把生成内容导入 NAS 的 Compose 管理界面。容器内的媒体路径固定为 `/media`，数据保存在 `peach-data` 命名卷，媒体默认只读。文件夹不存在时拒绝启动，不自动创建空目录来掩盖挂载错误。
+
+源码环境可用 `python -m peach.nas_setup ... --output compose.yaml` 保存；文件已存在时拒绝覆盖。`--port` 修改访问端口，`--image` 选择已发布版本。生成器固定 `hostname` 为 `peach-nas`，重建容器后任务仍归同一执行端。已有安装迁入此配置时，先通过 `docker inspect --format '{{.Config.Hostname}}' <容器名>` 取得原名称，再用 `--hostname` 保留它；同时保留原 Compose 项目名和数据卷名称，不能用新项目误建空数据卷。
+
+安装后打开 `http://<NAS IP>:<端口>`，执行 `docker compose exec peach peach token` 获取随机登录口令，完成网页设置并设置访问密码。没有通用初始密码。配置完成后运行 `docker compose exec peach peach doctor` 检查配置、数据库、工具和挂载。容器运行状态与来源网络连通性分别检查，见下文 amane 及采集说明。
+
 ### 飞牛、其他 NAS 与局域网访问
 
 浏览器在另一台电脑上时，访问地址使用 NAS 的局域网 IP。Compose 默认的 `127.0.0.1` 只允许宿主机访问；容器显示运行成功不代表局域网端口已开放。
@@ -105,7 +119,7 @@ Linux 首次重编码时会探测实际可用的硬件编码器，整片 MP4 与
 
 镜像自带 OpenCV（`vision` 依赖组）和头像取景与比对用的人脸模型（YuNet 为 MIT，SFace 为 Apache-2.0，许可证在同一目录），位于 `/app/tools/face-models`，由 `PEACH_FACE_MODELS` 指向，容器不联网也能用。构建镜像时按固定地址下载并校验 SHA-256。
 
-镜像包含 Debian FFmpeg、Mesa VAAPI 驱动与 `vainfo`。AMD 宿主机需加载 `amdgpu` 和对应固件，并提供 `/dev/dri/renderD*`。Intel 需在自定义镜像内安装适配设备的 VAAPI 驱动；Mesa 驱动不代表已覆盖全部 Intel GPU。将下面的条目合入 Compose 的 `services.peach`，设备路径按宿主机调整：
+镜像包含 Debian FFmpeg、Mesa VAAPI 驱动、Intel iHD 驱动（`intel-media-va-driver`）与 `vainfo`。宿主机仍须加载对应内核驱动（Intel `i915` / `xe`，AMD `amdgpu`）和固件，并提供 `/dev/dri/renderD*`。iHD 面向其支持的 Intel GPU，旧设备需要按型号选择驱动；安装用户态驱动不能替代宿主机内核支持。将下面的条目合入 Compose 的 `services.peach`，设备路径按宿主机调整：
 
 ```yaml
     devices:
@@ -118,6 +132,10 @@ Linux 首次重编码时会探测实际可用的硬件编码器，整片 MP4 与
 ```
 
 `PEACH_RENDER_GID` 填宿主机渲染节点所属组的数字 GID。容器以 UID 1000 运行，需要该节点的读写权限；只透传设备但没有组权限仍会初始化失败。Unraid 在容器设置中添加同样的设备映射、环境变量和额外组，无需开启特权模式。默认 Compose 不挂设备，无 GPU 的机器可直接运行。
+
+生成器对应参数为 `--render-device /dev/dri/renderD128 --render-gid <数字 GID>`。若 NAS 节点模式为 `0600`，额外组也没有读写权限，可以显式改用 `--render-device /dev/dri/renderD128 --prepare-render`。此选项只在启动阶段使用 root，核对透传节点为容器 `/dev` 文件系统中的独立 DRM 渲染节点后，赋予 peach 组读写权限，再永久降权到 UID/GID 1000 启动原服务。非 root 的补充组保留，组 0 移除。媒体和数据卷不参与权限修改；宿主节点权限不变。绑定宿主机的 `/dev/dri`、符号链接、非 DRM 设备和未完成降权的启动均拒绝。
+
+`--prepare-render` 必须搭配单节点 `devices` 透传，不能改为 bind mount，也不需要 `privileged`、`SYS_ADMIN` 或宿主机 PID 空间。已有安装可以选择 NAS 管理器提供的设备 ACL；本入口不管理宿主机的 ACL 或内核驱动。设备准备入口固定使用镜像的 peach 身份，与可配置 UID/GID 的入口是不同方案，不要叠加两个入口。
 
 | 环境变量 | 值与用途 |
 | --- | --- |

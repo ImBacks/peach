@@ -61,6 +61,10 @@ def transcode_checks(name: str) -> None:
            "import ctypes; from pathlib import Path; "
            "drivers=list(Path('/usr/lib').glob('*/dri/radeonsi_drv_video.so')); "
            "assert drivers, '缺少 AMD VAAPI 驱动'; ctypes.CDLL(str(drivers[0]))")
+    docker("exec", name, "python", "-c",
+           "import ctypes; from pathlib import Path; "
+           "drivers=list(Path('/usr/lib').glob('*/dri/iHD_drv_video.so')); "
+           "assert drivers, '缺少 Intel VAAPI 驱动'; ctypes.CDLL(str(drivers[0]))")
     docker("exec", name, "ffmpeg", "-v", "error", "-i", "/data/smoke-media/fixture.mp4",
            "-c:v", "mpeg4", "/data/smoke-media/transcode.mkv")
     docker("exec", name, "python", "-c",
@@ -102,6 +106,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
     args = parser.parse_args()
+    # 用待验收镜像生成配置，再交 Docker Compose 解析；不启动生成的服务。
+    generated = docker("run", "--rm", "--network", "none", "--entrypoint", "python", args.image,
+                       "-m", "peach.nas_setup", "--bind", "192.0.2.10", "--media", "/srv/videos",
+                       "--render-device", "/dev/dri/renderD128", "--prepare-render")
+    subprocess.run(["docker", "compose", "-f", "-", "config", "--quiet"], input=generated,
+                   text=True, encoding="utf-8", check=True, timeout=30)
     name = "peach-smoke-" + uuid.uuid4().hex[:12]
     volume = name + "-data"
     try:
