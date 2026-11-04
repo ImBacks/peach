@@ -60,7 +60,7 @@ function DataFolderDialog({ reply, close }: { reply: FolderReply; close(path: st
       <Input aria-label="服务端数据目录" value={path} onChange={setPath} isReadOnly={reply.editable === false} />
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => close(null)}>{reply.editable === false ? '关闭' : '取消'}</Button>
-        {reply.editable !== false ? <Button isDisabled={!path.trim()} onClick={() => close(path.trim())}>使用此目录</Button> : null}
+        {reply.editable !== false ? <Button disabled={!path.trim()} onClick={() => close(path.trim())}>使用此目录</Button> : null}
       </div>
     </div>
   </PathModalFrame>;
@@ -120,7 +120,9 @@ function FolderDialog({ initial, initialPath, request, close }: {
       {error ? <ErrorText>{error}</ErrorText> : null}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => close(null)}>取消</Button>
-        <Button isDisabled={!reply.path || path !== reply.path} {...busyProps(busy)} onClick={() => { if (!reading.current) close(reply.path) }}>选择此目录</Button>
+        <Button disabled={!reply.path || path !== reply.path} {...busyProps(busy)} onClick={() => {
+          if (!reading.current && reply.path && path === reply.path) close(reply.path);
+        }}>选择此目录</Button>
       </div>
     </div>
   </PathModalFrame>;

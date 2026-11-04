@@ -13,6 +13,9 @@ it('桌面选择直接沿用系统结果，服务端选择支持取消与只读�
   await flush();
   expect(buttonNamed('选择此目录')?.disabled).toBe(true);
   await click(buttonNamed('/media'));
+  await type(document.querySelector<HTMLInputElement>('input[aria-label="服务端目录路径"]'), '/media/unread');
+  expect(buttonNamed('选择此目录')?.disabled).toBe(true);
+  await type(document.querySelector<HTMLInputElement>('input[aria-label="服务端目录路径"]'), '/media');
   expect(request).toHaveBeenLastCalledWith({ initial: '/media', purpose: 'media', offset: 0 });
   await click(buttonNamed('选择此目录'));
   expect(await selected).toBe('/media');
