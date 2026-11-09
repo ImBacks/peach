@@ -18,7 +18,7 @@ from pathlib import PureWindowsPath
 
 VIDEO_EXTENSIONS = frozenset({
     '.mp4', '.m4v', '.mkv', '.avi', '.wmv', '.mov', '.ts', '.flv', '.rmvb', '.mpg',
-    '.m2ts', '.strm', '.iso',
+    '.m2ts', '.strm', '.iso', '.webm',
 })
 AUDIO_EXTENSIONS = frozenset({'.mp3', '.flac', '.wav', '.m4a', '.ogg', '.opus'})
 _EXTRA_SUFFIXES = {

@@ -118,6 +118,21 @@ class WindowsShapeTests(_ScanCase):
 class PosixShapeTests(_ScanCase):
     """macOS：账本里写 `R:\\media\\...`，遍历的是挂载点，读取侧按挂载表翻回去。"""
 
+    def test_webm_is_registered_as_video_and_full_scan_repairs_existing_rows(self):
+        options = dict(declared_roots={'local': ('R:\\media',)}, mounts={'local': (self.media,)}, windows=False)
+        (self.media / 'clip.WeBM').write_bytes(b'webm')
+        self._scan('R:\\media', **options)
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            asset_id, medium = connection.execute(
+                "SELECT id,medium FROM asset WHERE name='clip.WeBM'").fetchone()
+            self.assertEqual(medium, 'video')
+            connection.execute("UPDATE asset SET medium='other',rating=5 WHERE id=?", (asset_id,))
+        self._scan('R:\\media', **options)
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT id,medium,rating FROM asset WHERE name='clip.WeBM'").fetchall(),
+                [(asset_id, 'video', 5)])
+
     def test_file_identity_preserves_id_and_personal_fields_after_external_rename(self):
         options = dict(declared_roots={'local': ('R:\\media',)}, mounts={'local': (self.media,)}, windows=False)
         first, _ = self._scan('R:\\media', **options)
