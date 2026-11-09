@@ -219,6 +219,15 @@ class ServerTests(unittest.TestCase):
 
 
 class NasComposeTests(unittest.TestCase):
+    def test_installation_errors_keep_value_error_compatibility_and_a_message_code(self):
+        from peach.nas_setup import compose
+        from peach.user_messages import error_fields
+        with self.assertRaises(ValueError) as caught:
+            compose(bind='0.0.0.0', media='/srv/videos')
+        self.assertEqual(error_fields(caught.exception), {
+            'error': '请填写 NAS 的局域网 IP 或回环地址',
+            'message_code': 'nasSetup.invalidBind', 'message_params': {}})
+
     def test_generated_config_preserves_literal_paths_and_scopes_permissions(self):
         from peach.nas_setup import compose
         import json
@@ -283,9 +292,11 @@ class RenderDevicePreparationTests(unittest.TestCase):
                   patch.object(docker_vaapi.os, 'minor', return_value=128),
                   patch.object(docker_vaapi.os, 'stat', return_value=SimpleNamespace(st_dev=1)),
                   patch.object(docker_vaapi.os, 'chown') as chown,
-                  self.assertRaises((PermissionError, ValueError))):
+                  self.assertRaises((PermissionError, ValueError)) as caught):
                 docker_vaapi.prepare(device)
             chown.assert_not_called()
+            from peach.user_messages import UserFacingError
+            self.assertIsInstance(caught.exception, UserFacingError)
 
     def test_device_preparation_drops_root_and_preserves_non_root_extra_groups(self):
         from peach import docker_vaapi

@@ -1,4 +1,12 @@
 {
+  "dockerVaapi": {
+    "hostBindRejected": "请使用 Compose devices 透传单个节点，不能绑定宿主机 /dev/dri",
+    "identitySwitchFailed": "服务身份切换未完成",
+    "invalidRenderDevice": "只允许 /dev/dri/renderD128 到 renderD191",
+    "nonRootAccountRequired": "peach 必须使用非 root 身份",
+    "notRenderDevice": "目标不是 DRM 渲染节点",
+    "rootRequired": "设备权限准备入口需要 root；服务会在准备后以 peach 用户运行"
+  },
   "http": {
     "methodNotAllowed": "这个地址不接受这种请求。",
     "notFound": "这个地址下没有页面。",
@@ -6,6 +14,17 @@
   },
   "javBrowser": {
     "notQueued": "这个番号不在排队中"
+  },
+  "nasSetup": {
+    "invalidBind": "请填写 NAS 的局域网 IP 或回环地址",
+    "invalidHostname": "主机名只接受字母、数字、点和连字符",
+    "invalidImage": "镜像名称无效",
+    "invalidMediaPath": "请填写宿主机上的媒体目录绝对路径",
+    "invalidPort": "端口应在 1 到 65535 之间",
+    "invalidRenderDevice": "请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191",
+    "invalidRenderGid": "渲染节点 GID 无效",
+    "renderDeviceRequired": "设置核显权限时须同时指定渲染节点",
+    "renderPermissionChoice": "核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用"
   },
   "release": {
     "installation": {

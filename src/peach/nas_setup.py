@@ -7,6 +7,12 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 
+from .user_messages import UserFacingError
+
+
+class NasSetupError(UserFacingError, ValueError):
+    """NAS 安装参数错误；命令行保留原提示，调用方也能取得稳定编码。"""
+
 
 def _quoted(value: str) -> str:
     # YAML 接受 JSON 字符串；Compose 还会处理美元符号，必须独立转义。
@@ -19,23 +25,24 @@ def compose(*, bind: str, media: str, port: int = 8900,
             prepare_render: bool = False) -> str:
     address = ipaddress.ip_address(bind)
     if address.is_unspecified or address.is_multicast or address.is_link_local:
-        raise ValueError('请填写 NAS 的局域网 IP 或回环地址')
+        raise NasSetupError('请填写 NAS 的局域网 IP 或回环地址', code='nasSetup.invalidBind')
     if not 1 <= port <= 65535:
-        raise ValueError('端口应在 1 到 65535 之间')
+        raise NasSetupError('端口应在 1 到 65535 之间', code='nasSetup.invalidPort')
     if not PurePosixPath(media).is_absolute() or any(c in media for c in '\r\n\0'):
-        raise ValueError('请填写宿主机上的媒体目录绝对路径')
+        raise NasSetupError('请填写宿主机上的媒体目录绝对路径', code='nasSetup.invalidMediaPath')
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}', hostname):
-        raise ValueError('主机名只接受字母、数字、点和连字符')
+        raise NasSetupError('主机名只接受字母、数字、点和连字符', code='nasSetup.invalidHostname')
     if not image or any(c.isspace() or c == '\0' for c in image):
-        raise ValueError('镜像名称无效')
+        raise NasSetupError('镜像名称无效', code='nasSetup.invalidImage')
     if render_device and not re.fullmatch(r'/dev/dri/renderD(?:12[89]|1[3-8][0-9]|19[01])', render_device):
-        raise ValueError('请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191')
+        raise NasSetupError('请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191', code='nasSetup.invalidRenderDevice')
     if render_gid is not None and (type(render_gid) is not int or not 0 <= render_gid < 2**32 - 1):
-        raise ValueError('渲染节点 GID 无效')
+        raise NasSetupError('渲染节点 GID 无效', code='nasSetup.invalidRenderGid')
     if (render_gid is not None or prepare_render) and not render_device:
-        raise ValueError('设置核显权限时须同时指定渲染节点')
+        raise NasSetupError('设置核显权限时须同时指定渲染节点', code='nasSetup.renderDeviceRequired')
     if render_device and sum((render_gid is not None, prepare_render)) != 1:
-        raise ValueError('核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用')
+        raise NasSetupError('核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用',
+                            code='nasSetup.renderPermissionChoice')
     endpoint = f'[{address}]' if address.version == 6 else str(address)
     lines = ['services:', '  peach:', f'    image: {_quoted(image)}',
              f'    hostname: {_quoted(hostname)}', '    init: true',

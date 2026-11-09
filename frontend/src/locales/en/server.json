@@ -1,4 +1,12 @@
 {
+  "dockerVaapi": {
+    "hostBindRejected": "Pass through a single node using Compose devices; do not bind mount the host's /dev/dri.",
+    "identitySwitchFailed": "The service user switch did not complete.",
+    "invalidRenderDevice": "Only /dev/dri/renderD128 through renderD191 are allowed.",
+    "nonRootAccountRequired": "The peach account must use a non-root identity.",
+    "notRenderDevice": "The target is not a DRM render node.",
+    "rootRequired": "Device preparation requires root; the service runs as peach after preparation."
+  },
   "http": {
     "methodNotAllowed": "This address doesn't accept this kind of request.",
     "notFound": "There's no page at this address.",
@@ -6,6 +14,17 @@
   },
   "javBrowser": {
     "notQueued": "This code isn't in the queue."
+  },
+  "nasSetup": {
+    "invalidBind": "Enter the NAS LAN IP address or a loopback address.",
+    "invalidHostname": "The hostname accepts only letters, numbers, dots, and hyphens.",
+    "invalidImage": "The image name is invalid.",
+    "invalidMediaPath": "Enter an absolute path to the media directory on the host.",
+    "invalidPort": "The port must be between 1 and 65535.",
+    "invalidRenderDevice": "Select a render node from renderD128 through renderD191 under /dev/dri.",
+    "invalidRenderGid": "The render node GID is invalid.",
+    "renderDeviceRequired": "Specify a render node when configuring GPU permissions.",
+    "renderPermissionChoice": "Choose either an extra group GID or container device preparation for the GPU, not both."
   },
   "release": {
     "installation": {
