@@ -44,8 +44,10 @@ from .config import PROJECT_ROOT
 from .diagnostic_browser import BUNDLE_CHUNK_NAME
 from .entities import resolve_entity, resolve_entity_id
 from .media_libraries import LIBRARY_ICONS
-from .routes_auth import (origin_allowed, query_auth_redirect, require_asset_auth, require_page_auth,
-                          set_auth_cookie)
+from .routes_auth import (FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, origin_allowed, query_auth_redirect, require_asset_auth,
+                          require_page_auth, set_auth_cookie)
+from .user_messages import message_fields
+from .web_local_access import local_client
 from .web_entry import page_shell, runtime_fact_entries
 from .web_state import FAVICON
 
@@ -162,8 +164,11 @@ def _setup_destination(config, *, history_guide: bool) -> str:
 def _normal_url(config) -> str:
     """设置完成之后本机浏览器要去的地址。
 
-    独立包即使对局域网监听，本机也走回环；源码部署才走由托盘维护的 HTTPS 固定入口。
+    独立包即使对局域网监听，本机也走回环；源码部署才走由托盘维护的 HTTPS 固定入口。Docker 的
+    外部地址由宿主机端口映射决定，服务自己不知道，留在当前地址。
     """
+    if distribution.docker():
+        return "/"
     if distribution.standalone() or config.server.host in _LOOPBACK:
         return f"http://127.0.0.1:{config.server.port}/"
     return f"https://{config.server.mdns_name}.local/"
@@ -421,12 +426,20 @@ def _setup_guard(request: Request, *, submit: bool) -> None:
     形态各不相同因为原因各不相同：已经配置过的机器上这些端点根本不存在（404，不是
     「禁止」——把它做成一条可探测的 403 等于对外宣告这里有个初始化入口）；非回环调用方是
     403（引导服务只绑 127.0.0.1，能走到这里说明有人转发了它）；独立包认地址栏里的主机名，
-    不是回环写法也是 403。提交再按 `origin_allowed` 看来源：从别的页面发来的表单不收，
-    隧道地址在首启时不算本机。
+    不是回环写法也是 403。Docker 的请求都从网桥进来，不能只认回环，改按 `local_client`
+    收本机与私有网络、不带代理转发头的来源（ADR-0149），403 正文带 `docker` 让页面说清楚去哪里打开。
+    提交再按 `origin_allowed` 看来源：从别的页面发来的表单不收，隧道地址在首启时不算本机。
     """
     settings = request.app.state.settings
     if settings.configured:
         raise HTTPException(status_code=404, detail="not found")
+    if distribution.docker():
+        if not local_client(request):
+            raise HTTPException(status_code=403, detail={**message_fields(FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE),
+                                                         "docker": True})
+        if submit and not origin_allowed(request, guard="setup", tunnels=False):
+            raise HTTPException(status_code=403, detail="请从 Peach 设置页提交")
+        return
     host = request.client.host if request.client else ""
     if host not in _LOOPBACK:
         raise HTTPException(status_code=403, detail="setup is loopback-only")
@@ -447,9 +460,10 @@ def setup_questions(request: Request):
     只是不看 Origin：配置完成后这里 404，运行事实不再对外。
     """
     _setup_guard(request, submit=False)
-    from . import peach_proxy, remote_reporting
+    from . import access, peach_proxy, remote_reporting
     windows = os.name == "nt"
-    asked = onboarding.questions(settings_file.active(), windows=windows)
+    docker = distribution.docker()
+    asked = _asked(onboarding.questions(settings_file.active(), windows=windows), docker=docker)
     host_labels = dict(onboarding.HOST_OPTIONS)
     from .media_configuration import SOURCE_OPTIONS
     items = []
@@ -459,7 +473,7 @@ def setup_questions(request: Request):
         item: dict[str, object] = {
             "key": question.key, "label": view["label"],
             "help": [line for line in (view["help"], note) if line],
-            "default": "" if question.key == "media_dir" else question.default,
+            "default": (DOCKER_MEDIA_DIR if docker else "") if question.key == "media_dir" else question.default,
             # 星号与 `required` 跟着输入框走：两段式单选总有一项选中，不标。
             "required": question.key != "host",
             # 目录和访问范围属于首次设置主流程，端口与局域网名称按需展开。
@@ -485,9 +499,23 @@ def setup_questions(request: Request):
         "scan_now": True,
         "history_guide": False,
         "peach_proxy": peach_proxy.describe(settings_file.active().directory("secrets")),
-        "docker": os.environ.get("PEACH_DISTRIBUTION") == "docker",
+        "docker": docker,
+        # Docker 的数据目录固定是卷挂载点，不出题；完成前的确认页照样列出它。
+        "data_root": str(settings_file.active().data_root) if docker else None,
+        # 容器启动时已按 `PEACH_ACCESS_PASSWORD` 写下访问密码，页面不再出这一题。
+        "access_preset": access.load(settings_file.active().directory("secrets") / "access.json")["mode"] == "password",
         "remote_reporting": remote_reporting.snapshot(),
     })
+
+
+#: Docker 首次设置不出的题：数据目录是 `/data` 卷，监听地址、端口与局域网名由 Compose 决定。
+DOCKER_FIXED_QUESTIONS = frozenset({"data_root", "host", "port", "mdns_name"})
+#: Compose 把宿主机媒体目录挂到容器里的这个位置。
+DOCKER_MEDIA_DIR = "/media"
+
+
+def _asked(asked, *, docker: bool):
+    return tuple(question for question in asked if question.key not in DOCKER_FIXED_QUESTIONS) if docker else asked
 
 
 def _json_text(value: object) -> str:
@@ -535,7 +563,7 @@ async def setup_submit_json(request: Request):
     submitted: dict[str, object] = {
         key: _json_text(body[key])
         for key in ("data_root", "host", "port", "mdns_name", "access_password", "access_confirm")
-        if body.get(key) is not None}
+        if body.get(key) is not None and not (distribution.docker() and key in DOCKER_FIXED_QUESTIONS)}
     submitted.update(_submitted_media_rows(body.get("media_dir")))
     submitted["skip_media"] = body.get("skip_media") is True
     scan_now = body.get("scan_now") is True and not submitted["skip_media"]
@@ -576,7 +604,7 @@ async def setup_submit_json(request: Request):
             raise HTTPException(status_code=409, detail="settings file already exists")
         try:
             applied = onboarding.apply(resolved, answers, windows=windows, access_password=password,
-                                       peach_proxy_values=proxy_values)
+                                       peach_proxy_values=proxy_values, require_tls=windows and not standalone)
             settings_file.remember_data_root(settings_file.active(), applied.config)
         except (OSError, RuntimeError) as exc:
             errors = {"data_root": str(exc)}
@@ -599,16 +627,22 @@ def _setup_done(config, *, scan_now: bool = False, history_guide: bool = False, 
         "history_guide": history_guide,
         "restored": restored,
         "standalone": distribution.standalone(),
-        # 独立包的完成页过一会儿自己跳到入口；时长由前端定，与配置页保存后的跳转同一个数。
-        "redirect": destination if distribution.standalone() else None,
+        # 独立包与 Docker 的完成页过一会儿自己跳到入口：服务要先换成正常模式。时长由前端定，
+        # 与配置页保存后的跳转同一个数。
+        "redirect": destination if distribution.standalone() or distribution.docker() else None,
         "facts": runtime_fact_entries(config),
     })
 
 
 @router.post("/api/setup/restore")
 async def setup_restore(request: Request):
-    """接回用户指定的已有数据目录；只记录位置，沿用其中的配置、账本和访问密码。"""
+    """接回用户指定的已有数据目录；只记录位置，沿用其中的配置、账本和访问密码。
+
+    Docker 的数据目录就是 `/data` 卷，接回已有数据是换卷，不在这里做。
+    """
     _setup_guard(request, submit=True)
+    if distribution.docker():
+        raise HTTPException(status_code=404, detail="not found")
     try:
         body = await request.json()
         raw = body.get("data_root") if isinstance(body, dict) else None
@@ -998,6 +1032,8 @@ def entity_route(request: Request, name: str,
 # 配置页是主站里的一屏（island），数据走 `/api/configuration`。未配置时 `index()` 给的是
 # 首次运行表单，正好就是「请先完成首次设置」该长的样子。
 @router.api_route("/settings", methods=["GET", "HEAD"])
+# 「应用与维护」之下的子页「修复与迁移」，不在配置分区里。
+@router.api_route("/settings/maintenance/repairs", methods=["GET", "HEAD"])
 def client_route(request: Request, item_id: int | None = None,
                  args: dict[str, str] = Depends(require_page_auth)):
     return index(request, args)

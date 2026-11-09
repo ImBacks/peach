@@ -275,7 +275,7 @@ it('画中画入口保持占位，媒体就绪后启用，浏览器不支持时�
 });
 
 describe('播放器清晰度', () => {
-  function menu(entries: QualityLevel[], selectedIndex = 0) {
+  function menu(entries: QualityLevel[], selectedIndex = 0, size: { width?: number; height?: number } = { width: 3840, height: 2160 }) {
     configurePlayer(host());
     const root = document.createElement('div'), bar = document.createElement('div'), video = document.createElement('video');
     bar.className = 'vjs-control-bar';
@@ -289,7 +289,7 @@ describe('播放器清晰度', () => {
     } }) as QualityLevelList;
     Object.assign(player, { el: () => root, qualityLevels: () => levels,
       paused: () => true, ended: () => false, isFullscreen: () => false, muted: () => false, volume: () => 1, trigger: () => {} });
-    mountPlayerQualityControl(player, video, 2160);
+    mountPlayerQualityControl(player, video, size);
     const open = () => {
       bar.querySelector<HTMLButtonElement>('.vjs-peach-settings-toggle')!.click();
       bar.querySelector<HTMLButtonElement>('[data-player-quality-view]')!.click();
@@ -383,6 +383,31 @@ describe('播放器清晰度', () => {
         .toEqual(['自动', '360p', '1080p', '2160p']);
       expect((document.activeElement as HTMLElement).dataset.playerQualityOption).toBe('1');
     } finally { view.close() }
+  });
+
+  it('视频还没读到尺寸时按账本宽高的短边写档位，竖屏不写成 1920p', () => {
+    const view = menu([], 0, { width: 1080, height: 1920 });
+    try {
+      view.open();
+      expect(view.labels()).toEqual(['1080p']);
+    } finally { view.close() }
+  });
+
+  it('点进清晰度时菜单按填好档位的面板高度过渡，不先缩成只剩标题栏', async () => {
+    const view = menu([{ width: 640, height: 360, enabled: true }, { width: 1920, height: 1080, enabled: true }]);
+    // 原型链上 Element 那一层的 scrollHeight 不动，这里只在 HTMLElement 上遮一层，用完删掉。一行 40px：标题栏一行，再加面板里此刻已有的每一档。
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get(this: HTMLElement) {
+      return 40 * (this.querySelectorAll('.vjs-peach-panel-header').length + this.querySelectorAll('[data-player-quality-option]').length);
+    } });
+    try {
+      view.open();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(view.labels()).toEqual(['自动', '360p', '1080p']);
+      expect(view.bar.querySelector<HTMLElement>('.vjs-peach-settings-menu')!.style.height).toBe('160px');
+    } finally {
+      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      view.close();
+    }
   });
 
   it('主菜单开着时尺寸变化只改清晰度那一行的读数', () => {

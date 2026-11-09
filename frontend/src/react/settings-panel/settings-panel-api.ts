@@ -5,9 +5,11 @@
  * 再用 `changed(effect)` 告诉壳这一下要跟着做什么——重画网格、重取目录、换主题，这些都还是壳的事；
  * 侧栏顺序不经它，侧栏自己订阅这一份 store。跟数据库走的那几项（侧栏顺序、合集开关、首次采集范围、头像刷新、搜索记录
  * 条数）由面板经 `/api/settings` 写，成功后同样落进这一份对象。 */
+import type { InterfaceLanguage, InterfaceLanguageChoice } from '../../i18n';
 import type { HomeGlow } from '@peach/appearance';
 
 import type { SettingsStore } from '../../settings-store';
+import type { Shortcut } from '../../keyboard-shortcut';
 import type { SyncedSettings } from './settings-data';
 
 /** 面板读写的那几项；对象本身还有别的字段，面板不碰。 */
@@ -24,6 +26,8 @@ export interface PanelSettings {
   groupCollapse: boolean;
   javImage: string;
   performerNameLanguage: 'zh-CN' | 'ja';
+  interfaceLanguage: InterfaceLanguageChoice;
+  systemLanguage: InterfaceLanguage | null;
   feedAutoScroll: boolean;
   feedLimit: number;
   feedHideGroupCompilations: boolean;
@@ -71,6 +75,9 @@ export interface SettingsPanelHost {
   /** SFW 与增加对比度各有自己的键，不在 `appSettings` 里；改完壳调 `store.notify()`。 */
   censored(): boolean;
   setCensored(on: boolean): void;
+  /** SFW 开关键，存本机不同步；传 null 恢复默认。改完壳调 `store.notify()`。 */
+  sfwShortcut(): Shortcut;
+  setSfwShortcut(shortcut: Shortcut | null): void;
   highContrast(): boolean;
   setHighContrast(on: boolean): void;
   receipt(message: string): void;

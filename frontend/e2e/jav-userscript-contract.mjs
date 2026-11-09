@@ -12,6 +12,7 @@ try {
       ['https://video.dmm.co.jp/av/content/?id=1dandy00851c', 'DANDY-851C', 'メーカー品番：'],
       ['https://video.dmm.co.jp/av/content/?id=118abw00220', 'ABW-220', 'メーカー品番：'],
       ['https://www.mgstage.com/product/product_detail/104DANDY-851C/', '104DANDY-851C', '品番：'],
+      ['https://clip.fanza.jp/moment?id=img-saba00978-011', 'SABA-978', '品番：'],
     ]) {
       const context = await browser.newContext({ viewport });
       try {
@@ -26,7 +27,8 @@ try {
           const parsed = new URL(request.url);
           assert.equal(parsed.pathname, '/api/jav-browser/identify');
           assert.equal(parsed.searchParams.get('source_url'), url);
-          assert.equal(parsed.searchParams.get('code'), code);
+          // 脚本只按地址识别，页面上的品番字段不随请求提交。
+          assert.equal(parsed.searchParams.get('code'), null);
           requests.push(request.url);
           const response = await fetch(origin + parsed.pathname + parsed.search);
           return { status: response.status, responseText: await response.text() };
@@ -55,5 +57,5 @@ try {
       } finally { await context.close(); }
     }
   }
-  console.log('真实识别接口与完整用户脚本：8 个桌面和手机场景通过');
+  console.log('真实识别接口与完整用户脚本：10 个桌面和手机场景通过');
 } finally { await browser.close(); }

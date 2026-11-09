@@ -110,6 +110,22 @@ def resolve_location(
     return location, tail
 
 
+#: 设备未就绪与网络路径断开的 Win32 错误码。Python 把 21 映射成 `PermissionError`、
+#: 53/67 映射成 `FileNotFoundError`，只看异常类型会把掉线挂载报成没权限或目录不存在。
+_UNREACHABLE_WINERRORS = frozenset({
+    21,    # ERROR_NOT_READY
+    51,    # ERROR_REM_NOT_LIST
+    53,    # ERROR_BAD_NETPATH
+    55,    # ERROR_DEV_NOT_EXIST
+    59,    # ERROR_UNEXP_NET_ERR
+    64,    # ERROR_NETNAME_DELETED
+    67,    # ERROR_BAD_NET_NAME
+    1167,  # ERROR_DEVICE_NOT_CONNECTED
+    1222,  # ERROR_NO_NETWORK
+    1231,  # ERROR_NETWORK_UNREACHABLE
+})
+
+
 def root_status(root: Path) -> str:
     """以目录首条读取判断挂载状态；空目录可读也算在线。"""
     try:
@@ -119,13 +135,15 @@ def root_status(root: Path) -> str:
             return 'ok'
         with os.scandir(root) as entries:
             next(iter(entries), None)
-    except PermissionError:
-        return "permission_denied"
-    except FileNotFoundError:
-        return "missing"
-    except NotADirectoryError:
-        return "not_directory"
-    except OSError:
+    except OSError as error:
+        if getattr(error, "winerror", None) in _UNREACHABLE_WINERRORS:
+            return "unavailable"
+        if isinstance(error, PermissionError):
+            return "permission_denied"
+        if isinstance(error, FileNotFoundError):
+            return "missing"
+        if isinstance(error, NotADirectoryError):
+            return "not_directory"
         return "unavailable"
     return "ok"
 
@@ -137,11 +155,20 @@ def root_online(root: Path) -> bool:
 
 
 
+def _letter_drive(path: Path) -> bool:
+    drive = path.drive
+    return len(drive) == 2 and drive[0].isalpha() and drive[1] == ":"
+
+
 def within_root(path: Path, root: Path) -> bool:
     """路径是否落在授权根内。
 
     字面比较先走一遍；不匹配时用 inode 比较兜底，因为账本里是 `R:\\Media`
     而授权根是 `/Volumes/Media/media`，exFAT/NTFS 大小写不敏感、pathlib 不是。
+
+    Windows 上 inode 比较要 stat 两边，网盘挂载的盘符每次 stat 都是一趟网络往返，而授权根有
+    好几个、每个请求逐个问。所以先按不分大小写的字面比较，两边都是盘符路径且盘符不同就直接
+    不在：不同盘符的同深度前缀只有跨盘的目录联接才会是同一个目录。
     """
     from .smb_media import SmbResource
     if isinstance(path, SmbResource) or isinstance(root, SmbResource):
@@ -150,6 +177,12 @@ def within_root(path: Path, root: Path) -> bool:
         return (path.root_id == root.root_id and path.relative[:len(root.relative)] == root.relative)
     if path == root or root in path.parents:
         return True
+    if os.name == "nt":
+        folded, base = os.path.normcase(path), os.path.normcase(root)
+        if folded == base or folded.startswith(base.rstrip("\\") + "\\"):
+            return True
+        if _letter_drive(path) and _letter_drive(root) and path.drive.casefold() != root.drive.casefold():
+            return False
     depth = len(root.parts)
     if len(path.parts) < depth:
         return False

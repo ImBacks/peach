@@ -9,13 +9,17 @@ from unittest.mock import patch
 import httpx
 from PIL import Image
 
-from peach.community_catalog import COMMUNITY_SOURCES, IMAGE_LIMIT, community_sources_for, verified_cover
+from peach.community_catalog import COMMUNITY_SOURCES, IMAGE_LIMIT, _download, community_sources_for, verified_cover
 from peach.http import HttpResponse
 from peach.jav_cover_fetch import Candidate, NotFound, Unavailable, _fetch
+from peach.javdb_genres import page_genres
+from peach.javdb_public import (PUBLIC_API, PublicIdentityAmbiguous, PublicNotFound, PublicSourcePaused,
+                                PublicSourceUnavailable)
+from peach.library_processing import _previous_order
 from peach.scraping_access import SourcePaused
-from peach.sources import (SITE_SOURCES, AVBaseSource, FailureReason, JavBusSource, JavDBSource, Page, Session,
-                           SourceFailure)
-from peach.sources.javdb import actresses as javdb_actresses
+from peach.sources import (SITE_SOURCES, AVBaseSource, FailureReason, JavBusSource, JavDBPublicSource, JavDBSource,
+                           Page, Session, SourceFailure)
+from peach.sources.javdb import actresses as javdb_actresses, public_record
 
 
 def gradient(width, height, rising=True):
@@ -476,6 +480,116 @@ class SourceChoiceTests(unittest.TestCase):
     def test_a_korean_mib_code_asks_nobody(self):
         """MIB 番号与日本片同形，问 JAV 目录站拿回的是别的作品，只能靠人一条条认出来。"""
         self.assertEqual(community_sources_for("AIN-203"), ())
+
+
+#: 接口类别按 (作品类型, id) 换回详情页原词；测试只登记这几项。
+PUBLIC_GENRES = {"0:28": "單體作品", "0:57": "美臀", "0:74": "肛門・肛交", "3:11": "私人攝影"}
+PUBLIC_MOVIE = {
+    "id": "Zb7mX", "type": 0, "number": "ABW-358", "title": "顯示標題", "origin_title": TITLE,
+    "maker_name": "PRESTIGE,プレステージ", "publisher_name": None, "series_name": None, "director_name": None,
+    "release_date": "2023-05-23", "duration": 210,
+    "cover_url": "https://tp.spfcas.com/rhe951l4q/covers/zb/Zb7mX.jpg",
+    "actors": [{"id": "a", "name": "涼森れむ", "gender": 0}, {"id": "m", "name": "男優", "gender": 1}],
+    "tags": [{"id": "28", "name": "单体作品"}, {"id": "57", "name": "屁股"}, {"id": "74", "name": "肛交"},
+             {"id": "299", "name": "数位马赛克"}]}
+
+
+class PublicSourceTests(unittest.TestCase):
+    """刮削的 javdb 一问走匿名接口：记录与详情页同形，类别按 id 换回原词，失败按缺失、歧义、冷却分档。"""
+
+    def setUp(self):
+        for patcher in (patch.dict("peach.javdb_genres.GENRES", PUBLIC_GENRES, clear=True),
+                        patch("peach.javdb_genres.HIDDEN", frozenset({"0:299"}))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_public_record_has_the_page_snapshot_shape_and_page_genre_words(self):
+        payload = public_record(PUBLIC_MOVIE).payload()
+        page = JavDBSource().parse(Page("https://javdb.com/v/Zb7mX", JAVDB_PAGE), "ABW-358").payload()
+        self.assertEqual(set(payload), set(page))
+        self.assertEqual(payload["genres"], ["單體作品", "美臀", "肛門・肛交"], "译名不进词表，详情页不显示的类别不投出")
+        self.assertEqual((payload["title"], payload["display_title"], payload["origin_title"]),
+                         (TITLE, "顯示標題", TITLE))
+        self.assertEqual(payload["actresses"], [{"japanese_name": "涼森れむ", "profile_source": "javdb", "external_id": "a"}])
+        self.assertEqual((payload["maker"], payload["label"], payload["source_url"], payload["source_id"]),
+                         ("プレステージ", "", "https://javdb.com/v/Zb7mX", "Zb7mX"))
+        record = public_record(PUBLIC_MOVIE)
+        self.assertEqual((record.source, record.provenance), ("javdb", "javdb-api"))
+
+    def test_an_unknown_genre_id_withholds_tags_instead_of_guessing(self):
+        movie = {**PUBLIC_MOVIE, "tags": [*PUBLIC_MOVIE["tags"], {"id": "91", "name": "乳房"}]}
+        self.assertIsNone(page_genres(movie))
+        self.assertNotIn("genres", public_record(movie).payload())
+        self.assertEqual(page_genres({**PUBLIC_MOVIE, "type": 1, "tags": [{"id": "28", "name": "单体作品"}]}), None,
+                         "类别 id 按作品类型分开登记")
+
+    def test_fc2_seller_is_evidence_label_not_studio(self):
+        movie = {**PUBLIC_MOVIE, "type": 3, "number": "FC2-1108030", "maker_name": "至高ぷれみあ！",
+                 "tags": [{"id": "11", "name": "ハメ撮り"}]}
+        payload = public_record(movie).payload()
+        self.assertEqual((payload["maker"], payload["label"], payload["genres"]), ("", "至高ぷれみあ！", ["私人攝影"]))
+
+    def test_query_maps_public_failures_without_holding_the_page_cooldown(self):
+        session = Session(serve({}))
+        cases = ((PublicNotFound("没有"), SourceFailure, FailureReason.NOT_FOUND),
+                 (PublicIdentityAmbiguous("同番号对应多个作品"), SourceFailure, FailureReason.PARSE_ERROR),
+                 (PublicSourceUnavailable("未取得"), SourceFailure, FailureReason.NETWORK),
+                 (PublicSourcePaused("暂时不可用"), SourcePaused, None))
+        for error, kind, reason in cases:
+            with self.subTest(error=type(error).__name__), patch.object(PUBLIC_API, "movie", side_effect=error):
+                with self.assertRaises(kind) as caught:
+                    JavDBPublicSource().query("ABW-358", session=session)
+                if reason is not None:
+                    self.assertEqual(caught.exception.reason, reason)
+                    self.assertEqual(caught.exception.cooldown_action, "")
+        with patch.object(PUBLIC_API, "movie", side_effect=PublicIdentityAmbiguous("x")):
+            with self.assertRaises(SourceFailure) as caught:
+                JavDBPublicSource().query("ABW-358", session=session)
+        self.assertEqual(caught.exception.detail, "identity_ambiguous")
+        self.assertIs(SITE_SOURCES["javdb"], JavDBPublicSource)
+
+    def test_query_returns_the_public_record(self):
+        with patch.object(PUBLIC_API, "movie", return_value=PUBLIC_MOVIE) as movie:
+            record = JavDBPublicSource().query("ABW-358", session=Session(serve({})))
+        movie.assert_called_once_with("ABW-358")
+        self.assertEqual((record.code, record.studio, record.runtime), ("ABW-358", "プレステージ", 210))
+
+    def test_wrapped_public_cover_is_unwrapped_before_comparison(self):
+        body = gradient(800, 538)
+        wrapped = bytes(value ^ 0x7F for value in body)
+        url = PUBLIC_MOVIE["cover_url"]
+        found, outcome = _download(serve({url: wrapped}), Candidate("tp.spfcas.com", url, ""), deadline=None)
+        self.assertEqual((outcome, found.size), ("fetched", (800, 538)))
+
+    def test_same_people_in_another_order_keep_the_previous_candidate_order(self):
+        first = [{"name": "七沢みあ", "external_id": "NPD3"}, {"name": "初川みなみ", "external_id": "E6MM"}]
+        group = {"candidates_json": json.dumps([{"source": "javdb", "value": first}], ensure_ascii=False)}
+        swapped = {"value": list(reversed(first)), "display_value": "初川みなみ、七沢みあ", "warnings": []}
+        self.assertEqual(_previous_order(group, "javdb", swapped)["value"], first)
+        self.assertEqual(_previous_order(group, "javdb", swapped)["display_value"], "七沢みあ、初川みなみ")
+        other = {"value": [first[0]], "display_value": "七沢みあ", "warnings": []}
+        self.assertIs(_previous_order(group, "javdb", other), other)
+        self.assertIs(_previous_order(group, "javbus", swapped), swapped)
+        self.assertIs(_previous_order(None, "javdb", swapped), swapped)
+
+    def test_genre_table_aligns_by_position_infers_hidden_genres_and_refuses_conflicts(self):
+        from scripts.generate_javdb_genres import align
+        rows = [{"type": 0, "api": [{"id": "57", "name": "屁股"}, {"id": "299", "name": "数位马赛克"}],
+                 "html": ["美臀"]},
+                {"type": 0, "api": [{"id": "57", "name": "美臀"}, {"id": "30", "name": "女大学生"}],
+                 "html": ["美臀", "女大學生"]},
+                {"type": 1, "api": [{"id": "30", "name": "3P"}], "html": ["3P"]},
+                {"type": 0, "api": [{"id": "30", "name": "3P"}], "html": ["3P"]},
+                {"type": 0, "api": [{"id": "8", "name": "精选综合"}], "html": []},
+                {"type": 0, "api": [{"id": "65", "name": "苗条"}, {"id": "65", "name": "苗条"}], "html": ["苗條"]},
+                {"type": 0, "api": [{"id": "57", "name": "美臀"}, {"id": "390", "name": "LTX破解"}], "html": ["美臀"]},
+                {"type": 0, "api": [{"id": "65", "name": "苗条"}, {"id": "299", "name": "数位马赛克"}], "html": ["苗條"]}]
+        table, hidden, conflicts, skipped = align(rows)
+        self.assertEqual(table, {"0:57": "美臀", "0:65": "苗條", "1:30": "3P"},
+                         "重复类别先去重；只多出详情页不显示的那项时其余照样对齐")
+        self.assertEqual(hidden, ["0:299"], "只有一部作品为证的 390 不算详情页不显示")
+        self.assertEqual(conflicts, {"0:30": ["3P", "女大學生"]})
+        self.assertEqual(skipped, 2)
 
 
 if __name__ == "__main__":

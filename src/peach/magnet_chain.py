@@ -20,9 +20,12 @@ from bs4 import BeautifulSoup
 from .catalog_rules import normalise_code_key, release_code_from_text, same_release_code
 from .downloads import parse_magnet
 from .jav_cover_fetch import HostLimitedTransport
+from .javdb_public import (_CACHE_ROOT, PUBLIC_API, PublicIdentityAmbiguous, PublicRequestBudget,
+                           PublicSourceUnavailable, public_cache_scope)
 from .resource_search import qualities
 from .scraping_access import SourceTransport
-from .sources import JavDBSource, Session, SourceFailure
+from .sources import FailureReason, Session, SourceFailure
+from .task_retry import transient_delay
 
 HIGH_QUALITY = 1080
 MAX_RESULTS = 8
@@ -218,12 +221,20 @@ class Fetcher:
         return rank_candidates(found)
 
     def javdb(self, code: str) -> list[dict]:
+        """匿名 API 现取磁链区与前四页评论；快照兜底的失败也记成警告，预算跟随本轮期限。"""
         source = CHAIN[1]
-        result = JavDBSource().resources(code, session=self.session)
+        budget = PublicRequestBudget(max_requests=12, max_seconds=max(1, self.deadline - time.monotonic()))
+        try:
+            with public_cache_scope(_CACHE_ROOT.get()) as reads, PUBLIC_API.request_budget(budget):
+                result = PUBLIC_API.resources(code, refresh=True, review_pages=4)
+        except PublicSourceUnavailable as error:
+            reason = FailureReason.PARSE_ERROR if isinstance(error, PublicIdentityAmbiguous) else FailureReason.NETWORK
+            raise SourceFailure(reason, str(error)) from error
+        stale = [f"已沿用上次结果：{read['error']}" for read in reads if read['error']]
+        result["warnings"] = list(dict.fromkeys([*result["warnings"], *stale]))
         self.resource_result = result
-        return rank_candidates([candidate for item in result.get("items", ())
-                                if (candidate := _normalise({**item, "source_url": result.get("source_url")},
-                                                            source, code))])
+        return rank_candidates([candidate for item in result["items"] if (candidate := _normalise(
+            {**item, "file_count": int(item["files"]) if item["files"].isdigit() else 0}, source, code))])
 
     def sukebei(self, code: str) -> list[dict]:
         from .sources.base import SiteConfig
@@ -269,7 +280,7 @@ def search(root: Path, code: str, *, transport=None, min_size: int = 0,
            max_size: int = 1024 ** 4, goal: str = "quality", stop_on_preferred: bool = True) -> dict:
     """有界查询三个可直连来源；直接添加允许在 manko 高清命中时结束。"""
     fetcher = Fetcher(root, transport=transport)
-    trace, warnings, found = [], [], []
+    trace, warnings, found, retry_delays = [], [], [], []
     try:
         for source, collect in ((CHAIN[0], fetcher.manko), (CHAIN[1], fetcher.javdb),
                                 (CHAIN[2], fetcher.sukebei)):
@@ -278,9 +289,13 @@ def search(root: Path, code: str, *, transport=None, min_size: int = 0,
             except SourceFailure as error:
                 items = []
                 warnings.append(f"{source.label}：{error}")
-            except Exception:
+                if (delay := transient_delay(error)) is not None:
+                    retry_delays.append(delay)
+            except Exception as error:
                 items = []
                 warnings.append(f"{source.label}：未取得")
+                if (delay := transient_delay(error)) is not None:
+                    retry_delays.append(delay)
             items = [item for item in items if min_size <= item["size"] <= max_size]
             found.extend(items)
             if stop_on_preferred and source.key == "manko" and any(item["resolution"] >= HIGH_QUALITY for item in items):
@@ -291,6 +306,7 @@ def search(root: Path, code: str, *, transport=None, min_size: int = 0,
         fetcher.close()
     incomplete = bool(warnings) and not found
     result = {"items": rank_candidates(found, goal), "warnings": warnings, "trace": trace,
+            'retry_after': max(retry_delays) if retry_delays else None,
             'state': 'error' if incomplete else 'ready',
             'error': '部分来源未取得，请稍后重试或检查来源连接。' if incomplete else '',
             "next_sources": [source.label for source in CHAIN[3:]],

@@ -1,5 +1,29 @@
 # 复用清单
 
+## 内容与骨架的显示边界
+
+馆藏网格复用 `catalog-grid` 的视口测量和无限加载，首批条目不等待聚合统计；`summary_only=1` 独立读取同口径总数。人物资料先显示身份，作品、照片与新作分别加载；图片等待留在各自的图片格。关注凭据、订阅统计、任务状态与来源信息不阻挡已经取得的主内容，未取得的读数保留占位，操作仍等对应状态确认。
+
+馆藏网格、表格、播放舞台和表单继续复用 `fitSkeleton`、页面模板、`SkeletonContent`、`AsyncText` 与已有形状记忆。[Skullet](reference-snapshots/skullet-content-first.md) 固定为 `0.0.3`，仅在关注概览的六个只读读数中自动测量和记忆形状，随低频页面按需加载。数据就绪即显示，150 ms 仅用于抑制骨架闪现，不延迟真实内容；首次失败显示「未取得」，后台重读保留已有值。
+
+`MeasuredReading` 只接收固定字段、数值与总数；隐藏样本不含请求、Portal、媒体或操作控件。上游持久化填充不替换中文，因此不传入作品名、路径、自由文本或用户资料。微光通过 Shadow DOM 的构造样式表复用 Peach 配色和节奏，减少动效时静止；外层隐藏规则兼顾不支持 `@scope` 的浏览器。原位编辑在骨架之外，形状调试沿用上游 `skullet-debug` 参数；不在大列表的每行创建测量边界。
+
+数据管理的复核计数与完整复核页共用按候选文件版本和账本依赖表失效的精确成员快照。计数不加载卡片旁证、图片和预览；完整卡片先深复制成员，再补展示字段，不能改写共享快照。来源番号身份判断只在同一次投影中复用，来源标识不同仍分别核验；批准仍重新读取原始候选与最新账本。
+
+## 账本一致性与运行状态恢复
+
+资产删除与个人记录归入复用 `purge_assets()`、`record_rehome.move()` 和既有快照撤回机制，显式维护 `follow_item.asset_id`，不依赖运行连接的外键开关。稍后看沿用偏好写入的事务内资产存在性检查。关闭外键的迁移在提交前检查引用，数据、结构和版本登记一同回滚；备份恢复在暂存升级后及写回后补验外键。
+
+后继结算与升级派发沿用 `TaskRunStore.prune()` 的保留入口，后继的失败项继续保留以供重试；任务历史清退时保留下载状态并清空过期运行链接。恢复旧备份后按任务类型及下载任务的互斥键、后继键核对链接，避免编号复用接到其他任务。迁移 0052 为任务根引用和关注资产引用建立索引，将任务删除清理拆为分别按两列查询，并移除已被现有索引覆盖的四个旧库索引。
+
+自动关注与订阅调度复用 `FollowUpdateScheduler`、APScheduler 和原子状态文件，保存失败次数、运行结论及下次时间；来源冷却在 `FollowMediaResolver` 中以绝对截止时间保存，重启后换算为当前单调时钟。成功检查重置持久失败状态。日期番号的身份审计按资产番号解释 `date-code:<资产 ID>:<字段>`，命名空间不参与来源番号比较。以上均复用标准库与已有依赖。
+
+## 活动任务速度与分页
+
+任务档位复用 `ProcessingControl` 的低占用、标准、全速参数以及 `TaskRunStore`、`task_control` 的任务归属、后继关系与安全停点。默认档位通过既有设置接口保存，任务创建时固定本轮选择，逐任务改速使用独立原子状态文件；清退任务时回收对应状态。HTTP、媒体探测和 FFmpeg 消费同一档位，已启动媒体步骤的线程选项在下一步骤应用。
+
+活动页复用 `ProcessingMode`、`DataTableFooter`、`Disclosure`、`CollapseRegion` 和现有 Sonner 通知栈。历史与云下载查询沿用既有排序，补充总数、页码与偏移；原游标接口继续服务既有调用方。实现没有新增外部依赖。
+
 ## 跨平台任务资源计量
 
 继续使用 psutil 7.2.2 读取进程 CPU 时间和身份。该版本的 macOS 线程列表使用序号，不能与 Python 原生线程 ID 对应；因此使用系统 `libproc` 的 `PROC_PIDTHREADID64INFO` 取得指定线程的纳秒时间，接口与单位见 [XNU 实现](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/bsd_kern.c)。Linux 的可用 CPU 容量复用亲和性、控制组成员和挂载信息，按可见 cgroup v1/v2 配额归一化。
@@ -14,7 +38,7 @@ Linux GPU 读取 [DRM fdinfo 标准](https://docs.kernel.org/gpu/drm-usage-stats
 
 ## 按女优删除影片
 
-数据管理页的「批量删除」复用 `DataTable` 的排序、分页和跨页勾选、女优名册的姓名与头像装配、`confirmModal()`、`purge_assets()` 和缓存清理入口，不新增依赖。`/api/performer/delete-plan` 按所选实体 ID 的并集列出全部视频，包括回收站记录；多人共同出演的文件去重。执行前在写锁内核对清单摘要，关联、路径或记录版本变化时拒绝旧清单。永久删除沿用媒体先隔离、账本失败恢复、文件失败保留记录的顺序，保留女优档案、照片与其他人物的独立影片；多人出演的同一文件会从所有关联人物的作品中消失。
+数据管理页的「批量删除」复用 `DataTable` 的排序、分页和跨页勾选、女优名册的姓名与头像装配、`confirmModal()`、`purge_assets()` 和缓存清理入口，不新增依赖。`/api/performer/delete-plan` 按所选实体 ID 的并集列出全部视频，包括回收站记录；多人共同出演的文件去重。隔离媒体前和删行的写事务里各核对一次清单摘要，关联、路径或记录版本变化时拒绝旧清单并放回已隔离的文件。永久删除沿用媒体先隔离、账本失败恢复、文件失败保留记录的顺序，保留女优档案、照片与其他人物的独立影片；多人出演的同一文件会从所有关联人物的作品中消失。
 
 ## 教程中心与界面导览
 
@@ -25,6 +49,12 @@ Linux GPU 读取 [DRM fdinfo 标准](https://docs.kernel.org/gpu/drm-usage-stats
 采用 bbingz 的 [PR #205](https://github.com/peach-mitao/peach/pull/205)，固定来源提交 `bbf5aac8e9562211c324c2019bff35888266df84`，许可证沿用本项目 AGPL-3.0-or-later。作品筛选集合先在独立子查询中求出，创作者、标签和演员按既有关系聚合，保留去重计数与标签可见性。没有选中标签时移除无效 `tag_match`，复用既有修订缓存、同键锁与跨连接写入失效机制，不在线改写 SQLite 统计或增加索引迁移。
 
 顶部人物、厂牌的 `q_tops` 复用同一筛选方式：独立求出可用作品集合，再按实体聚合，保留代表作选择、种子抽样、续页和修订缓存。错误统计回归使用临时账本、冷缓存与新连接，按作品数量限制判定调用量，核对默认、JAV、已看及组合范围的输出等价。运行时不写 ledger，不改 SQLite 统计或索引。
+
+头像匹配的 Gfriends 本地索引复用标准库 `lru_cache`，仅保留当前文件身份的解析结果。文件身份包含修改时间、变更时间、大小与文件编号；更新或原子替换后重读，缺失与解析失败沿用既有处理。匹配端只读共享结果，后台刷新与来源优先级保持同一实现。
+
+实体页形状的全库查询按资产展开关系，以存在性判断同台人物；单实体深链沿实体索引读取。全库版本缓存与声明表范围的缓存共用按键计算锁，计算期间的提交由下一次修订核验处理。复用现有 SQLite 查询与聚合缓存，不增加索引、迁移或运行依赖。
+
+采纳 [PR #298](https://github.com/peach-mitao/peach/pull/298) 的后端查询与解析差集：SQLite 纯分类回调按账本实例复用有界结果，库根分类仍沿用当前 `sql_is_local_extra`；馆藏的总数、体积与作品数按筛选集合及媒体根缓存，排序与分页共用。统计在依赖表变动后同步重算，避免新列表配旧统计。卡片展示顺序、统计加载时机和前端布局沿用当前实现。
 
 ## 混合媒体根与模型读取
 
@@ -126,7 +156,7 @@ React 与应用层的 GET 入口共用 `frontend/src/core/library-scope.ts`：�
 
 ## 正式测试记录与中断恢复
 
-交付预检复用已有的提交主题、共同署名与 README 影响检查，不新增规则解释器。合入前的 PR 身份复用 [GitHub CLI 的 `gh pr view`](https://cli.github.com/manual/gh_pr_view)，使用工作树仓库上下文和原生 JSON 字段；Peach 只校验开放状态、精确提交及目标分支，不引入 GitHub SDK 或另一套凭据存储。临时 Git 工作树回归覆盖未取得 PR、旧提交、其他目标、远端查询期间内容变化及成功合并回执。
+交付预检复用已有的提交主题与共同署名检查，不新增规则解释器。合入前的 PR 身份复用 [GitHub CLI 的 `gh pr view`](https://cli.github.com/manual/gh_pr_view)，使用工作树仓库上下文和原生 JSON 字段；Peach 只校验开放状态、精确提交及目标分支，不引入 GitHub SDK 或另一套凭据存储。临时 Git 工作树回归覆盖未取得 PR、旧提交、其他目标、远端查询期间内容变化及成功合并回执。
 
 测试结果继续复用 Python ≥3.14 标准库 `unittest`、`hashlib`、`json` 和项目的内容快照、影响域映射与外部测试结果。互斥复用既有 `filelock 4.2.0`，分片退出后回收其进程树复用开发依赖 `psutil 7.2.2`；版本与许可沿用锁定依赖及第三方许可清单，不新增运行时依赖。Peach 保留输入身份、逐文件覆盖、完成报告、批次来源和 `ready`／`integrate` 验收规则；串行、并行、浏览器与 Vitest 使用同一个恢复模型。
 
@@ -229,7 +259,9 @@ npm 安装沿用 Node.js 24 LTS 附带的官方 [`npm ci`](https://docs.npmjs.co
 
 ## 作品卡片与推荐理由
 
-目录、实体作品区、竖屏条与接着看复用 `MediaCard`。多列网格统一卡片高度，`MediaGrid` 沿用现有 `ResizeObserver` 和 `gridTemplateColumns` 测量方式，单列按实际内容定高。元信息保持一行，容器查询按扣除头像后的文字区宽度决定日期、共演人数与体积的显隐。普通卡片保留最多五枚共演头像，常态按实际紧叠宽度占位，在 45px 至 109px 之间随卡宽压缩。悬停与键盘聚焦时头像浮于文字上方展开并抬起对应头像，不预留展开空间，标题列位置保持稳定；占位文字始终居中，图片沿用原有头像取景。接着看和竖屏条保留两枚头像，新作卡片复用同一几何。稍后看复用已有动作回调、撤销回执与中性填充 token，同步按钮和卡片底色，不渲染状态色块及观看次数。
+目录、实体作品区、竖屏条与接着看复用 `MediaCard`。多列网格统一卡片高度，`MediaGrid` 沿用现有 `ResizeObserver` 和 `gridTemplateColumns` 测量方式，单列按实际内容定高。元信息保持一行，容器查询按扣除头像后的文字区宽度决定日期、共演人数与体积的显隐。普通卡片保留最多五枚共演头像，常态按实际紧叠宽度占位，在 45px 至 109px 之间随卡宽压缩。小于 320px 的卡片使用紧凑头像；首页、实体资料页的旧模板新作横排与 React 卡片共用 `--media-avatar-tight`、`-step`、`-max` 几何变量。悬停与键盘聚焦时头像浮于文字上方展开并抬起对应头像，不预留展开空间，标题列位置保持稳定；占位文字始终居中，图片沿用原有头像取景。接着看和竖屏条保留两枚头像。稍后看复用已有动作回调、撤销回执与中性填充 token，同步按钮和卡片底色，不渲染状态色块及观看次数。
+
+新作横排使用 `feedNewCardHtml`／`feedIdentity`，同时影响首页、女优与厂牌详情；JAV 新作、发现使用 `DiscoveryCard`。新作卡的标题、姓名、日期按独立行排列，不使用馆藏虚拟列表的密集行高估计。JAV 卡片页的顶部密度与多选入口由壳路由判定，选择集留在 `JavSelectionProvider`，按番号跨页保留，不混入馆藏资产 ID；卡片、列表共用本页全选及 `SelectionDock`。批量加入想要复用 `/api/wants`，成功项移出选择，失败与未提交项保留；批量查找复用 `WantMagnets` 和既有作品资源接口，查询不自动提交下载。
 
 接着看的推荐理由独占两行，完整内容使用已安装的 React Aria Components 1.22.1（Apache-2.0）`Popover`／`Dialog` 与现有 BoardUI 浮层样式展示，触屏、键盘与鼠标共用同一入口。没有新增依赖、API、迁移或 ledger 写入。
 
@@ -260,6 +292,10 @@ React 页面复用 `EmptyState`，HTML 页面复用 `emptyStateHtml`。图标统
 测试差异复用 Git 文件快照、Python AST、标准库 TOML/JSON 解析器及现有 filelock。Python 注释和清单说明字段通过有效内容比较识别；真实依赖、执行模式和无法解析的输入保留完整验证。完整批次按测试文件保存结果，仅补齐受影响范围，不延长结果有效期。
 
 JS/TS 文案复用 [Oxc parser](https://oxc.rs/docs/guide/usage/parser)，开发依赖固定 `oxc-parser@0.154.0`，MIT 许可，来源为 [Oxc 官方仓库](https://github.com/oxc-project/oxc)。项目 Vite/Oxlint 工具链已有 Oxc；独立 Node 检查器解析注释、字符串、模板与 JSX，不进入应用运行包。前端源码解析错误为零。Tree-sitter 的试用在具名元组成员与 JSX 查询参数处产生错误，未采用；不新增 Python 解析器依赖。中文和英文判据集中于 `scripts/copy-rules.json`，含糊词语只提示人工核对。
+
+## 界面翻译
+
+界面文案的翻译复用 [i18next](https://www.i18next.com/)，运行依赖固定 `i18next@27.0.1`，MIT 许可，来源为 [i18next 官方仓库](https://github.com/i18next/i18next)，没有传递依赖。它提供插值、按 `Intl.PluralRules` 选复数形式、缺键回落源语言，资源格式 i18next JSON v4 也是 Weblate、POEditor 直接支持的格式，换平台不用转换。只用核心库：界面语言在页面载入时定下，换语言整页重载，用不到 `react-i18next` 的响应式能力。写死中文的计数和术语扫描复用上一节的 Oxc parser；术语表用 Weblate 能读出禁用标记的 TBX，前端测试用 happy-dom 自带的 `DOMParser` 解析，后端不新增解析依赖。后端发给界面的文字带 `message_code`，由前端同一份 i18next 实例在 `server` 命名空间里翻译；后端中文的计数复用标准库 `ast`。决策见 [ADR-0156](adr/0156-interface-translation.md)。
 
 ## macOS 独立构建
 
@@ -313,7 +349,7 @@ Windows 复用 FFmpeg 的 D3D11VA 解码与 `h264_amf`、`h264_qsv` 编码，沿
 
 ## GitHub 项目看板
 
-用户反馈归属应用仓库 `peach-mitao/peach`，维护者项目任务归属 `peach-mitao/peach-roadmap`，共同使用一个公开 Project。集中在应用仓库处理事件并每 6 小时补查规划仓库，凭据仅保留在应用仓库。Issue 关联使用仓库名与编号，迁移映射兼容已存在的关联行；交付版本始终按应用仓库的主线提交和发布制品核验。
+用户反馈归属应用仓库 `peach-mitao/peach`，维护者项目任务归属 `peach-mitao/peach-roadmap`，共同使用一个公开 Project。集中在应用仓库处理 PR、主线与发布事件，每小时同步两仓 Issue，不逐次响应 Issue 的编辑、标签与开闭事件，凭据仅保留在应用仓库。应用仓库的新 Issue 复用 `issue_intake.verdict` 的模板准入判定；已有条目因待补模板关闭时，以 GitHub `closedAt` 为起点保留 2 小时修改窗口，再按当前状态同步。Issue 关联使用仓库名与编号，迁移映射兼容已存在的关联行；交付版本始终按应用仓库的主线提交和发布制品核验。
 
 看板同步复用 GitHub CLI 的已登录认证、GraphQL Projects API 和 Git 的提交祖先校验；不新增 Python 依赖。官方 [Projects Actions 自动化](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/automating-projects-using-actions)支持独立项目凭据，仓库默认令牌不能写组织 Project。项目原生状态工作流没有发布标签与制品归属判定；通用自动加卡 Action 也不覆盖验收和发布的分别记录，因此由 `scripts/project_board.py` 保留 Peach 的状态规则，传输与认证交给系统已安装的 `gh`。运行依赖是官方维护、MIT 许可的 GitHub CLI 和 GPL-2.0 Git，使用 GitHub 托管 runner 内置版本；本机只读 GraphQL 与标签祖先验证后再应用。无生产服务、ledger 或媒体写入。
 
@@ -329,11 +365,11 @@ DMM / MGS 的只读商品号识别复用 `sources.dmm` 的 CID 结构与 `catalo
 
 配置页继续使用 BoardUI Button / Input / Select 与共享 Note。配对信息复用当前页面 origin、签发响应和浏览器 Clipboard API，脚本在用户粘贴时填表，保存后写入 GM 存储。同源子框架桥接只回报脚本版本和当前地址的配置状态，父窗口、origin、协议版本与一次性 nonce 均须匹配，不回传令牌。未收到回报显示「未检测到」，不推断安装列表。桥接路径窄匹配与来源站顶层注入分别处理；实际脚本管理器权限和扩展联合验收未取得。无新增运行依赖、迁移或 ledger 写入。
 
-书签不能执行云下载链路；完整浏览器扩展增加发布与权限管理面；现有外部下载器不承接 Peach 的网盘目标、入库和后处理，因此未引入。临时账本与模拟 115／PikPak 的 API 回归验证搜索、重复点击、重启恢复、失败重试和凭据隔离；用户脚本及配置页通过桌面与 390×844 浏览器回归。无新增 ledger 表或迁移。
+书签不能执行云下载流程；完整浏览器扩展增加发布与权限管理面；现有外部下载器不承接 Peach 的网盘目标、入库和后处理，因此未引入。临时账本与模拟 115／PikPak 的 API 回归验证搜索、重复点击、重启恢复、失败重试和凭据隔离；用户脚本及配置页通过桌面与 390×844 浏览器回归。无新增 ledger 表或迁移。
 
 ## 长跑任务的结果显示
 
-资料采集与关注检查复用已有字段判据、事务和候选复核。全部本地 NFO 先读取并按影片提交；在线资料按来源返回时提交，候选 CSV 仍按时间合并落盘。关注列表的安全 partial 行与逐项详情分别保存，历史边界和整页游标沿用连接器规则。中断保留已提交结果，停止后不再落库。
+资料采集与关注检查复用已有字段判据、事务和候选复核。全部本地 NFO 先读取并按影片提交；在线资料按来源返回时提交，候选 CSV 仍按时间合并写入文件。关注列表的安全 partial 行与逐项详情分别保存，历史边界和整页游标沿用连接器规则。中断保留已提交结果，停止后不再落库。
 
 显示层复用 SQLite `ledger_revision` 触发器、候选与图片目录版本，以及 TanStack Query 5.104.3（MIT）查询失效和任务轮询；不新增推送服务或依赖。应用根按结果版本刷新相关读缓存，任务心跳不使资料失效；慢请求期间的新版本排队，保留当前内容。资源同步扫描同时显示已完成来源，清理仍需完整扫描和确认。隔离账本、暂停的来源调用与手动放行的 Promise 验证中间结果可见及中断保留；无真实抓取或真实 ledger 写入。
 
@@ -347,7 +383,7 @@ DMM / MGS 的只读商品号识别复用 `sources.dmm` 的 CID 结构与 `catalo
 
 响应头策略复用 Starlette 1.8.0（BSD-3-Clause，项目已有固定依赖）的 `MutableHeaders` 与官方 [ASGI 中间件模式](https://www.starlette.io/middleware/#pure-asgi-middleware)，只在 `http.response.start` 阶段设置缓存、安全及机器人策略。文件响应继续使用同一 `receive` 的断连消息，真实异常直接传播，不维护异常文本匹配或统一忽略网络错误的分支。整片转码继续复用 FFmpeg 和现有回退链，Peach 只保留有界本机证据与隐私投影，无新增依赖。
 
-本机诊断继续复用项目的脱敏日志与 ZIP 导出，浏览器使用标准 `canPlayType()`、MSE、Resource Timing 和有界的 [UA Client Hints](https://developer.mozilla.org/en-US/docs/Web/API/NavigatorUAData/getHighEntropyValues)，服务端复用 Python 3.14 标准库的依赖元数据、磁盘余量、系统信息以及现有媒体探测缓存。字段白名单和本机证据汇总属于 Peach 的诊断边界；浏览器监控 SDK 会扩大依赖与采集范围，不承担这条本机导出链路。依赖沿用 Video.js 10.2.0 与现有 FFmpeg，不增加运行时依赖，不为导出执行媒体读取或硬件压力探测。能力声明与真实播放的区别按 [MDN `canPlayType()`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/canPlayType) 和 [Video.js 媒体来源契约](https://videojs.org/docs/framework/html/guides/media-sources)核对，隔离回归覆盖无视频请求、编码能力缺失、错误状态、脱敏和仅本机写入。
+本机诊断继续复用项目的脱敏日志与 ZIP 导出，浏览器使用标准 `canPlayType()`、MSE、Resource Timing 和有界的 [UA Client Hints](https://developer.mozilla.org/en-US/docs/Web/API/NavigatorUAData/getHighEntropyValues)，服务端复用 Python 3.14 标准库的依赖元数据、磁盘余量、系统信息以及现有媒体探测缓存。字段白名单和本机证据汇总属于 Peach 的诊断边界；浏览器监控 SDK 会扩大依赖与采集范围，不承担本机导出流程。依赖沿用 Video.js 10.3.0 与现有 FFmpeg，不增加运行时依赖，不为导出执行媒体读取或硬件压力探测。能力声明与真实播放的区别按 [MDN `canPlayType()`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/canPlayType) 和 [Video.js 媒体来源契约](https://videojs.org/docs/framework/html/guides/media-sources)核对，隔离回归覆盖无视频请求、编码能力缺失、错误状态、脱敏和仅本机写入。
 
 STRM 采用文本指针、播放时解析的通用行为，参考 SmartStrm 文档、OpenList 的 `drivers/strm` 与 Jellyfin 的 STRM 探测入口；固定 revision、许可证与实际读取位置见 [取证记录](reference-snapshots/strm-source-evidence.md)。SmartStrm 核心闭源，源码未取得。Peach 独立实现受限 HTTP(S) 指针，复用 HTTPX、现有 Range 传输、`m3u8` 解析与播放器计划；无新增运行依赖，也不复制上游应用代码。
 
@@ -362,6 +398,8 @@ Actions 工作流静态检查复用 actionlint 1.7.12（MIT，`rhysd/actionlint:
 界面逐字采用 MIT 许可的 BoardUI Tree View、Breadcrumb 与 Direction，固定源码 SHA-256 见 `frontend/src/react/boardui/ORIGIN.md`；复用现有 React 19.3.0、React Aria Components 1.22.1、Motion 14.1.0 与 Remix Icon 4.9.0，无新增依赖。Peach 的原生链接适配上游 `next/link` 槽，领域逻辑仅承担目录归属、冲突保留、范围确认和来源撤回。能力检索覆盖当前媒体库分组、目录否定、字段归属和 `media_libraries.py` 的 Git 历史；物理目录整理继续使用既有入口。验证只使用临时账本与合成馆藏。
 
 Linux Docker 容器复用 Docker 官方 Python `3.14.8-slim-trixie`、uv `0.13.1`（MIT/Apache-2.0），以及 Docker 官方 Buildx、login-action 和 build-push-action 的「先验收再发布」流程。Python 镜像许可证随上游组件保留，FFmpeg 使用 Debian 包及其许可证。Peach 差异仅为配置重载、资料处理请求与持久化路径；不引入新 Python 依赖，不改写真实 ledger。CloudDrive2 使用其官方独立服务，不复制其代码或打包进 Peach。部署与证据范围见 [Docker 部署](DOCKER.md)。
+
+Docker 一键更新复用 [nicholas-fedor/watchtower](https://github.com/nicholas-fedor/watchtower) 1.23.2（Apache-2.0，`nickfedor/watchtower:1.23.2`，2026-10-22 发布；原 `containrrr/watchtower` 已于 2025-12 归档）完成拉取与重建，作为 compose 的可选 profile 独立运行，版本由 Dependabot 的 docker-compose 生态更新。2026-11-04 读过 v1.23.2 源码：`POST /v1/update?async=true` 立即回 202，令牌经 `getSecretFromFile` 从文件读取，停容器时按容器自己的 `StopTimeout`。Peach 只保留开放条件、本机令牌与触发请求，传输复用 HTTPX。镜像仓库核对复用共享 `HttpxTransport`（跨源跳转时丢掉 `Authorization`），按 [Docker Registry HTTP API](https://distribution.github.io/distribution/spec/api/) 匿名 `HEAD` manifest 比较摘要，做法参照 [JavBoss `internal/update/container.go`](https://github.com/Solr159/JavBoss)（GPL-3.0，只参照协议用法，未复制代码）。拒绝给 Peach 容器挂 Docker socket 与自写更新容器的理由见 [ADR-0140](adr/0140-docker-one-click-update-via-watchtower.md)；无新增 Python 或前端依赖。
 
 收藏窗口复用 React Aria 外壳、Peach 设置弹层布局及共用关闭控件 `SettingsDialogClose`。入口为中性星形按钮；实体分类和保存的筛选分别显示，已标记与稍后看位于导航底部。收藏图像复用实体引用、厂牌标识、本地代表作与已绑定在线来源的本地头像代理，通过全站图片回退链逐项尝试，不写入偏好。原始 BoardUI 源码哈希见 `docs/BOARD_UI.md`。Rule34 视频封面使用来源缩略图，图片保留原文件扩展名；失败图片在关注数据刷新时重新尝试。无新增运行时依赖或真实 ledger 写入。
 
@@ -439,6 +477,8 @@ Babepedia 主图库和 Vixen 网络公开 GraphQL 的字段核对 [Stash Communi
 
 公司资料复用 `entity.metadata_json`、HTTPX、官网公司概要表和定义列表与标识采集器。`company_profiles` 只有通用判据（概要标签、服务条款订立方原句），按字段保存出处、原文和批次，只填空；一页多张公司表时按法人名对实体名与别名选表，公司成立与品牌启动分列，集团与分工关系不由代码推导，只作候选。`harvest_company_profiles.py` 默认产复核 JSON，`--input --apply --backup --batch auto:company-profile@…` 按缓存页重放判据后落库，清单里的别名、链接与第三方页面不写。`revert_auto_landing.py` 可撤回同批公司字段及标识，无新增依赖。
 
+avbase 女优页补位（ADR-0136）参考 OpenAver `ae7fc235`（MIT）的来源选择，只借用「女优页地址加 `__NEXT_DATA__` 字段」这个做法，没有复制源码。取页复用 `MinnanoPages` 的缓存、冷却与请求上限，传输用 `SourceTransport`。实测 httpx 带 Chrome UA 就能取到页，所以没有照上游改走 curl_cffi。解析与 `sources/avbase.py` 的作品页共用同一个 `__NEXT_DATA__` 读法，名字锚定复用 `performer_alias_followup` 的 `search_keys`、`match_key`、`rejection`，资料写入复用 `performer_profiles.write_profile`。无新增依赖。
+
 Babepedia 资料采集复用 `babepedia_page` 的主名与别名交叉核对、`performer_profiles` 的整行来源保护和 `performer_alias_followup.land` 的占用检查。英文艺名只在明确允许的来源中登记，单个罗马字词只在它就是页面主名时登记，JAV 后继保留自己的名字策略。真人账号与出演者共用资料表、别名分组与头像候选；保留账号角色及旧地址，与已登记账号说法不一的链接只进回执。出演者主图经 `avatar_followup.match_gallery` 与单人作品封面比上脸才补空头像，账号与本人档案图库仅作候选，推荐人物排除，单图失败继续其余有限候选；候选表只认判词「命中」的档案地址。`harvest_western_profiles.py` 每轮至多 16 位，计划、备份、回执与批次撤回齐备；既有资料和头像保留。真实只读复核取得 Ria Kurumi 等 16 份匹配档案，无新增依赖。
 
 身份分类复用 `entity`、来源关系、`field_owners`、SQLite 迁移与版本触发器。职业与账号角色使用独立多值断言，跨角色身份使用可撤回关系；[Schema.org Person](https://schema.org/Person) 的 `hasOccupation`、`sameAs` 与 [Role](https://schema.org/Role) 提供语义参照，2026-10-06 已核对官方文档。实现不复制外部解析器或新增依赖。目录推断和搜索命中只存候选，公开来源事实与用户复核分别保留状态。
@@ -451,15 +491,15 @@ FC2 卖家名册复用 `sources/fc2.py` 的 `label`、`seller_url` 来源契约�
 
 关注页的创作者行与卡片头像、署名复用 `FollowAuthorLink` 和来源的唯一实体绑定，进入创作者资料页；卡片按实际发布者取身份。未建档作者沿用关注筛选。创作者行横滚访问全部作者。筛选条件与卡片悬停面留 16px；首页、关注页和资料页共用交集条。`useViewGlide` 复用 `ResizeObserver` 监听显隐与相邻控件尺寸，`moveGlidePane` 在重新落位时取消位移和形变动画，无新增依赖。
 
-JAV 发现卡复用馆藏的 `data-media-card` 网格与悬停面、`coverImage` 封面取景、`cardRatio` 大小图比例和 `feedIdentity` 身份头像；筛选复用 `FilterGlassRows`、`FilterPill`、`Segments` 与 `SortKeys`。出演者引用由 `web_catalog.entity_ref` 提供图片版本与取景；标题保留两行，操作区贴底。发现查询复用口味汇总与 `related.rank_related` 的 IDF/MMR，输出相关度和实际选择分，支持口味、发行日期、来源评分、时长、番号排序。来源资料复用 `PublicAPI`、`BackgroundJob(runs=None)`、`fsutil.atomic_write_text` 与标准库 `ContextVar`；固定至多 100 部，真实 HTTP 预算 202 次、16 MiB、900 秒，3 秒串行间隔。资料边车有效期 6 小时、最多 2,048 条、失败冷却 15 分钟，完成或停止后由显式刷新续跑。`WantMagnets` 以 `queryUrl` 共用作品详情和想要清单的资源布局，按资源区容器宽度排列操作，缓存按来源分开，容量复用 `fmtSize`。JAV 与名册的静态搜索框复用 `islandSearchInput`。资料扩展见 [JAV 发现](JAV_DISCOVERY.md)，无新增依赖。
+JAV 发现卡复用馆藏的 `data-media-card` 网格与悬停面、`coverImage` 封面取景、`cardRatio` 大小图比例和 `feedIdentity` 身份头像；筛选复用 `FilterGlassRows`、`FilterPill`、`Segments` 与 `SortKeys`。出演者引用由 `web_catalog.entity_ref` 提供图片版本与取景；标题保留两行，操作区贴底。发现查询复用口味汇总与 `related.rank_related` 的 IDF/MMR，输出相关度和实际选择分，支持口味、发行日期、来源评分、时长、番号排序。来源资料复用 `PublicAPI`、`BackgroundJob(runs=None)`、`fsutil.atomic_write_text` 与标准库 `ContextVar`；固定至多 100 部，真实 HTTP 预算 202 次、16 MiB、900 秒，0.5 秒串行间隔。资料边车有效期 6 小时、最多 2,048 条、失败冷却 15 分钟，完成或停止后由显式刷新续跑。`WantMagnets` 以 `queryUrl` 共用作品详情和想要清单的资源布局，按资源区容器宽度排列操作，缓存按来源分开，容量复用 `fmtSize`。JAV 与名册的静态搜索框复用 `islandSearchInput`。资料扩展见 [JAV 发现](JAV_DISCOVERY.md)，无新增依赖。
 
-JAV 作品详情与馆藏视频共用 `IdentityCell` 的头像、标识和首字回退，标题折叠复用 `useFoldedTitle`。厂牌大小写唯一匹配与 `sources.javdb.maker_writing` 的日英组合解析只用于来源身份投影，标识按规范名读取。评论、资源复用 `Disclosure` 和 `setCollapseOpen`；来源与评论评分共用按小数裁切填充的星星。桌面右栏以 `contain:size` 排除正文的固有高度贡献，媒体区决定框体高度，正文在右栏内滚动。写操作取 `/healthz` 的账本只读状态，与运行配置权限分别处理。图片切换由 `MediaCarousel` 同时服务关注、库外 JAV 与馆藏详情，提供环形翻页、横向缩略图和位置圆点。缩略图与圆点复用浏览器原生 `overflow-x:auto`、`wireHorizontalScroller`，选中项在切图、循环和容器缩窄时保持可见。缩略图使用 `IntersectionObserver` 按可见范围挂载，馆藏经 `/sample-thumb`，来源图片共享查询缓存，关注优先取附件小图；Swiper 14.4.0 留给灯箱。馆藏样张复用 `sample_images.detail_refs` 和 `/sample-image`，`/api/item` 只读本地序号、最多 30 项；查看图片暂停正片，返回保留位置。推荐分标签复用 BoardUI `Chip` 与共享 Tooltip。视频预览的 `mountPreviewPlayer` 复用已固定的 Video.js 10.2.0（Apache-2.0）、官方 HLS 媒体组件、`mountPlayerQualityControl`、`mountPlayerSeekPreview` 和 `mountPlayerSpinner`，安装共用控制条、设置、时间、音量与窄宽度折叠。来源给定的 HLS 直接由播放器请求；片源代理、馆藏 ID 和观看上报沿用各自入口。播放器生命周期由当前详情管理，异步加载完成前离开会取消挂载，切换与关闭会停止并销毁实例。
+JAV 作品详情与馆藏视频共用 `IdentityCell` 的头像、标识和首字回退，标题折叠复用 `useFoldedTitle`。厂牌大小写唯一匹配与 `sources.javdb.maker_writing` 的日英组合解析只用于来源身份投影，标识按规范名读取。评论、资源复用 `Disclosure` 和 `setCollapseOpen`；来源与评论评分共用按小数裁切填充的星星。桌面右栏以 `contain:size` 排除正文的固有高度贡献，媒体区决定框体高度，正文在右栏内滚动。写操作取 `/healthz` 的账本只读状态，与运行配置权限分别处理。图片切换由 `MediaCarousel` 同时服务关注、库外 JAV 与馆藏详情，提供环形翻页、横向缩略图和位置圆点。缩略图与圆点复用浏览器原生 `overflow-x:auto`、`wireHorizontalScroller`，选中项在切图、循环和容器缩窄时保持可见。缩略图使用 `IntersectionObserver` 按可见范围挂载，馆藏经 `/sample-thumb`，来源图片共享查询缓存，关注优先取附件小图；Swiper 14.4.0 留给灯箱。馆藏样张复用 `sample_images.detail_refs` 和 `/sample-image`，`/api/item` 只读本地序号、最多 30 项；查看图片暂停正片，返回保留位置。推荐分标签复用 BoardUI `Chip` 与共享 Tooltip。视频预览的 `mountPreviewPlayer` 复用已固定的 Video.js 10.3.0（Apache-2.0）、官方 HLS 媒体组件、`mountPlayerQualityControl`、`mountPlayerSeekPreview` 和 `mountPlayerSpinner`，安装共用控制条、设置、时间、音量与窄宽度折叠。来源给定的 HLS 直接由播放器请求；片源代理、馆藏 ID 和观看上报沿用各自入口。播放器生命周期由当前详情管理，异步加载完成前离开会取消挂载，切换与关闭会停止并销毁实例。
 
 卡片多选由 `MediaCard`、`FollowCard` 的 `selectMode` 统一控制：保留选择入口，单项保存、已看、忽略、稍后看、预览跳转和回收站操作不挂载；退出多选恢复单项操作。首页、实体页、关注与回收站沿用同一组组件。
 
 配置页中的来源凭据复用 `Section`、`Stack` 与 `SettingsSectionLabel`；独立凭据页面保留自己的面板层级。自定义来源表单和卸载开关只使用一层正文间距，列表与表单操作区复用 `Footer`；空来源列表的添加入口放在 `Stack` 正文中。PikPak 直接显示账号表单，两种登录动作同排。在线、离线等连接状态复用 BoardUI `StatusDot`；权限、任务和凭据结果复用 `Chip`。作品资料站点标识经 `/site-mark` 读取本地缓存，资源搜索帮助直达 [详细配置说明](RESOURCE_SEARCH.md)。不新增运行时依赖，不修改凭据内容或 ledger。
 
-账号归属复用 `review_decision`、`creator_collection_base`、`write_owned_fields` 和全库归属审计。明确拒绝的资产与账号组合在自动摄取时跳过；用户写入保留复核入口。网黄博主只命中可信个人、内容创作者或发布账号断言，未分类账号保留全部名册入口。`attach_avatar_availability` 集中处理资料页、索引、搜索与统计的作品头像：发布账号缺少本人或出演职业证据时作品帧照常兜底，另标 `avatar_stand_in`，已安装图片独立保留。个人博主的补头像复用 `avatar_cover_face.face_square`、`readable_cut` 与 ADR-0074 的 `agreeing` 两部互证，画面取自接触印相九格（ADR-0099）。来源核查清单、逐关系回执和备份存于 `peach-data/review/`。
+账号归属复用 `review_decision`、`creator_collection_base`、`write_owned_fields` 和全库归属审计。明确拒绝的资产与账号组合在自动摄取时跳过；用户写入保留复核入口。网黄博主只命中可信个人、内容创作者或发布账号断言，未分类账号保留全部名册入口。`attach_avatar_availability` 集中处理资料页、索引、搜索与统计的作品头像：发布账号缺少本人或出演职业证据时照常用作品帧代替，另标 `avatar_stand_in`，已安装图片独立保留。个人博主的补头像复用 `avatar_cover_face.face_square`、`readable_cut` 与 ADR-0074 的 `agreeing` 两部互证，画面取自接触印相九格（ADR-0099）。来源核查清单、逐关系回执和备份存于 `peach-data/review/`。
 
 `entity_identity_research` 与 `apply_entity_identity_research.py` 复用规范实体写入、字段归属保护、只读预览、SQLite 备份及冻结计划。逐行撤回回执核对后续修改，新增实体有额外引用时拒绝删除；观看历史和人工判断不被回滚覆盖。资料站调研复用 `performer_alias_followup.WikiSitePages`（包着 `sources/seesaa.py` 的 `WikiPages`，加 404 记忆与按站冷却）、作品表解析 `rows()` 与 `person_profile`，以及 EUC-JP 页名直取写法，不新增依赖；`creator_identity_followup` 的后继壳照抄补厂牌、补别名两条。
 
@@ -485,9 +525,9 @@ JAV 作品详情与馆藏视频共用 `IdentityCell` 的头像、标识和首字
 
 待找资源复用 `MagnetSearch` 的来源链、发行时间策略与串行限速，服务端结果使用 `atomic_write_text` 原子保存为私有 JSON 边车。读缓存和网络查询分锁；重启时将原始墙钟时间转换为当前进程的单调时钟。边车最多 128 部、16 MiB，不保存错误，主动刷新失败保留成功结果。浏览器沿用 TanStack Query 和 localStorage，不新增缓存服务或依赖。
 
-清晰度控件复用 Video.js 10.2.0 官方 `@videojs/hlsjs-video` 的 hls.js 引擎。多档播放从实际轨道读取分辨率，自动码率和固定轨道通过引擎选择；单档 HLS 缺少尺寸时读取原生视频元素的实际尺寸，并响应 `loadedmetadata`、`resize`。尺寸未取得时显示「当前画质」，轨道 ID 不作界面名称。来源各自独立的 MP4 档位由 Peach 保留播放位置后切换片源。
+清晰度控件复用 Video.js 10.3.0 官方 `@videojs/hlsjs-video` 的 hls.js 引擎。多档播放从实际轨道读取分辨率，自动码率和固定轨道通过引擎选择；单档 HLS 缺少尺寸时读取原生视频元素的实际尺寸，并响应 `loadedmetadata`、`resize`。尺寸未取得时显示「当前画质」，轨道 ID 不作界面名称。来源各自独立的 MP4 档位由 Peach 保留播放位置后切换片源。
 
-画面旋转复用浏览器 CSS `transform` 与 `ResizeObserver`；Peach 仅计算保持比例的显示尺寸、设置菜单及会话释放。采用现有 Video.js 10.2.0，不增加依赖；依赖旧版组件接口的旋转插件不进入运行时。本地播放器复用 Python 标准库 `os.startfile`、`subprocess` 和 macOS `/usr/bin/open`，保留固定播放器名单、媒体根授权、本机直连与 Docker 边界。本机请求判断由 `web_local_access` 供配置与媒体路由共用。媒体路径复用 `media.normalized_path`，Windows 保留可直接读取的挂载盘盘符，不向虚拟文件系统请求最终路径。系统能力随 Python／操作系统发布，无额外许可证或包体积；真实桌面应用唤起与浏览器协议支持分别验收，不能由进程请求成功推断解码成功。用法与上游依据见[外部播放器](EXTERNAL_PLAYERS.md)。
+画面旋转复用浏览器 CSS `transform` 与 `ResizeObserver`；Peach 仅计算保持比例的显示尺寸、设置菜单及会话释放。采用现有 Video.js 10.3.0，不增加依赖；依赖旧版组件接口的旋转插件不进入运行时。本地播放器复用 Python 标准库 `os.startfile`、`subprocess` 和 macOS `/usr/bin/open`，保留固定播放器名单、媒体根授权、本机直连与 Docker 边界。本机请求判断由 `web_local_access` 供配置与媒体路由共用。媒体路径复用 `media.normalized_path`，Windows 保留可直接读取的挂载盘盘符，不向虚拟文件系统请求最终路径。系统能力随 Python／操作系统发布，无额外许可证或包体积；真实桌面应用唤起与浏览器协议支持分别验收，不能由进程请求成功推断解码成功。用法与上游依据见[外部播放器](EXTERNAL_PLAYERS.md)。
 
 播放器按 [Video.js 10 官方迁移指南](https://videojs.org/docs/framework/html/guides/migrate-from-video-js-8) 和 [10.1.0 源码](https://github.com/videojs/video.js/tree/919ad955a9baf2433c68aba8151654dde0e58b5d/packages)接入 `video-player`、`media-container`、官方按钮／滑条与 HLS／DASH 媒体组件。`@videojs/cdn` 10.1.0（Apache-2.0）提供固定 ESM 模块，构建脚本按静态与字面量动态导入闭包分发并登记哈希；浏览器支持沿用项目目标。Peach 保留片源授权、时长口径、统计、字幕菜单和舞台生命周期，原生视频经 `media` 插槽携带字幕与观看上报。`video.js` 10.1.0 包的旧入口只有带错误码的 shim，不作为运行依赖；v8 的组件和 VHS 不进入产物。真实短片回归覆盖 MP4、HLS 和 DASH 解码，质量档位选择按 HLS 引擎验证，DASH 不声明手动档位能力。生产切换与 ledger 不属于依赖接管工作树。
 
@@ -604,7 +644,7 @@ OneJAV、Free JAV Torrent 只给种子链接。这类条目经索引器同源的
 
 复核用 Checkbox、Button、Badge、Select 与 `/api/review/decision`，默认勾选、沿用馆藏页 Shift 连选；支持跨组通过／拒绝与无歧义的共同来源选择。按候选数量、来源组合或字段分组，每项只出现一次，切组保留选择；成功移出、失败保留，离开页面即停。整页在 `frontend/src/react/review/`，一条队列一个 `queryKey`，判定后改缓存不重取。React Aria Components 1.22.1 的 `Radio`／`Checkbox` 继续承载原生焦点与方向键；共用 `base.css` 将隐藏输入框的定位归于所属标签，来源切换只滚动卡片正文，分段单选、媒体库图标选择和复选框使用同一定位基线，不新增依赖。批准回执在同一事务中读取实际资产版本，缓存只推进仍持有该次写入前版本的候选；逐项与批量提交共用缓存中的并发凭据。身份候选用创作者页、作品详情与 revealSource 核对样本；来源图与缺图占位共用 220px 预览区，样本支持无缩略图作品，回收站不参与。
 
-本地 NFO 配对复用 `library_nfo`、`catalog_rules` 的番号与分卷识别、标准库 ElementTree 及现有资料补空流程。[Kodi NFO 文档](https://kodi.wiki/view/NFO_files/Movies)的同名文件与 `movie.nfo` 约定于 2026-10-17 核对；只参照公开格式，没有复制外部源码。Peach 保留同番号分卷共享、同名文件优先、多份匹配拒绝、内容番号冲突检查和输入安全限制。Kodi 整套媒体中心没有作为依赖引入；标准库随 Python 3.14 运行，无额外体积或许可证。NFO 读取后复用来源缓存与缺失缓存核查在线字段；`requires_review` 跟随候选保留覆盖复核要求，人工决定保存已展示的候选身份，见 ADR-0108。隔离媒体与账本回归覆盖共用 NFO、不同作品混放、错误 NFO 继续在线补全、补空与覆盖分流，以及连续批准的版本回执；真实反馈的 NFO 样本尚未取得，无新增依赖。
+本地 NFO 配对复用 `library_nfo`、`catalog_rules` 的番号与分卷识别、标准库 ElementTree 及现有资料补空流程。[Kodi NFO 文档](https://kodi.wiki/view/NFO_files/Movies)的同名文件与 `movie.nfo` 约定于 2026-10-17 核对；只参照公开格式，没有复制外部源码。Peach 保留同番号分卷共享、同名文件优先、多份匹配拒绝、内容番号冲突检查和输入安全限制。Kodi 整套媒体中心没有作为依赖引入；标准库随 Python 3.14 运行，无额外体积或许可证。NFO 读取后复用来源缓存与缺失缓存核查在线字段；`requires_review` 跟随候选标出核查差异，差异按 ADR-0139 的判据结算，判不了的交人，人工决定保存已展示的候选身份，见 ADR-0108。隔离媒体与账本回归覆盖共用 NFO、不同作品混放、错误 NFO 继续在线补全、补空与覆盖分流，以及连续批准的版本回执；真实反馈的 NFO 样本尚未取得，无新增依赖。
 
 ## 本机设置与卸载
 
@@ -621,10 +661,11 @@ OneJAV、Free JAV Torrent 只给种子链接。这类条目经索引器同源的
 
 - 任务起跑与安装预约复用已固定的 filelock 4.2.0（MIT，Windows/macOS/Linux，无额外依赖）和原子 JSON。`update_tasks` 在同一数据目录内串行登记任务和预约安装，覆盖各服务进程、任务中心、后继领取和 `job_main` 批处理。安装请求触发采集任务在检查点保存并暂停，任务中心保留 `pending` 行；新采集请求进入等待。安装入口等在途步骤保存进度，随后停止自己的服务，不要求用户等待整轮任务结束。源码批处理保留 PID 锁，写完在途批次后等待安装，结束后由原进程继续。
 - 安装器在临时目录展开随包运行时，以 `--installer-prepare` 承接馆藏处理状态并暂停任务；预约归安装器持有，完成或取消时释放。在线更新将预约交给更新助手，切换目录和迁移完成后释放，失败回滚也释放。恢复轮询复用 APScheduler，安装取消时现有服务也会接回任务。不采用新任务队列或更新框架：任务语义、PyInstaller 目录切换和 Inno Setup 生命周期继续由已有实现承担。
-- `job_recovery` 保存馆藏处理范围、阶段、指定影片、时间轴密度、单部封面、关注、订阅和想要资料的请求；服务启动或安装结束后只领取未完成记录。暂停任务复用任务中心的同一行，已完成、失败和主动停止的任务不循环重试。馆藏预览在产物登记后保存影片检查点，元数据检查点跟随候选 CSV 成功落盘；未取得结果的项目不记完成。时间轴复用已有索引判定。恢复领取和新任务起跑共用安装闸门，数据仍留在本机 state 目录，不引入 ledger 迁移。
+- `job_recovery` 保存馆藏处理范围、阶段、指定影片、时间轴密度、单部封面、关注、订阅和想要资料的请求；服务启动或安装结束后只领取未完成记录。暂停任务复用任务中心的同一行，已完成、失败和主动停止的任务不循环重试。馆藏预览在产物登记后保存影片检查点，元数据检查点跟随候选 CSV 成功写入；未取得结果的项目不记完成。时间轴复用已有索引判定。恢复领取和新任务起跑共用安装闸门，数据仍留在本机 state 目录，不引入 ledger 迁移。
 
 - 自动更新设置用 APScheduler（见「必须复用」表的定时轮询）、共享 HTTPX 发行查询、filelock 与原子 JSON 写入，安装走 `standalone_update`。按 [interval trigger](https://apscheduler.readthedocs.io/en/3.x/modules/triggers/interval.html) 每分钟查是否到期，本机持久时间与文件锁协调多个服务；关闭、6/24/168 小时间隔与源码下载限制归 Peach。默认关闭，下载只准备安装，重启仍需确认；设置存 state 目录的 `automatic-updates.json`。
-- 版本与资产信息用 [GitHub Releases REST API](https://docs.github.com/en/rest/releases/assets)（测试通道含预发布），查询与流式下载用项目 HTTPX，ZIP 解压用标准库，互斥用 FileLock。只有已上传完整独立包的发布才进更新，优先选择 `*-update.zip`，历史完整 ZIP 保留原名供旧客户端更新。`package_windows_release.py` 从同一构建目录生成完整包、应用更新包与 FFmpeg、untrunc、cloudflared、人脸模型（`face-models`）工具包；更新包内清单固定工具文件哈希、工具包大小与 SHA-256，运行时只复用校验相符的文件，按需下载不符的工具。清单可以多出本版不认得的工具，读取时只留本版认得的那些，认得的一个都不能少；新增工具包由该工具自己的运行时兜底补齐，不让旧版更新器拒收整个更新包。工具包路径限于对应工具目录，补齐后再次校验并沿用同卷暂存与目录回滚。复用已有 HTTPX、hashlib、zipfile、copy2，无新增依赖；不引入 Velopack 的包格式或二进制差分机制。隔离回归用实际生成的 ZIP 验证工具复用、独立补下载与失败保留现有安装，不使用真实 ledger。
+- 版本与资产信息用 [GitHub Releases REST API](https://docs.github.com/en/rest/releases/assets)（测试通道含预发布），查询与流式下载用项目 HTTPX，ZIP 解压用标准库，互斥用 FileLock。只有已上传完整独立包的发布才进更新，优先选择 `*-update.zip`，历史完整 ZIP 保留原名供旧客户端更新。`package_windows_release.py` 从同一构建目录生成完整包、应用更新包与 FFmpeg、untrunc、cloudflared、人脸模型（`face-models`）工具包；更新包内清单固定工具文件哈希、工具包大小与 SHA-256，运行时只复用校验相符的文件，按需下载不符的工具。清单可以多出本版不认得的工具，读取时只留本版认得的那些，认得的一个都不能少；新增工具包由该工具在运行时自行补齐，不让旧版更新器拒收整个更新包。工具包路径限于对应工具目录，补齐后再次校验并沿用同卷暂存与目录回滚。复用已有 HTTPX、hashlib、zipfile、copy2，无新增依赖；不引入 Velopack 的包格式或二进制差分机制。隔离回归用实际生成的 ZIP 验证工具复用、独立补下载与失败保留现有安装，不使用真实 ledger。
+- Windows 源码运行在配置页安装 FFmpeg、untrunc（`media_tools.py`）复用同一批工具包和更新器的下载、签名摘要与解压路径检查；没有更新包清单，逐文件摘要取工具包自带的 `manifest.json`。工具包与程序版本无关，取两个发布源里最新的那份，不按源码版本号拼地址。
 - 安装策略与进度归 Peach：下载校验后在程序同卷暂存，用户确认重启，复制出来的包内助手等原托盘退出再切换完整目录；失败保留或恢复旧目录。配置、数据库与媒体不进更新包。
 - 轻量安装包复用应用更新包的工具清单、`standalone_update.prepare_tools` 与既有 HTTPX、hashlib、zipfile。Inno Setup 6.7.3 用 [external 文件](https://jrsoftware.org/ishelp/topic_filessection.htm)安装临时目录中已验证的工具，用[滚动进度页](https://jrsoftware.org/ishelp/topic_isxfunc_createoutputmarqueeprogresspage.htm)显示准备状态；官方 API 已于 2026-10-17 核对。工具先在预检目录准备，成功后才暂停任务并覆盖安装；安装包旁的工具 ZIP 同样按清单校验，不读取馆藏配置或增加依赖。不引入另一套下载器或更新框架，校验及解压路径与在线更新共用。
 - 不用 [Velopack](https://docs.velopack.io/packaging/operating-systems/windows)（要求其安装目录与包格式）与 [WinSparkle](https://winsparkle.org/)（要求 appcast 与原生更新界面）：产物是 PyInstaller ZIP、进度在 Web 显示，沿用托盘进程与目录替换协议。
@@ -635,13 +676,13 @@ OneJAV、Free JAV Torrent 只给种子链接。这类条目经索引器同源的
 
 JAV 默认封面（官方封面／预览图）与视频默认大小（大图／小图）独立保存，用 localStorage、共享 Switch 与既有 `/cover`、`/poster`。设置弹窗同步首页与 JAV 的版式，筛选条可单独调当前视图。`frontend/src/jav-artwork.ts` 管作品身份、偏好恢复与缺图回退，首页、接着看、实体作品、详情推荐、Mix 静止与翻图、播放队列共用封面选择。小图展示完整封套，竖版正封完整放入大图卡片；新作封面完成取景才显示，缓存图插入时重算取景。
 
-关注视频与馆藏详情的续播复用 Video.js 10.2.0（Apache-2.0）的元数据事件和 `currentTime`、浏览器 localStorage 与既有活动接口。`player/progress` 按本地资产、关注条目和媒体序号登记秒数，暂停、定位、关闭、小窗销毁、页面退出均保存；原生 video 回退也恢复，明确的时间深链优先，放完从头开始。本地既有记录可按 `leave_ratio × duration` 恢复；最远观看位置与累计观看时长不作为续播秒数。活动请求用 keepalive，销毁同步冲掉末段并清理定时器与监听。此状态属于当前浏览器，未引入账本迁移或跨设备同步，无新增依赖。
+关注视频与馆藏详情的续播复用 Video.js 10.3.0（Apache-2.0）的元数据事件和 `currentTime`、浏览器 localStorage 与既有活动接口。`player/progress` 按本地资产、关注条目和媒体序号登记秒数，暂停、定位、关闭、小窗销毁、页面退出均保存；原生 video 回退也恢复，明确的时间深链优先，放完从头开始。本地既有记录可按 `leave_ratio × duration` 恢复；最远观看位置与累计观看时长不作为续播秒数。活动请求用 keepalive，销毁同步冲掉末段并清理定时器与监听。此状态属于当前浏览器，未引入账本迁移或跨设备同步，无新增依赖。
 
 详情人物头像复用 `card-art.entityFaceImg` 与 `avatarFrame`，图片直接挂在有尺寸的 `[data-id-face]` 圆框内。取景读取图片的父框几何，`display:contents` 包装层没有可用尺寸。首字与图片由同一段 HTML 承载，图片加载失败时共用回退链，浏览器回归覆盖带人脸框的桌面与手机详情。
 
 图片尺寸档复用 `previews.DerivedImageService`：实体图默认取长边 640 的 `/entity-image?thumb=1`，只有资料页大位取原件；卡片封面按屏幕像素密度从 `/cover?thumb=2`（长边 800）或 `thumb=1`（长边 1600）起步，`framing.upgradeCover` 量过显示尺寸再逐档换到原件。两档封面同在 `generated/cover-thumbs/`，按长边分文件名、按需生成。侧栏与登录卡的站标用 `scripts/generate_brand_assets.py` 缩出的 64 与 128 px 小图，以 `srcset` 挑选。
 
-新作封面复用 `best_cover` 的官方候选与 `cover_artwork.install_cover`，保存本地封面、正封框、人脸坐标与来源证据。JavDB 图片仅作来源复核证据，不进入安装、封面索引、详情封面投影或缺图兜底；`scripts/quarantine_javdb_covers.py` 将有来源证据的历史图片及边车移入可恢复归档。未取得合格来源时显示未取得状态，详见 ADR-0107。
+新作封面复用 `best_cover` 的官方候选与 `cover_artwork.install_cover`，保存本地封面、正封框、人脸坐标与来源证据。JavDB 图片仅作来源复核证据，不进入安装、封面索引、详情封面投影或缺图时的后备；`scripts/quarantine_javdb_covers.py` 将有来源证据的历史图片及边车移入可恢复归档。未取得合格来源时显示未取得状态，详见 ADR-0107。
 
 无快照的有码作品由封面入口复用现有 `DmmSource` 的 GraphQL 查询与精确身份核验；成功快照直接展开 DMM 图片候选，r18.dev 与 DMM 使用同一份目录证据。FC2 来源快照通过 `storage_original` 提取发行方存储原件，排除社区图床。目录查询沿用来源冷却，HTTP、网络与解析失败分别保留未取得状态。
 
@@ -661,9 +702,15 @@ MGS 专属发行先查自营商品目录，Prestige 番号复用 `metadata_route
 
 传统正封完整居中，比例留白复用同图派生档的模糊补底，新作与视频流卡片使用同一份取景规则。整幅大封使用卡片纯色底，竖版按主脸填满，横版完整放入容器；图片切换时清理残留背景属性。
 
-取景由 `poster-crop-v13` 管理。Blu-ray 来源标题、明确的版次标签与图片比例共同决定 0.85 正封比例，标题随正封框保留，重算人脸与正封框均读取同一版次；有效宽正封框在没有版次标题的卡片上也完整显示。VR 标记、IENEE、IENFE、SDHS 数字发行拼图，以及可信主脸跨过 DVD 正封先验边界的大封保留整幅画面，由 `cover_frame.layout=still` 传给卡片。两条满高接缝夹出居中正封且两侧纹理均低于正封四分之一时，只显示中间正封。大封在竖版大图按主脸居中填满，横版小图完整显示，均不使用模糊补边；JPEG 软边的书脊识别结合突出度、左忙右静的方向与正封侧基线。手工框保持用户取景。重试队列按最早尝试时间轮转，收起的合集沿用设置跳过；逐番号结果保存在 `feed-cover-attempts/`。资料已齐、只缺封面的新作另派 `feed-cover`（新作封面采集）批次，只取图、不写账本，走独立后继通道；排在队里或正在跑的番号不再进下一批。复用现有 HTTP、Pillow、OpenCV 与文件锁，无新增依赖。
+取景由 `poster-crop-v13` 管理。Blu-ray 来源标题、明确的版次标签与图片比例共同决定 0.85 正封比例，标题随正封框保留，重算人脸与正封框均读取同一版次；有效宽正封框在没有版次标题的卡片上也完整显示。VR 标记、IENEE、IENFE、SDHS 数字发行拼图，以及可信主脸跨过 DVD 正封先验边界的大封保留整幅画面，由 `cover_frame.layout=still` 传给卡片。两条满高接缝夹出居中正封且两侧纹理均低于正封四分之一时，只显示中间正封。大封在竖版大图按主脸居中填满，横版小图完整显示，均不使用模糊补边；JPEG 软边的书脊识别结合突出度、左忙右静的方向与正封侧基线。手工框保持用户取景。重试队列按最早尝试时间轮转，收起的合集沿用设置跳过；逐番号结果保存在 `feed-cover-attempts/`。不在本轮取资料批次里、只缺封面的新作另派 `feed-cover`（新作封面采集）批次，还没轮到取资料的也在内，只取图、不写账本，走独立后继通道；排在队里或正在跑的番号不再进下一批。复用现有 HTTP、Pillow、OpenCV 与文件锁，无新增依赖。
 
 馆藏与新作取图共用 `cover_artwork.metadata_snapshots` 和 `best_cover`，片商官网、发行方、R18 与 DMM 的官方候选均参与尺寸比较。馆藏采集将长边 1600px 作为高清重探界限，社区转存图可由官方封面替换；同类官方图按像素面积升级，FC2 保留商品图的来源保护。`scripts/audit_cover_artwork.py` 逐张核对尺寸、来源、版次与取景框，输出 CSV；`scripts/upgrade_audited_covers.py` 按已有官方快照逐番号重探，`--live` 经同一官方链在线补查，保存原件备份与结果检查点。两者只处理可重建图片和边车，不写 ledger。
+
+## 快捷键
+
+SFW 开关键可在偏好设置的「内容显示」里改。主键按 `KeyboardEvent.code` 记录与匹配，Mac 上 Option 改写的字符（Option+S 是「ß」）和键盘布局都不影响；绑定至少带一个修饰键，Ctrl 或 ⌘ 加 W、T、N、Q 这类浏览器自己处理的组合不收。显示按平台分两套：苹果设备用 ⌃⌥⇧⌘ 字形，其余平台写 `Ctrl+Alt+Shift+Win`。绑定存在本机 `localStorage`，不进同步设置，⌘ 换到 Windows 上是 Win 键。
+
+平时的按键胶囊直接用 BoardUI 注册表的 `kbd` 条目（逐字副本见 `frontend/src/react/boardui/ORIGIN.md`），颜色取主题已有的 `kbd` token。录制时换成一排拟物键帽（`frontend/src/react/components/keycap.tsx`）：BoardUI 的 Kbd 是一个组合一枚胶囊，只适合做提示；Vercel Geist Keyboard Input 一个键一枚但只有细描边，open-claude-ui 设计手册只写了「键帽、4px 圆角、阴影衬底」没有实现，所以按两者的共同点自己组合，颜色全取主题变量。录制、匹配与显示在 `frontend/src/keyboard-shortcut.ts`，不引快捷键库：tinykeys、hotkeys-js 能替掉的只有匹配那几行，录制和按平台显示仍要自写；react-hotkeys-hook 的录制钩子只给 React 用，而全局监听在遗留的 `application/search.js`。React Aria 的平台判断只在内部私有路径，不作为公开接口依赖，平台判断沿用 `browser-diagnostics.ts` 先读 User-Agent Client Hints 的写法。
 
 ## 复用决策门槛
 
@@ -680,7 +727,6 @@ MGS 专属发行先查自营商品目录，Prestige 番号复用 `metadata_route
 - 访问密码复用 Python 3.14 的 [hashlib.scrypt](https://docs.python.org/3.14/library/hashlib.html) 与 OpenSSL，浏览器会话复用 [ItsDangerous](https://itsdangerous.palletsprojects.com/en/stable/)（Pallets、BSD-3-Clause、纯 Python、wheel 16 KB、无传递依赖），本机原子配置写入用 tempfile/os.replace 与 filelock；认证入口的访问口令、三种拒绝响应与本机配置守卫照旧复用。Starlette SessionMiddleware 统一时长、随响应续期，满足不了每台设备自选截止时间，所以直接用同源签名库，Peach 管可选密码、截止时间与撤销，不带账户体系与迁移。
 - Cloudflare Quick Tunnel 用官方 `cloudflared`（Apache-2.0），不自写隧道协议。源码环境只管 PATH／环境变量里的进程；Windows 独立包旁路固定 `2026.9.0`，资产、地址与 SHA-256 在 `scripts/cloudflared-windows.json`，`fetch_cloudflared.ps1` 与构建脚本双重校验。就绪判据是官方 `--pidfile`（首次连上边缘才写），未连上不宣称可用。源码 HTTPS origin 用项目 CA，独立包用回环 HTTP，写请求来源校验带当前进程持有的随机 URL。
 
-- README 交付检查用系统 Git 的 `diff --no-renames -z` 与 [`interpret-trailers --parse`](https://git-scm.com/docs/git-interpret-trailers)，挂在 `agent_worktree.py ready/integrate`；Peach 只定义影响文件与双语声明 policy。原生 hook 不随 clone 安装、判断不了文案语义，所以挂在共有的交付入口上（[README 维护](README_MAINTENANCE.md)）。
 - 配置访问判定用 ASGI 连接的 `client` / `server` 地址与标准库 `ipaddress`：本机连接匹配回环地址或服务端 IP，Host 只校验托盘配置的域名或绑定地址、不证明调用方在本机。配置保存用修订号校验、原子替换与 `SetupGate` 重载标记，托盘子服务以 `PEACH_TRAY_MANAGED` 声明重载能力。安装检测用 `winreg`、`shutil.which` 与安装目录，媒体工具用 `FFmpegResolver`，脱盘不判为未安装。下载入口 2026-09-06 核验：[CloudDrive](https://www.clouddrive2.com/download.html)、[WinFsp](https://winfsp.dev/rel/)、[macFUSE](https://macfuse.github.io/)、[FFmpeg](https://ffmpeg.org/download.html)、[OpenSSL](https://openssl-library.org/source/)。
 - 发行身份用各来源解析器与 Seesaa 的原始 DTO，数字前缀等价是 Peach 的领域 policy。查询回退不能承担身份确认（[`390JAC-040` 实例](SOURCING.md#依赖与工具实测)），响应按原始查询检查，MGStage 官方详情路径可佐证展示编号别名；外部适配器只取值，首条搜索命中不作 ledger 身份断言。
 - Seesaa 作品表用 HTTPX、Beautiful Soup 4.15.0（MIT）与现有 `HostLimiter`、番号规范化、字段候选和快照协议。Javinizer-Go `d9724f239d7e127afcb747fa8ce4358685912f50`（MIT）与 MetaTube `6a5e6128c725187aeaf921d48ed7d9cd9f30671b`（Apache-2.0）都没有 Seesaa 适配器（2026-09-06 核对），所以 `peach.sources.seesaa` 承担 EUC-JP、列映射、精确行身份与未知名单保护，消费者是 `scrape_codes --profile seesaa`（[站点细节](SOURCING.md#seesaa-wiki-作品证据)）。
@@ -704,7 +750,7 @@ MGS 专属发行先查自营商品目录，Prestige 番号复用 `metadata_route
 
 定向调试复用标准库 unittest 的按名字加载与现有浏览器夹具，记录复用沿用文件清单、影响域和 FileLock，不新增测试框架或缓存服务。局部成功记录保留未受影响域的原验证时间，失败域不能从历史基线恢复；浏览器失败即停。回归覆盖过期、环境差异、未知与共享文件、失败后再次验证、路径越界及不签调试证明，详见 [测试](TESTING.md#定向调试与局部记录)。
 
-提交消息复用 Git 的 [`interpret-trailers --parse`](https://git-scm.com/docs/git-interpret-trailers)，署名与 README 声明判据由 `co_author.py`、`check_readme_impact.py` 共用；`check_commit_message.py` 接到仓库 `commit-msg` 钩子。Git 自身处理注释与多行 trailer，Peach 只检查字段形态和分段。Windows Git 2.55.0.windows.3 的临时仓库回归覆盖拒绝提交、保留暂存、人类与智能体共同署名、amend 和合并消息；不新增解析依赖。具体触发范围见 [README 维护](README_MAINTENANCE.md)。
+提交消息复用 Git 的 [`interpret-trailers --parse`](https://git-scm.com/docs/git-interpret-trailers)，`co_author.py` 校验署名，`check_commit_message.py` 接到仓库 `commit-msg` 钩子。Git 自身处理注释与多行 trailer，Peach 检查署名字段形态和分段。临时仓库回归覆盖拒绝无署名提交、保留暂存、人类与智能体共同署名、amend 和合并消息；复用现有依赖。
 
 ### 播放、采集、发布与打包
 
@@ -712,8 +758,10 @@ MGS 专属发行先查自营商品目录，Prestige 番号复用 `metadata_route
 
 - 页面、框体、操作条与选中项共用一套灰阶，操作条用 `--overlay-5`。
 - javdb 属有码与素人链的社区档，候选保留 community 来源性质，不自动写真相字段。
-- [JavDB Web UI 实证](reference-snapshots/javdb-web-ui-poc.md)：库外作品详情复用舞台、人物身份、想要、`WantMagnets` 与云下载组件；`javdb_public.PublicAPI` 复用 `HttpxTransport`（httpx 0.28.1，BSD-3-Clause）、`HostLimiter`、Pillow 12.3.0 与标准库 MD5/XOR，独立映射公开协议。匿名详情、两页评论、6 条样本资源、封面与预览图像素已取得；全站完整性和不限流未证明。请求串行、3 秒间隔、6 小时有界缓存，评论最多 8 页，失败保留资料并冷却；发现复用持久资料边车和固定集合补齐，传输层预算由 `ContextVar` 隔离。未新增依赖或写入 ledger。
-- 公开签名材料按请求头调用与签名计算式定位，不依赖压缩器生成的变量名，不执行来源脚本；常量长度、唯一赋值与组合结构均核对，格式不匹配时保留来源故障。FC2 搜索使用来源接受的商品号，返回资料仍按原始规范番号及作品 ID 严格核验；其他番号沿用原查询写法。
+- [JavDB Web UI 实证](reference-snapshots/javdb-web-ui-poc.md)：库外作品详情复用舞台、人物身份、想要、`WantMagnets` 与云下载组件；`javdb_public.PublicAPI` 复用 `HttpxTransport`（httpx 0.28.1，BSD-3-Clause）、`HostLimiter`、Pillow 12.3.0 与标准库 MD5/XOR，独立映射公开协议。匿名详情、两页评论、6 条样本资源、封面与预览图像素已取得；全站完整性和不限流未证明。请求串行、0.5 秒间隔、6 小时有界缓存，评论最多 8 页，失败保留资料并冷却；发现复用持久资料边车和固定集合补齐，传输层预算由 `ContextVar` 隔离。未新增依赖或写入 ledger。
+- JavDB 刮削（ADR-0144）复用同一个 `PUBLIC_API`、`SiteRecord` 契约、`maker_writing`、`genre_taxonomy` 与社区封面印证，只新增接口资料投影和类别 id 对照。对照表由 `generate_javdb_genres.py` 把已有详情页快照与接口资料按位置对齐生成，沿用 `generate_genre_simplified.py` 的源码区块写法；未新增依赖或写入 ledger。
+- JavDB 接口主机与签名备援（ADR-0148）沿用 `PUBLIC_API` 的传输、`HostLimiter`、请求预算与冷却字段，只把冷却范围细到主机。镜像主机名与 App 签名格式是 javmoe（GPL-3.0）移植 MDCx 的协议事实，经 2026-11-05 本机实测核对，不复制其代码；未新增依赖或写入 ledger。
+- 公开签名材料按请求头调用与签名计算式定位，不依赖压缩器生成的变量名，不执行来源脚本；常量长度、唯一赋值与组合结构均核对，格式不匹配或网页前端不可达时改用 App 签名材料（ADR-0148）。FC2 搜索使用来源接受的商品号，返回资料仍按原始规范番号及作品 ID 严格核验；其他番号沿用原查询写法。
 - 馆藏和库外样图共用 `SourcePicture` 与浏览器图片缓存。组件按作品保持身份，缓存命中在布局阶段揭示，网络图片经原生 `HTMLImageElement.decode()` 就绪后显示；等待时保留已显示的图片，晚到结果按当前地址核对。失败和重试仍按图片地址隔离，无新增依赖。
 - 后台诊断导出复用 `BackgroundJob`、本机访问与同源检查、`BufferedFileResponse`，使用 Python 标准库 `zipfile`、`TemporaryFile` 和 `JSONEncoder.iterencode` 分块生成。取消使用线程事件，任务身份核对、同一管理器互斥和未完成文件回收由导出模块负责；不登记 ledger 任务，不新增依赖。普通诊断按压缩字节数决定是否合并刮削详情。
 - 慢项跳过复用 `ProcessingControl` 的持久控制文件、`checkpoint` 和 `ActiveDeadline`，按任务及当前资产消费跳过指令；资料来源的逐项发布和失败项重试继续共用现行采集路径。前端共用 `Note`、`useAction` 与现有任务查询，常驻任务浮窗禁止滑动关闭，显式隐藏和恢复入口独立于任务状态。
@@ -721,11 +769,14 @@ MGS 专属发行先查自营商品目录，Prestige 番号复用 `metadata_route
 - 候选 `ANDonekey/javapi` revision `9a2a245a659a4008ee75bc148b0af9c7126e7a71` 未归档、最后推送为 2026-05-11，使用 Go 和部署服务，GitHub 未标明许可证，不能作为 Python 依赖或复制其源码。仅以部署公开前端与匿名实测确定协议事实；原始取证脚本及脱敏概要保留在工作树 `build/javdb-public-api/`。`phoenixthrush/javdb-python`（MIT、Python ≥3.11、无运行依赖）解析的是 `javdatabase.com` HTML，站点与协议不匹配；现有 `sources.javdb` 同样只适用于 HTML。Peach 保留番号核对、权限失败、字段投影和缓存策略。
 - 编码边界依据 [MDN 视频编码说明](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Video_codecs) 与 [ffprobe 文档](https://ffmpeg.org/ffprobe.html)，用当前 FFmpeg；Peach 只持有兼容格式判定与缓存策略。
 - CloudDrive 引导用现有 `settings_file`、`platform.root_online`、`scan_location` 与 React 配置页，来源为 `local`、`115`、`pikpak`。挂载由用户安装的 CloudDrive 负责（[官方帮助](https://www.clouddrive2.com/help.html)：Windows 用盘符、macOS 用目录挂载点），Peach 不捆绑其二进制，挂载引导不依赖管理 API，路径处理用 `pathlib`、`os.scandir`、`tomllib`；表单、来源归属与扫描选择归 Peach。云下载和账号代理配置经官方 proto 子集（`downloads_clouddrive.proto`，version 1.1.2）走 gRPC，令牌存 CredentialStore，不用非官方 SDK（ADR-0089）。
+- 远端下载完成但挂载未登记时，复用官方 `GetSubFiles(forceRefresh=True)` 定向刷新目标目录，再复用现有落地登记。下载与整理共用 `downloads_clouddrive.proto` 的流式目录消息，不复制第二套字段定义；临时服务回归覆盖缓存刷新和网络失败。
+- FC2 元数据复用已接入的匿名 `JavDBPublicSource`、现有字段投影与快照缓存。按 ADR-0150 优先查 JavDB，演员身份未确认才继续专站；本机别名、外部人名目录和可信身份断言用于判断能否停手，不用名字长度猜测。候选归属、人工值和专站字段优先级仍由既有机制结算。
 - 媒体目录校验沿用 `media.normalized_path` 的平台策略：Windows 用标准库 `os.path.abspath` 保留盘符，macOS 用 `Path.resolve` 解析文件系统链接。实现只依赖项目 Python 标准库（PSF 许可），不新增依赖；校验器独立于账本路径翻译与媒体仓储。映射盘转 UNC 的边界由注入文件系统解析结果的回归覆盖，首次设置的本地来源也验证配置保留盘符。直接输入 UNC 仍按盘符路径契约拒绝；真实 NAS 挂载需在目标机器验收。
 - 非 Windows 表单的内部路径由 `media_configuration.prepare_sources` 补齐，复用既有来源校验、配置写入和 `platform` 路径转换；不改数据库路径模型或执行迁移。标准库 [PureWindowsPath / PurePosixPath](https://docs.python.org/3.14/library/pathlib.html#pure-paths) 用于比较两种路径，[hashlib.sha256](https://docs.python.org/3.14/library/hashlib.html) 按来源与实际目录生成稳定候选前缀，已有配置和显式输入优先，冲突时换盘符。媒体库名称使用实际目录名，前端复用现有 `Disclosure` 和 `Input`，无新增依赖。
-- JAV 入库资源查询复用 `sources.javdb` 的身份核对、`SourceTransport` 的 Cookie 与冷却、`HostLimitedTransport` 的 3 秒间隔、`beautifulsoup4==4.15.0` 和 `downloads.parse_magnet`。JavPack 的 `JavDB.magnet.user.js` 0.0.2（GPL-3.0，仓库 revision `b546e1881147e15796c697e8e086db9d3ac0c5be`）只作页面字段参考；它依赖浏览器用户脚本 API，不能直接作为 Python 服务端依赖。Peach 负责评论链接、协议分流、去重、60 秒缓存和最多三页评论的预算，不新增依赖。2026-10-02 单作品只读实测取得 4 条磁链和含 ed2k 的评论页；评论入口从 `.review-tab[data-url]` 读取，受限评论保留来源限制提示。磁链可交现有云下载服务，ed2k 与其他网页链接提供复制。
+- JAV 入库资源查询与新作页共用 `javdb_public.PublicAPI.resources`：匿名 API 的作品身份核对、0.5 秒间隔、请求预算、来源冷却和按发行日期保存的快照，加上 `downloads.parse_magnet` 与 `sources.javdb.parse_comment_text`。磁链区的 `size` 是 MiB 整数，换算成带单位的文字后才进入体积过滤与排序。Peach 负责评论链接、协议分流和去重，不新增依赖。待找清单读磁链区与前 4 页评论，预算跟随本轮查询期限；作品身份歧义按来源原文报告。磁链可交现有云下载服务，ed2k 与其他网页链接提供复制。
 - 磁力优先链复用同一套 `SourceTransport`、`HostLimitedTransport`、`downloads.parse_magnet` 与 Torznab 后备，不引入新的抓取运行时。manko.fun 的页面请求实际落到 `healertanker.com/swx`，响应 `data` 是 basE91 包装的 JSON；实现只移植该公开响应形态与编号精确匹配，不复用会话脚本。Sukebei 直接读搜索表格；JavBus、16mag、OneJAV、Free JAV Torrent 由现有自配 Prowlarr／Jackett 索引器续接。Akiba Online 与 Reddit 只作线索，不自动取磁力。候选按分辨率、做种、推广附件数量与正片体积排序；总文件数不再是一票否决，manko.fun 候选绕过水印门槛，其他来源只能标为待到盘检查。
 - 云下载后处理复用 `task_run` 后继串行、`process_library(retry_ids=...)`、`junk.isolate`、`organize.build_plan(asset_ids=...)`、SQLite backup 与整理批次日志。没有另造第二套刮削、垃圾词库或移动器。
+- 搜索与入库后处理的有限重试复用下载对账的 `next_check_at`、持久浏览器队列与既有错误分类；后处理独立保存重试次数，来源冷却和 `Retry-After` 继续生效。移动失败把可恢复类别带回批次结果，采集阶段沿用结构化来源诊断；不从错误文字猜测权限或暂时故障，不新增任务线程或依赖。
 - `junk.scored_candidates` 统一复核与自动隔离的证据；`junk.isolate` 要求显式资产或来源目录，保护人工决定、个人记录、字幕与正片身份，写前重查证据，仅写可撤销的回收站状态。扫描、推送、媒体探测、资料处理、云下载与维护脚本共用该入口；页面只补展示成本与缩略图字段。复用当前树的词库、目录关系、`record_holders`、`LedgerDatabase` 与历史评分回归，使用 Python 标准库和现有 SQLite JSON 支持，无新增依赖、协议或媒体读取。流程顺序见[垃圾文件](OPERATIONS.md#垃圾文件)。
 - 抓取入口的复用缺口见 [来源采集](SOURCING.md) ；跨用户安装、来源网络、Cookie GUI、最高可得画质与图像清单按 [ADR-0024](adr/0024-mark-manifest-not-bundled-bytes.md)。私有后缀判断用 tldextract 5.4.0（BSD-3-Clause），随包 PSL、`suffix_list_urls=()`、`cache_dir=None`、`include_psl_private_domains=True`；Instaloader 4.15.3 与 browser_cookie3 不进正式依赖。HTTPX（BSD-3-Clause）、curl_cffi（MIT）、Pillow、amane 桥与现有候选缓存是正式基础，请求节拍用 `scripting.RateLimiter`／`HostLimiter`。
 - 采集 GUI 用 React island、CredentialStore、HTTPX、Pillow 与 BackgroundJob，`jav_cover_fetch` 同时服务界面与 CLI；Peach 保留域内凭据、来源路由、预算、冷却、番号身份与高清替换策略。Cookie 文本用标准库 SimpleCookie／MozillaCookieJar 解析，不导入 pickle。
@@ -867,7 +918,7 @@ A 盘垃圾隔离使用短名称 `peach-purge-<32 位 UUID>.peach-quarantine`，
 - 事务所是实体：57 家各有 `/agencies/<名字>` 页，成员、官网、标签与作品都按 `entity_membership` 算，女优页点得进去，搜名字出这家人的片；原文留在 `metadata.agency`。
 - 外链圆标与厂牌标识取站点自己声明的资产，宽扁字标不参加小圆标竞选；`/logo` 的 `variant` 分 `icon`、`logo` 与最清晰的 `large`，大图版式和资料页取 `large`，紧凑版式取 `icon`。头像与标识共用 `nativeImageFit`：按像素密度折算的源尺寸不足框四成时等比居中、不放大、同图模糊补底，框短边小于 64 px 不补底；加载、回落和版式切换都重新度量。
 - 共用网站的厂牌专页通过 `site_logos.logo_images(owner=...)` 核对图片的明确归属，只接收名称匹配的标识，不沿用平台页头、推荐厂牌或全站社媒账号；独立官网继续复用站点声明与页头标识。
-- 关注的作者头像与来源图标是元数据：`follow_assets` 取回落在 `generated/follow-assets/`，经 `/follow-avatar`、`/source-icon` 给页面；地址只从固定表或固定主机拼，字节先认成图再写盘，到期重取失败继续用旧的并退避一小时，缓存有效期与 `/link-mark` 共用 `web_settings.metadata_refresh_seconds`。视频与图片不存本机。官方头像先认 FANBOX，没有时 `follow_avatar.profile_avatar_tiers` 取名片上的 X 与 Patreon，`follow_assets.largest_image` 留像素最大的那张。
+- 关注的作者头像与来源图标是元数据：`follow_assets` 取回落在 `generated/follow-assets/`，经 `/follow-avatar`、`/source-icon` 给页面；地址只从固定表或固定主机拼，字节先认成图再写盘，来源图标里透明底纯白或纯黑的字形复用 `link_marks.glyph_mark` 换成圆底白字，到期重取失败继续用旧的并退避一小时，缓存有效期与 `/link-mark` 共用 `web_settings.metadata_refresh_seconds`。视频与图片不存本机。官方头像先认 FANBOX，没有时 `follow_avatar.profile_avatar_tiers` 取名片上的 X 与 Patreon，`follow_assets.largest_image` 留像素最大的那张。
 - 厂牌标识由契约位 `has_logo` 决定出不出图：没装标识的厂牌一个 `<img>` 都不发，改用首字母底板，不靠 404 摘。标识 198 张随仓库分发（ADR-0026）。
 - Iwara 视频作者订阅复用 [yt-dlp 的 Iwara 提取器](https://github.com/yt-dlp/yt-dlp/blob/9b58cb33d0cd3e823c8d8732f6adce8faa1f37e3/yt_dlp/extractor/iwara.py)（Unlicense，固定 revision `9b58cb33d0cd3e823c8d8732f6adce8faa1f37e3`）的 profile→用户 ID→videos 分页模型与 `X-Version` 文件接口签名；[gallery-dl 的 Iwara 提取器](https://github.com/mikf/gallery-dl/blob/882c8d0bb5c5a3ed4e88726d2f42a1cb7db59bf2/gallery_dl/extractor/iwara.py)（GPL-2.0，固定 revision `882c8d0bb5c5a3ed4e88726d2f42a1cb7db59bf2`）用于交叉核对 `apiq.iwara.tv`、视频文件字段与格式清单，不复制其实现。两者在 2026-10-23 获取时均维护中，Python 客户端可跨平台运行；完整下载器包含 Peach 不使用的下载、账户缓存与大量站点能力，因此只复用公开协议模型和 Unlicense 签名算法，不新增依赖。HTTP 复用现有 `curl_cffi`：匿名只读 POC 中普通 HTTP 对 API 返回 403，Chrome 传输取得作者资料、视频列表两页、详情与三档格式，五次请求约 4.9 KB、4.7 秒，未读取凭据或下载媒体。Peach 保留 DTO、关注状态、历史游标、凭据隔离及媒体代理；可选 `access_token` 仅发送到固定 API，不同步。列表只保存稳定视频页地址，短效文件地址与清晰度仅在播放缓存中保留；外部播放器、权限不足、空历史页、限流与结构错误分别处理。用法见 [Iwara 视频作者订阅](SOURCING.md#iwara-视频作者订阅)。
 - Iwara 封面复用 `/follow-image` 的同源缓存，官方缩略图经正式 HTTPX 传输实测取得 200 `image/jpeg`；来源图标采用官网声明且实测为 PNG 的 `/logo.png`。官方头像专用解析路径未取得，作者头像沿用首字母回退；作者主页的用户名与署名复用既有官方别名学习。部分迁移视频没有可用时长或原画分辨率，字段保留未知，播放仍优先选择 `Source` 原画。标签模型另核对 [IwaraTool API 字段说明](https://github.com/Moeary/IwaraTool/blob/1e98c96c422a169699c0d16bcab49b8a7f5238d5/docs/API_zh.md)（MIT，固定 revision `1e98c96c422a169699c0d16bcab49b8a7f5238d5`，仅核对协议，不复制代码）；匿名 `/tags` 与八条视频的 28 个标签均为 `id/type/sensitive` 模型。仅 `type=general` 明确进入 Peach 的通用词表，其他类型与缺少类型的原词保留，原始类型另存 `source_tag_types`，不按词形推断。
@@ -891,7 +942,7 @@ A 盘垃圾隔离使用短名称 `peach-purge-<32 位 UUID>.peach-quarantine`，
   - 番号取封面（`POST /api/avatar-code-cover` → `avatar_picker.code_cover`）不要求番号在馆藏：本机封面目录优先，没有才走 `jav_cover_fetch.best_cover`，按番号只存对象、不写证据，之后的 `cover:<番号>` 只读本机。
   - 默认框围着 `avatar_picker.cover_focus` 取景：有脸取 `avatar_cover_face.face_square`（要边车里有脸宽与 `px`，缺的 `detect_cover_faces.py --redo`），没脸取 `jav_poster_crop` 的正封，前端不另抄判据。
 - 整张作品封面不装成头像：单人作品关联不证明画面里是谁，`cover_fallback` 标身份未核实，采集脚本的安装闸门拒收。图库给不出唯一人像时，补头像后继（`peach.avatar_followup`）从单人作品封面截脸周围一块方图（`peach.avatar_cover_face`，YuNet 脸框放大 2.4 倍），按脸宽像素挑封面、最差是缩略图，其余检得出脸的封面各截一张进候选缓存（至多 8 张）。面具、眼罩照样算脸，检不出的不降门槛去捞（低分框多落在手和身体上）。来源记 `cover-face` 与 `identity_verified: false`。
-  - 图库同名多张时先按脸认人（`peach.face_match`，互证与小图作证见 ADR-0056、0057、0062、0066）；封面未匹配时仍允许不同来源、不同照片的图库多数独立互证（ADR-0104）。短边至少 300 像素的档案小图优先于封面裁片（ADR-0102），更小的图在封面落空时兜底。身份判据复用 `match_gallery`，来源标 `gallery_small`，可升级至标准图库人像。
+  - 图库同名多张时先按脸认人（`peach.face_match`，互证与小图作证见 ADR-0056、0057、0062、0066）；封面未匹配时仍允许不同来源、不同照片的图库多数独立互证（ADR-0104）。短边至少 300 像素的档案小图优先于封面裁片（ADR-0102），更小的图只在没有封面时作为后备。身份判据复用 `match_gallery`，来源标 `gallery_small`，可升级至标准图库人像。
   - 自动封面头像可换为合格档案人像或更清晰封面，人挑的不碰；候选列表按本机内容及默认裁切哈希去重，保留在用状态、具体来源与作品全部底图。展示去重不参与身份判断，不联网取图，不删除历史缓存。
 - 外部来源 genre 只在 `peach.genre_taxonomy` 投影：JavDB `類別` 与日英来源词共用词表，非内容分类排除，未收录原文回传登记；查表只有 `resolve_genre` 一处，抓取与复核折叠共用。r18dev 取 `categories[].name_ja`，日文取不到才用英文。有码标签的来源选择复用 `metadata_policy.preferred_tag_source(code)`，排序、采集与复核一致；替换走 `metadata_auto_apply` 的来源归属与人工判断保护（ADR-0100），不另写直写流程。
 - 中文来源词的有限简体别名由 `generate_genre_simplified.py` 使用已有开发依赖 OpenCC 1.4.2（Apache-2.0）生成，冲突拒绝；别名保存在 `genre_taxonomy` 的独立区块，历史词表从同一个 Git 版本读取完整规则，运行时无需 OpenCC。覆盖全部登记词的繁简投影测试保留人工决定优先级和未知词出口，无新增依赖或真实账本写入。
@@ -941,9 +992,9 @@ A 盘垃圾隔离使用短名称 `peach-purge-<32 位 UUID>.peach-quarantine`，
 | FC2 目录元数据与跨号证据 | 已缓存的 fc2cmadb Inertia `article`／评论；Javinizer-Go v1.5.2 的 FC2 解析器（MIT）只作商品页字段边界参考 | 旧文章仍有标题、原始标签、日期、时长、卖家、FC2 CDN 封面与 `comments`（2026-08-31 登录态实测）；无歧义标签译成现有词表，标题／标签进 `/review`，`w1200` 封面过尺寸与解码门槛落生成产物；pair、合集/分片保护、hash/时长/尺寸佐证、库外 evidence、健康统计与复核归 Peach，不依赖 FC2-Leak-Detector/JavSP，镜像候选不直写 ledger |
 | 缺索引 MP4 重建 | untrunc（anthwlock `9d86ec9`，GPL-2.0-or-later）与兼容的 FFmpeg 8.1.3 静态构建，固定来源及哈希见 `scripts/untrunc-sources.json`。Windows 安装包与免安装包携带 `tools/untrunc`，同一 Release 提供完整对应源码；原生样片实测覆盖尾部 `moov` 缺失后的 H.264/AAC 恢复、时长与全片解码。显式 `PEACH_UNTRUNC` 优先，其后依次查随包目录、数据工具与 PATH | `src/peach/mp4recover.py` 挑参照（同目录文件名最近的先试，最多 4 部）、验收（解码错误 ≤3 行、音视频时长差 ≤5%）、换回原路径并把坏原件改名成同目录的 `.文件名.peach-original`；缺整个 `moov` 的片子哪里都打不开，所以结果替换原文件，不像缺 `ctts` 那样另存头。实测见 [取证](SOURCING.md#媒体与关注实测) |
 | 媒体探测/转码 | Windows 独立包从固定源码交叉编译 FFmpeg 9.0.2、x264、dav1d、nv-codec-headers、AMF 头文件与 libvpl，按 GPL-3.0-or-later 分发；版本、来源和哈希见 `scripts/ffmpeg-sources.json`。工具与完整对应源码一起构建，安装包和免安装 ZIP 共用经校验的 `tools/ffmpeg`。源码与 CI 媒体测试仍可使用 PATH 工具（[取证](SOURCING.md#依赖与工具实测)） | 容器与编码分别检查：MP4/M4V 的 H.264 8-bit 加兼容音轨直出，其余容器里的 H.264 8-bit 只换 MP4 封装；重编码按[硬件转码后端](#硬件转码后端)及本机播放加速偏好选择 |
-| HTML5/HLS/DASH 播放 | Video.js 10.2.0 的 `@videojs/html`、`@videojs/hlsjs-video` 与 `@videojs/dash-video`，通过官方 `@videojs/cdn` 本地固定模块分发（Apache-2.0） | 流方案、授权、稳定时长、回退顺序和统计面板；详情不兼容片源复用 HlsSegmentService 与 FFmpeg 按六秒编码 H.264/AAC，独立缓存、绝对时间轴及会话取消，无整片预转码 |
-| 播放器设置与影院布局 | Video.js 10.2.0 的播放器状态、原生媒体事件、播放／静音／全屏／画中画按钮与进度／音量滑条；YouTube `e937390a` 实际 DOM／CSS／JS 给几何、状态、动画和图形证据 | Peach 皮肤组合氛围模式、倍速、真实清晰度和影院模式：59 px 两排控制栏、40→111 px 横向音量、4→6 px 进度、右侧共享胶囊、整行悬停的 274 px 设置菜单、视口级全屏；普通视图 `contain`，全屏 `cover`。播放会话与同一枚原生视频经过舞台和小窗整体搬移，状态、字幕与上报保留；设置、时间、预览、统计、字幕菜单、中央提示和错误反馈属于 Peach。皮肤沿用本地 SVG 与 spinner，不复制上游按钮、滑条或媒体引擎的控制逻辑 |
-| 播放器时刻预览 | Video.js 原生进度控件、统一时间索引与 `/timeline?id=&s=`；取不到时退回 `/poster?id=&c=0…8` 九宫格 | `timeline_sources` 读取 Jellyfin Trickplay、Emby／Roku／Plex 导出的 BIF、WebVTT 图片 cue、HLS／DASH 图片轨，复用现有 Pillow、标准库与 `m3u8==6.0.0`，无新增依赖；配对、格式边界及取证见[已有时间轴预览](VIDEO_PREVIEWS.md)。`timeline_sheets` 只对本机缺少可用产物的视频按每 10／30 秒预铺。网盘读取已有图片不触发视频抽帧；原视频抽帧的[流量判据](SOURCING.md#媒体与关注实测)保留。前端专用 VTT／sprite 插件不能承担磁盘索引和 BIF，不引入 |
+| HTML5/HLS/DASH 播放 | Video.js 10.3.0 的 `@videojs/html`、`@videojs/hlsjs-video` 与 `@videojs/dash-video`，通过官方 `@videojs/cdn` 本地固定模块分发（Apache-2.0） | 流方案、授权、稳定时长、回退顺序和统计面板；详情不兼容片源复用 HlsSegmentService 与 FFmpeg 按六秒编码 H.264/AAC，独立缓存、绝对时间轴及会话取消，无整片预转码 |
+| 播放器设置与影院布局 | Video.js 10.3.0 的播放器状态、原生媒体事件、播放／静音／全屏／画中画按钮与进度／音量滑条；YouTube `e937390a` 实际 DOM／CSS／JS 给几何、状态、动画和图形证据 | Peach 皮肤组合氛围模式、倍速、真实清晰度和影院模式：59 px 两排控制栏、40→111 px 横向音量、4→6 px 进度、右侧共享胶囊、整行悬停的 274 px 设置菜单、视口级全屏；普通视图 `contain`，全屏 `cover`。播放会话与同一枚原生视频经过舞台和小窗整体搬移，状态、字幕与上报保留；设置、时间、预览、统计、字幕菜单、中央提示和错误反馈属于 Peach。皮肤沿用本地 SVG 与 spinner，不复制上游按钮、滑条或媒体引擎的控制逻辑 |
+| 播放器时刻预览 | Video.js 原生进度控件、统一时间索引与 `/timeline?id=&s=`；取不到时退回 `/poster?id=&c=0…8` 九宫格；没有可用图或图片尚未加载成功时不显示浮层 | `timeline_sources` 读取 Jellyfin Trickplay、Emby／Roku／Plex 导出的 BIF、WebVTT 图片 cue、HLS／DASH 图片轨，复用现有 Pillow、标准库与 `m3u8==6.0.0`，无新增依赖；配对、格式边界及取证见[已有时间轴预览](VIDEO_PREVIEWS.md)。`timeline_sheets` 只对本机缺少可用产物的视频按每 10／30 秒预铺。网盘读取已有图片不触发视频抽帧；原视频抽帧的[流量判据](SOURCING.md#媒体与关注实测)保留。前端专用 VTT／sprite 插件不能承担磁盘索引和 BIF，不引入 |
 | 外挂字幕 sidecar | 浏览器原生 `TextTrack` 与 [WebVTT 规范](https://www.w3.org/TR/webvtt1/)；配对复用 `catalog_rules` 的 `VERSION_TAIL_TOKENS` 与 `release_code_from_filename`。行为证据：sakuramediabe `import_service.py`／`movie_numbers.py` 的 `subtitle_matches_movie_number`（同目录、纯番号、不回退同名），NeoAVDC `organizeMedia.ts`／`parseNumber.ts` 的 `isSubtitleFile`（`.srt .ass .sub .vtt .ssa`，按视频主名前缀）；Peach 的判据是两者的并集加顺序 | `subtitles.py` 只做同目录配对（exact／suffix／code／orphan）、`asset_subtitle` 幂等登记、srt/ass/ssa → WebVTT。不用 `pysubs2`（为几十行加运行时依赖）和 FFmpeg（每次起子进程、报不出「编码认不出来」），编码要认 GBK／Big5／Shift_JIS，不用几乎吞下任何字节的 `gb18030`。内封字幕轨不在此列，`media_probe.py` 只取 `v:0`，流信息不落库 |
 | 播放偏好与字幕记忆 | 原生 `TextTrack.id`；现有 `filelock==4.2.0` 与 `fsutil.atomic_write_text`，沿用本机状态文件的并发锁与原子替换 | `playerMemory` 与 `SubtitleSession` 供详情、小窗与沉浸播放复用；服务端 `state/player-subtitles/` 按资产、关注条目及帖子内视频分别保留 WebVTT，`subtitles.json` 同存旋转、倍速、字幕外观、轨道身份与最后选择，`null` 表示关闭。偏好以字段补丁在同一文件锁内合并，客户端同身份写入串行，用户操作不受迟到的读取覆盖。旁挂字幕按目录内文件名生成稳定身份，登记与载入顺序不参与身份；已保存的登记 ID 通过轨道别名恢复。同目录发现复用现有配对、转码与读取上限，只读授权目录并与已登记路径去重。内容保存先于成功回执，重复导入按轨道键覆盖；重新播放直接读保存内容。保留转换器与 SubtitleCat 接口，不新增解析器、浏览器数据库依赖或 ledger 迁移 |
 | 分卷文件命名 | [Plex 官方命名](https://support.plex.tv/articles/naming-and-organizing-your-movie-media-files/)的 `cd/disc/disk/dvd/part/pt + 数字` 与 [Kodi 官方 File Stacking](https://kodi.wiki/view/File_stacking)只作行为证据；运行时复用当前树的 `part_marker`，不新增扫描器依赖 | 兼容裸数字、紧接番号的 A–H 与 cd 序号、fhd 序号及圈号标题，共有版次尾缀先剥离再取卷标。FC2 的明确数字合集允许缺集和零起始；本篇与唯一 SP、gift、特典可合卡，完整版与数字分卷混合、重复标签不自动合并。每个 asset 与播放会话保留，不拼接或改写媒体 |
@@ -961,6 +1012,8 @@ A 盘垃圾隔离使用短名称 `peach-purge-<32 位 UUID>.peach-quarantine`，
 | Windows 托盘恢复 | Windows 自带 `OpenProcess`、`GetProcessTimes`、[`WaitForSingleObject`](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)、`GetExitCodeProcess`；Python 3.12+ 标准库 `ctypes` / `subprocess`，无新增依赖或分发体积 | `tray_lifecycle` 保留明确退出意图、创建时间校验、3 次 / 5 分钟预算与重启交接。pystray 0.19.5 的 `_message_handlers` 接收 `WM_STOP` / `WM_ENDSESSION`，已核对安装包源码；Windows 临时进程实验证明强制退出能恢复，明确退出不会恢复。原生 API 随受支持的 Windows 维护；pystray 使用项目固定版本。不采用 Task Scheduler `RestartOnFailure`：它只管理任务启动的实例，桌面快捷方式与现有重启脚本不归其管理；不新增 psutil 运行时依赖，进程句柄已覆盖等待与退出码。已知边界是监视器随整棵进程树被终止时不能恢复。 |
 | macOS 菜单栏 | `pyobjc-framework-Cocoa==12.2.2`（MIT）提供 AppKit / Foundation / PyObjCTools / objc | 附件应用策略、18 pt template 图、服务归属与菜单动作 |
 | macOS 应用内更新 | [Sparkle 2.10.1](https://github.com/sparkle-project/Sparkle/releases/tag/2.10.1)（MIT）官方发布包，地址与 SHA-256 固定在 `scripts/sparkle-macos.json`；框架放 `Contents/Frameworks`，由 pyobjc `objc.loadBundle` 加载；appcast 由官方 `generate_appcast` 生成、`sign_update --verify` 核对 | 读取端的迁移拦截、安装前保存任务进度与停服务、设置页偏好映射到定时检查、appcast 的迁移号与发布门槛（`scripts/sparkle_appcast.py`）。非沙盒应用用不到 XPC 服务，取件时删除并按 ad-hoc 由内向外重签；不开 Hardened Runtime。不自写 DMG 下载、挂载与替换，也不在 Linux 上用 Python 重新实现 EdDSA 签名与 appcast 生成：官方工具只需一个仅标签运行的 macOS 作业。取舍与未验证项见 [ADR-0130](adr/0130-macos-sparkle-in-app-update.md) |
+| Windows 更新的发布签名 | `cryptography==50.0.2`（Apache-2.0 / BSD）的 Ed25519；原是 smbprotocol 的传递依赖，独立包已带，改为直接声明 | 签名对象选每个版本已有的 `SHA256SUMS.txt`，签名文件一行一个「公钥 签名」以便多钥轮换，下载前校验，发布作业缺私钥时拒绝发布（`release_signing.py`、`scripts/sign_release.py`）。不用 minisign、signify、SSHSIG 或 GPG：客户端要多带解析器或外部工具，只验一种文件不值得。不复用 Sparkle 私钥：那把公钥无法轮换。取舍见 [ADR-0137](adr/0137-release-sums-ed25519-signature.md) |
+| 让其他设备信任本机 CA | 证书解析与 SHA-256 指纹用已有的 `cryptography==50.0.2`；二维码用 `qrcode==8.2`（BSD），原是 p115client 的传递依赖，已在锁文件里，改为直接声明，只取模块矩阵、由页面画成 SVG，不经过 Pillow | 只下发重新编码的公开证书，私钥拼进文件也发不出去；二维码地址带进程内密钥签发的 10 分钟签名，手机不用在不可信连接上先登录（`routes_configuration.certificate_payload`）。不用前端二维码库：页面已有服务端数据，多一个 npm 依赖和 vendored 清单不值得。签发证书仍调用 OpenSSL，见下表 `certs.py` 一行。取舍见 [ADR-0142](adr/0142-web-token-rotation-and-ca-distribution.md) |
 | macOS 拖放安装镜像 | [dmgbuild 1.6.7](https://github.com/dmgbuild/dmgbuild)（MIT，Python ≥3.10，macOS）直接写 Finder 元数据；仅安装于 `build` extra。纯 Python wheel 约 35 KB，依赖 `ds-store`、`mac-alias`；固定传递版本见 `uv.lock` | 已读取固定版的文件复制、背景多分辨率合成与图标布局实现；背景渲染复用 resvg-py 0.5.0，无运行时新增依赖。Peach 提供 640×420 拖放布局、双分辨率背景和应用内许可证；[APFS 设置](https://dmgbuild.readthedocs.io/en/latest/settings.html#filesystem)保留签名资源的 Unicode 文件名。单元验证配置与图片尺寸，macOS 原生回归与发布验收实际挂载镜像，检查严格签名、资源字节及软链。磁盘镜像创建依赖 macOS 的 hdiutil；无需 Finder 自动化权限，挂载或文件系统失败会终止构建 |
 | 人脸取景 | `opencv-python-headless==5.0.0.93`（Apache-2.0）的 `cv2.FaceDetectorYN` + opencv_zoo 定版模型 `face_detection_yunet_2023mar.onnx`（MIT，opencv_zoo 提交 `48b10fa5`，sha256 `8f2383e4…52fa4`，232 KB，随安装包放 `tools/face-models/`，没带时放 `peach-data/tools/yunet/`，不进 Git）；MetaTube SDK `6a5e6128c725187aeaf921d48ed7d9cd9f30671b` 的主脸聚类只作算法参考 | 头像／封面离线脚本共用 `peach.face_detect`（主脸、归一化焦点与 sidecar）。`detect` 按长边 320/640/1280 各检一次、分数取中位数；`main_face` 先筛掉分数落后最好那张 0.1 以上的框，再取最大。不用 Haar 级联（OpenCV 5 wheel 里没有、检出率低）与 Pigo v1.4.6（有无脸误报）。[实测](SOURCING.md#人脸与水印实测) |
 | 人脸比对 | 同一 OpenCV 的 `cv2.FaceRecognizerSF` + opencv_zoo 定版模型 `face_recognition_sface_2021dec.onnx`（Apache-2.0，同一提交，sha256 `0ba9fbfa…34e79`，与 LFS 指针的 oid 一致，37 MB，随安装包放 `tools/face-models/`，没带时放 `peach-data/tools/sface/`，不进 Git） | `peach.face_match` 提特征、算余弦，阈值用 SFace 官方的 0.363；补头像后继拿图库候选与单人封面截到的脸比（ADR-0056），小脸先放大再检（ADR-0070）。检脸用 `peach.face_detect`，取模型先认随包那份（`bundled_model`，校验 SHA-256，进程内按文件大小与修改时间缓存结论），再走同一条 `fetch_model`；随包文件由 `scripts/fetch_face_models.py` 取齐并附两个目录的 LICENSE，Docker 镜像用 `ADD --checksum` 取同一组文件。不引 `face_recognition`／dlib（要编译、体积大）与 InsightFace（模型限非商用、需 onnxruntime）。[实测](SOURCING.md#人脸与水印实测) |
@@ -972,7 +1025,7 @@ A 盘垃圾隔离使用短名称 `peach-purge-<32 位 UUID>.peach-quarantine`，
 | 浏览器历史解析 | `browserexport==0.4.4`（MIT、Python ≥3.9，约 35 KB wheel；Chrome/Firefox/Zen/Safari 的 SQLite 解析） | 消费者是 `/taste` 的本机读取与导出导入；Peach 保留 SQLite backup、Takeout、私有原始存储、域名分析和 candidate 生成，在 Windows 自己关只读连接。按必需列识别格式，以局部 Schema 补可选元数据列，时间与 Visit 转换继续复用上游。国产浏览器目录参考 HackBrowserData，不引入其运行依赖；目录与合成 SQLite 的最小验证、115 下载记录和旧搜狗限制见[浏览器历史导入](BROWSER_HISTORY.md)。跨主机同步须显式导出、传输并按来源去重合并 |
 | Rule34.xxx / Paheal 高清封面 | 固定参考 gallery-dl `86047cf67a12bdb6ff1085774f8ad9fc347e8da9`（GPL-2.0，只作协议行为证据，不引入运行时）；运行时复用现有 FFmpeg | booru 按 `sample_url`/`preview_url`/`file_url` 回退，Paheal 只取原始 `file_url` 再抽帧：FFmpeg `blackframe` 的 `lavfi.blackframe.pblack` 在开头 30 秒选第一张黑色像素低于 98% 的帧，版本化缓存键淘汰旧黑帧（不用 GPL、默认取 10% 位置的 ffmpegthumbnailer）。Peach 管 URL 白名单、同源代理、双并发抽帧、缓存与低清回退 |
 | FANBOX 正文解析 | PixivUtil2 `v20251112` / `e537e96` 的公开正文模型（BSD-2-Clause，只复用数据模型，不引入整套下载器） | Peach 的独立规范化 DTO 覆盖 image/text/file/article/video/entry、`fileMap`、`embedMap`、`urlEmbedMap` 和旧 HTML 正文，保留正文顺序、稳定去重、可播放媒体与文件页边界；许可证依据写在实现头部，传输固定 `curl_cffi` |
-| CloudDrive 传输与代理配置 | `grpcio==1.84.0` 与 `protobuf==7.36.2`（消息代码由 grpcio-tools 1.84.0 生成后提交），消费者 `downloads_clouddrive`、`clouddrive_proxy` | 复用官方 proto v1.1.2 的最小方法子集；账号路径与挂载点绑定、API／数据代理双向读写、密码隔离、修订冲突检查与流量归属归 Peach。未声明的配置字段由 protobuf 保留并回传。没有新增依赖；不采用非官方 SDK，沿用固定依赖和 ADR-0089。协议证据及验证边界见 [CloudDrive 官方 API 接入](CLOUDDRIVE_API.md) |
+| CloudDrive 传输与代理配置 | `grpcio==1.84.0` 与 `protobuf==7.36.2`（消息代码由 grpcio-tools 1.84.0 生成后提交），消费者 `downloads_clouddrive`、`clouddrive_proxy`、`storage_external_cache` | 复用官方 proto v1.1.2 的最小方法子集及 `GetSystemSettings` 缓存目录字段；账号路径与挂载点绑定、API／数据代理双向读写、密码隔离、修订冲突检查与流量归属归 Peach。缓存目录只自动读取本机服务，远程路径保留手动映射。未声明的配置字段由 protobuf 保留并回传。没有新增依赖；不采用非官方 SDK，沿用固定依赖和 ADR-0089。协议证据及验证边界见 [CloudDrive 官方 API 接入](CLOUDDRIVE_API.md) |
 | 本地 NFO 导入 | Kodi／Jellyfin NFO 协议（2026-09-06 核对 [Kodi](https://kodi.wiki/view/NFO_files/Movies)、[Jellyfin](https://jellyfin.org/docs/general/server/metadata/nfo/)），标准库 ElementTree，图片走项目固定版 Pillow；实现在 `library_nfo.py` | 只适配影片、单集与音乐视频（整剧、专辑、播放记录与远端图片引用不套用），拒绝 DTD、超大输入与越目录图片引用。同名边车优先，`movie.nfo` 与通用海报只用于单影片目录；正片和图片同属一组连号（`(1).mp4` 配 `(1).jpg`…）时同名图是图集的一张。已知内容词投影为中文标签，画质、促销、发行属性与演员编成丢弃，未收录的自定义标签保留；远端补厂牌、导演、发行商、时长与图片出处，人物主名精确一致时补 DMM id、假名、罗马字与首次头像，不替换演员真值。网络复用 R18 JSON 入口、SourceTransport、头像缓存与封面解析器。候选按资产 ID 与路径定位，批准时复核目标，时长证据不覆盖探测时长（ADR-0029） |
 | JAV 高清封面 | Javinizer-Go `dd56998328d078c9baf68ff4fde2e6fcaa2a691a`（MIT）的 DMM modern `awsimgsrc.dmm.com/dig/...` 映射与尺寸门槛；Prestige 公开 API 的查询模型参考 MDCX `58e3f930f2e864fceb8a53ceef818716e2a6413d`（GPL-3.0，只作协议证据） | 候选、Range 量尺寸、面积最大者胜出与仅更大才原子升级见 `peach-jav-cover-workflow`。批量流程不请求社区来源，历史快照里的社区站只借厂牌；既有库采集在官方落空时经 `peach.community_catalog` 查 AVBase（取商品号认得出这个番号的店铺条目，名寄せ的标题可能来自合集）、JavBus 与 JavDB，两个图源先按 dHash 求一致，取景不同时用 OpenCV ORB（相似变换内点 ≥60 算同一张）。JavDB 只参与复核，不作为安装候选；其他单一图源留空 `verified_by`，遇验证页不绕过（ADR-0107）。MDC-NG 只证明 Amazon 日本渠道存在，只留 POC 候选。不写 ledger |
 
@@ -1006,7 +1059,7 @@ amane 查询与桥环境重建也使用 `CREATE_NO_WINDOW`，保留标准输出�
 
 抽帧与拼图通过现有 Pillow 12.3.0（HPND）完整解码输出图像，不按压缩文件大小推断有效性。复用既有 FFmpeg、色彩元数据重试与 `support_bundle`：失败记录包含采样秒数、时长、退出码、超时、工具来源和各次尝试的错误输出，错误原文截断并脱敏。诊断 ZIP 收集处理状态、最近 8 份问题清单及启动、更新、隧道证据。普通日志读取尾部 96 KiB，JSONL 按完整近期记录取尾；完整 JSON 在 16 MiB 内解析，脱敏后按 96 KiB 投影并优先保留任务状态与计数。超限、空文件与坏 JSON 在清单中明确标记，媒体名称留在本机。有效的不足 1 KiB JPEG、中文路径、失败重试和诊断导出均有回归；FFmpeg 参数依据[官方文档](https://ffmpeg.org/ffmpeg.html)，不引入 ffmpeg-python 等命令包装层，不写真实 ledger。核验范围见 [日志与诊断核验](DIAGNOSTICS.md)。
 
-Windows FFmpeg 9.0.2 静态链接 VideoLAN dav1d 1.5.4（BSD-2-Clause，官方源码 1,038,852 字节，Meson + NASM，支持 Windows x64 与 8/10-bit AV1）。版本、HTTPS 来源与 SHA256 固定在 `scripts/ffmpeg-sources.json`，源码和许可证随对应源码归档分发；完整工具的 FFmpeg 二进制增加约 3 MiB，不新增 Python 运行依赖。原生 `av1` 包装器依赖硬件解码，浏览器可播放不能作为 FFmpeg 软件解码证据；CPU 解码直接采用维护中的 dav1d，不为当前仅需解码的链路引入 libaom 编码库。发行验收使用合成 AV1 片段确认 CPU 解码与抽帧。构建参数依据 [FFmpeg libdav1d 文档](https://ffmpeg.org/ffmpeg-codecs.html#libdav1d) 和 [VideoLAN 固定发行源码](https://download.videolan.org/pub/videolan/dav1d/1.5.4/)。
+Windows FFmpeg 9.0.2 静态链接 VideoLAN dav1d 1.5.4（BSD-2-Clause，官方源码 1,038,852 字节，Meson + NASM，支持 Windows x64 与 8/10-bit AV1）。版本、HTTPS 来源与 SHA256 固定在 `scripts/ffmpeg-sources.json`，源码和许可证随对应源码归档分发；完整工具的 FFmpeg 二进制增加约 3 MiB，不新增 Python 运行依赖。原生 `av1` 包装器依赖硬件解码，浏览器可播放不能作为 FFmpeg 软件解码证据；CPU 解码直接采用维护中的 dav1d，不为当前只需解码的场景引入 libaom 编码库。发行验收使用合成 AV1 片段确认 CPU 解码与抽帧。构建参数依据 [FFmpeg libdav1d 文档](https://ffmpeg.org/ffmpeg-codecs.html#libdav1d) 和 [VideoLAN 固定发行源码](https://download.videolan.org/pub/videolan/dav1d/1.5.4/)。
 
 macOS CI 的抽帧与 AV1 软件解码回归使用 [Homebrew FFmpeg formula](https://formulae.brew.sh/formula/ffmpeg) 提供的原生工具，随非 core 测试域安装；实际版本和解码能力由安装日志与媒体回归核对。Windows CI 保留固定版本的 setup-ffmpeg，发布包继续使用自构建工具；不新增 Python 依赖，不改生产入口或真实 ledger。
 
@@ -1099,7 +1152,7 @@ Python 源文件纳入 `src/peach/library_sharing.py` 与 `src/peach/library_pro
 
 逐轮资源读数复用 psutil 的 native thread ID、线程 CPU 时间和已登记子进程身份，按本机总 CPU 容量归一化；父子汇总按计数器身份去重。Windows GPU 使用标准库 ctypes 调用 [PDH GPU 引擎计数器](https://learn.microsoft.com/en-us/windows/win32/perfctrs/performance-counters-portal)，按物理引擎汇总所属子进程并显示最忙引擎；不把共享服务的 GPU 占用分配给单一任务。网络复用现有 HTTPX 下载字节计量，以相邻采样差分取得下载速度，挂载和无法归属的传输明确未取得。资源归属沿任务控制上下文登记，以原子 JSON 支持命令行任务；读取校验服务 PID 与创建时间，历史任务不保留过期实时数值。界面复用 BoardUI `Chip` 的蓝、紫、青与红色状态 token，取消确认复用现有 `confirmModal`。未新增依赖。
 
-长时任务续跑复用 `job_recovery` 的本机原子记录、`BackgroundJob.checkpoint` 与 `TaskRunHandle.checkpoint`。主任务保留原 `job_id`、`run_id`、开始时间、处理范围和领域检查点；后继重排保留原进度。扫描复用现有 `os.scandir`、SQLite 批次提交、`filelock` 和 `fsutil.atomic_write_text`，保存遍历栈、文件名游标及字幕配对资料。本地资料按影片保存小份证据边车，候选成功落盘后才提交元数据完成集合；整理逐项原子保存同一批次的日志。`scrape_codes.py` 复用流式 CSV 与原始来源快照，续跑只保留已确认完成的番号，未完成番号可以重放。
+长时任务续跑复用 `job_recovery` 的本机原子记录、`BackgroundJob.checkpoint` 与 `TaskRunHandle.checkpoint`。主任务保留原 `job_id`、`run_id`、开始时间、处理范围和领域检查点；后继重排保留原进度。扫描复用现有 `os.scandir`、SQLite 批次提交、`filelock` 和 `fsutil.atomic_write_text`，保存遍历栈、文件名游标及字幕配对资料。本地资料按影片保存小份证据边车，候选成功写入后才提交元数据完成集合；整理逐项原子保存同一批次的日志。`scrape_codes.py` 复用流式 CSV 与原始来源快照，续跑只保留已确认完成的番号，未完成番号可以重放。
 
 当前树、扫描与采集的 Git 历史，以及现有任务队列均已核对；不引入新的调度或工作流依赖。项目已固定的 APScheduler 3.11.3（MIT）负责派发，其持久 job store 记录调度任务，不能保存函数执行到哪一条影片或来源页，见[上游调度说明](https://apscheduler.readthedocs.io/en/3.x/userguide.html#adding-jobs)。结果替换沿用 Python 3.14 标准库 [`os.replace`](https://docs.python.org/3.14/library/os.html#os.replace)（PSF），锁沿用项目固定的 `filelock`，没有新增运行时体积或平台要求。隔离实证覆盖目录与目录内批次中断、关注回抓游标、固定来源集合、原任务标识与计数、候选 CSV 保留及同批整理日志；不读取真实媒体、不访问外部采集来源，也不写真实 ledger。
 
@@ -1133,6 +1186,10 @@ Python 源文件纳入 `src/peach/library_sharing.py` 与 `src/peach/library_pro
 
 普通 Toast 与扫描任务卡共用 Agent Progress 外框，16px 半径由通知栈内的既有 token 解析，细边框与接触阴影分别复用 `border-button-default`、`elevation-xs`，不改变内容排版。浏览器回归核对桌面、手机和明暗主题下的外框一致性，并以同一任务、同一内容回放外框基线生成对比图。
 
+## 任务恢复的进程身份
+
+任务恢复复用 psutil 7.2.2（BSD-3-Clause，Windows/macOS/Linux）查询进程创建时间，并将既有开发依赖提升为固定运行依赖；不自行解析系统进程表。PID 存活且创建时间不晚于任务最近心跳时保留所有者，已复用 PID 允许恢复原任务；暂停后的 PID 为零时仍按恢复记录核对。创建时间因权限未取得时保守保留。临时账本回归覆盖失效 PID、复用 PID、当前心跳、安装暂停及任务身份保留，不直接清理真实任务记录。
+
 ## 本地附属媒体识别
 
 附属媒体识别复用 `catalog_rules.local_extra_type`、`is_local_extra` 与现有 `scan.is_sidecar`，兼容 Plex、Kodi、Emby、Jellyfin 的显式文件标记和专用目录。规则来源、完整标记及边界见[附属媒体命名证据](reference-snapshots/local-trailer-evidence.md)。
@@ -1159,3 +1216,18 @@ Python 源文件纳入 `src/peach/library_sharing.py` 与 `src/peach/library_pro
 口味页浏览器标识使用本地静态资源，不在展示时请求品牌网站。通用图标来自 [browser-logos](https://github.com/alrra/browser-logos/tree/58881b84c4d73adc03c06fa2c275a7abee02d935)，固定 revision 为 `58881b84c4d73adc03c06fa2c275a7abee02d935`；品牌商标归原持有人。其余品牌的来源、摘要、类型和别名记录在 `resources/browser-icons/manifest.json`。115 使用已安装浏览器 PE 的 `IDR_MAINFRAME` 主图标，未加载或执行程序；不能用网站标记替代应用图标。未知品牌继续使用通用图标，不按 Chromium 内核冒充 Chrome。
 
 本地发现继续复用 `watchdog` 原生文件事件。缺少配置时开启本地目录监控，保留显式关闭；网盘挂载不递归订阅。空队列等待事件，不增加定期目录遍历。本地移动事件传递旧路径，已积累的系统文件身份用于同卷改名和移动后的 ID 保留；标准库文件属性与 `FileLock`、原子写入承接私有缓存，不新增哈希遍历或媒体读取。跨卷副本、旧路径仍存在的文件不自动合并。升级前没有身份记录且停机期间已经移动的文件仍需全库维护或人工确认，不能仅凭大小和文件名接回。
+
+## 系统元数据发现过滤
+
+`discovery_rules` 按完整路径的目录段和叶文件名判断；全量扫描、单文件登记、本地事件、云推送和下载落地复用它。目录使用不区分大小写的保留名称，文件只使用明确名称、`._`、`.SYNOPPSDB`、`.wfm_upload` 前缀及 `@SynoEAStream` 后缀；下载复用扫描遍历，在进入系统子树前剪枝，系统文件不占落地文件数量上限。不读取媒体内容，无新增依赖。
+
+- Synology 的 `@eaDir`、`@sharebin`、`#recycle`、`#snapshot` 和系统文件命名见 [USB Copy 命名规则](https://kb.synology.com/en-au/DSM/help/USBCopy/usbcopy_general?version=6)；`@tmp` 见 [C2 Express Box 指南](https://global.download.synology.com/download/Document/Software/UserGuide/Service/SynologyC2/All/enu/C2_Express_Box_User_Guide_enu.pdf)。`@SynoEAStream` 采用 [#432 的实际失败路径](https://github.com/peach-mitao/peach/issues/432)，保留已有 `@snapshot` 单名过滤。
+- QNAP 的 `@Recycle`、`@Recently-Snapshot`、`.@__thumb`、`.@__qini`、`.@upload_cache`、`.streams` 和 `.wfm_upload*` 见 [HBS 3 系统临时文件规则](https://www.qnap.com/en-ph/how-to/faq/article/which-file-types-does-hbs-3-exclude-with-the-exclude-system-generated-temp-files-setting)。未采用其中的任意位置 `*_qtmp_*` 匹配：尚无足够窄的临时文件形状依据，避免隐藏同名正常媒体。
+- TrueNAS 的 `.zfs/snapshot` 见 [CORE 快照恢复说明](https://www.truenas.com/docs/core/13.3/coretutorials/printview/)；NetApp 的 [`.snapshot`](https://docs.netapp.com/us-en/ontap/data-protection/snapshot-copies-work-concept.html) 与 [`~snapshot`](https://docs.netapp.com/us-en/ontap/smb-admin/access-snapshot-directories-clients-smb2-concept.html) 使用目录段精确匹配。Samba 仅采用 [默认 `.recycle`](https://www.samba.org/samba/docs/current/man-html/vfs_recycle.8.html)，自定义回收站名称不能从名字推断。
+- AFP 的 `.AppleDouble`、`.AppleDesktop`、`.AppleDB`、`Network Trash Folder`、`Icon\r`、`.VolumeIcon.icns` 见 [Netatalk 专用文件与目录](https://netatalk.io/docs/Special-Files-and-Folders)。macOS 的 `.Spotlight-V100`、`.Trashes`、`.fseventsd` 可见 [Apple Remote Desktop 指南](https://images.apple.com/server/docs/ARD_3_Admin_Guide_v3.3.pdf)；外接盘根目录的 `.DocumentRevisions-V100` 和损坏后改名的 `.DocumentRevisions-V100-bad-<数字>` 是系统版本库，列目录返回 Operation not permitted，见 [Channels DVR 扫描报错](https://community.getchannels.com/t/scanner-error-walking-external-hard-drive-with-movies/27930) 与 [FreeFileSync 排除讨论](https://freefilesync.org/forum/viewtopic.php?p=28316)，按完整名称匹配。`__MACOSX` 中的 AppleDouble 见 [Apple DTS 取证示例](https://developer.apple.com/forums/thread/772398)。`.DS_Store` 见 [Apple SMB 说明](https://support.apple.com/102064)，`.localized` 沿用已有文件名规则。
+- Windows 的 [`System Volume Information`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltcreatesystemvolumeinformationfolder)、[`$Recycle.Bin`](https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/recycle-bin-corrupted)、[`desktop.ini`](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-customize-folders-with-desktop-ini) 和 [`Thumbs.db`](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-thumbnails) 分别按目录或文件名称匹配。
+- Linux 挂载点的 `.Trash` 和 `.Trash-<UID>` 见 [FreeDesktop Trash Specification](https://specifications.freedesktop.org/trash/1.0/)，UID 只匹配完整 ASCII 十进制数字；`.Trash-user` 和 `.Trash-1000-old` 仍可登记。Snapper 管理的 Btrfs 快照目录 `.snapshots` 见 [openSUSE 说明](https://doc.opensuse.org/documentation/tumbleweed/snapper/)；macOS `.TemporaryItems` 见 [Apple 文件系统模板](https://github.com/apple-oss-distributions/files/blob/main/hierarchy.osx)。这些名称按完整目录段匹配，目录本身作为扫描根、恢复断点或推送路径也跳过，不进入内部文件。
+- fnOS 的 `.@#local` 按完整目录段过滤，覆盖个人目录、团队目录和嵌套媒体目录下的 `.@#local/trash`。物理路径依据 [CleanFnOS 回收站实现](https://github.com/kyeo-hub/CleanFnOS/blob/21d10e4ffeb696dd23e817d5b3a5069760b5a9ed/app/ui/api/trash.js)；这是第三方应用作者的源码依据，不代表飞牛官方命名契约或所有 fnOS 版本实机验收。正常 `.@#local-old` 与可存放应用共享媒体的 `@appshare` 保留，不按 `@app*` 整批排除。
+- TerraMaster 支持团队确认的 [`#recycle`](https://forum.terra-master.com/en/viewtopic.php?t=2443) 已由同名规则覆盖。[ASUSTOR](https://www.asustor.com/en/online/online_help?id=11) 和 [UGREEN](https://support.ugnas.com/detail/article/en-US/159) 的已查官方说明介绍回收站功能，未据此推导物理目录名称，也不将普通 `Recycle Bin`、`Trash` 或中文文件夹名加入过滤。
+
+不排除任意 `@` 目录或任意点开头文件；`@creator/movie.mp4`、`.hidden.mp4`、`@eaDir-old` 和普通 `Snapshots` 仍可登记。旧数据沿用 `system_file_repair` 可还原隔离，跳过收藏、个人记录和复核里驳回过的行，保留文件与关联行。叶文件名本身命中文件规则的（`._movie.mp4`、`Thumbs.db` 等）不论媒介和番号都隔离：`._` 文件名里的番号会被识别并刮到资料，但文件只是 4 KB 左右的属性数据。只因所在目录命中的仍只处理无番号的 `other` 行，系统目录里的视频、图片和音频不自动隔离。更早回执已经隔离过的相同资产与 Windows 路径不再处理，以保留后来的手动还原。路径按 `PureWindowsPath` 比较，大小写和斜杠变化不影响保护，同一 ID 改为另一路径仍按规则检查。过滤生效不代表其余历史资产已复核。

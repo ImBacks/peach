@@ -273,7 +273,10 @@ body[data-detail-open] [class~=glowlayer]::before{animation-play-state:paused,pa
 /* Video.js 的壳整块搬进来，几何全由这一格给：控件条只剩底部那条进度。 */
 [data-miniplayer-frame] .video-js{position:absolute;inset:0;width:100%!important;height:100%!important;padding-top:0!important;background:#000;font-family:inherit}
 [data-miniplayer-frame] .video-js .vjs-tech{object-fit:contain}
-[data-miniplayer-frame] .video-js :is(.vjs-big-play-button,.vjs-peach-bezel,.vjs-peach-settings-menu,.vjs-peach-tooltip,.vjs-loading-spinner,[data-player-seek-preview],.vjs-text-track-display){display:none!important}
+[data-miniplayer-frame] .video-js :is(.vjs-big-play-button,.vjs-peach-bezel,.vjs-peach-settings-menu,.vjs-peach-tooltip,.vjs-loading-spinner,.vjs-text-track-display){display:none!important}
+/* 拖动预览与详情同一块，框收到窄屏那一档：小窗 400 宽，预览要整块落在画面里。时间由它报，原生时刻浮签不再重复。 */
+[data-miniplayer-frame] .vjs-peach-seek-frame{--seek-max-w:160px;--seek-max-h:120px}
+[data-miniplayer-frame] .video-js .vjs-mouse-display{display:none!important}
 [data-miniplayer-frame] .video-js .vjs-control-bar{position:absolute;left:0;right:0;top:auto;bottom:0;z-index:2;display:flex;width:auto;height:5px;padding:0;
   background:transparent;opacity:1!important;visibility:visible!important;pointer-events:auto!important;transition:none}
 [data-miniplayer-frame] .video-js .vjs-control-bar>:not(.vjs-progress-control){display:none!important}
@@ -309,6 +312,8 @@ body[data-detail-open] [class~=glowlayer]::before{animation-play-state:paused,pa
 [data-miniplayer-button]:active:after,[data-miniplayer-play]:active:after,[data-miniplayer-seek]:active:after{background:rgba(255,255,255,.2)}
 [data-miniplayer-button]:focus-visible,[data-miniplayer-play]:focus-visible,[data-miniplayer-seek]:focus-visible{outline:0}
 [data-miniplayer-time]{position:absolute;left:12px;bottom:16px;font-size:var(--fs-xs);line-height:15px;text-shadow:0 0 2px #000;pointer-events:none}
+/* 进度条预览自己报时间，出来时小窗角上的时间让开，两行时间不叠在一起。 */
+[data-miniplayer]:has([data-player-seek-preview]:not([hidden])) [data-miniplayer-time]{visibility:hidden}
 /* 信息栏：上游 76px，12px 16px 内边距；标题 14/20 500 单行省略，副标题 12/18 400、上距 4px。
    整条是「展开到详情」的按钮，拖动从这里起手最顺，所以光标是 grab。 */
 [data-miniplayer-info]{box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-height:76px;width:100%;

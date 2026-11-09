@@ -20,7 +20,10 @@ from fastapi.testclient import TestClient
 from peach import downloads as dl
 from peach.api import create_app
 from peach.config import PROJECT_ROOT, PeachSettings
-from peach.jav_browser import CREDENTIAL, JavBrowser, code_key, identify_source, source_page, source_sites
+from peach.jav_browser import (
+    CREDENTIAL, JavBrowser, _download_candidate, code_key, identify_source, source_page, source_sites,
+)
+from peach.jav_editions import EditionProbe
 from support.ledger import fresh_ledger
 from support.conditions import missing_prerequisite
 from support.browser import chrome_executable
@@ -49,6 +52,8 @@ class BrowserTests(unittest.TestCase):
         self.downloads.config = dl.DownloadConfig("http://127.0.0.1:19798", {"115": "/115/Movies"})
         self.downloads.credentials.save(dl.CLOUDDRIVE_CREDENTIAL, {"token": "cloud-secret"})
         self.service.search = Mock(return_value={"items": [{"name": "ABC-123 1080p", "uri": MAGNET}]})
+        # 通常版页面的特典版探测会问 DMM；用例里一律答没有，需要时单独替换。
+        self.service.edition_probe = Mock(return_value=False)
         self.client = TestClient(self.app, client=("127.0.0.1", 12345))
         self.headers = {"X-Token": "admin-secret"}
         response = self.configure("enable")
@@ -66,6 +71,64 @@ class BrowserTests(unittest.TestCase):
 
     def status(self):
         return self.client.get("/api/jav-browser", params={"code": "ABC-123"}, headers=self.script_headers)
+
+    def test_temporary_search_retries_persist_and_wait_until_due(self):
+        now = [1_800_000_000.0]
+        self.downloads.clock = lambda: now[0]
+        self.service.search.return_value = {'state': 'error', 'items': [], 'error': '请求超时', 'retry_after': 120.0}
+        self.add()
+        self.service.process_one()
+        status = self.status().json()
+        self.assertEqual((status['state'], status['retry_attempt']), ('queued', 1))
+        restored = JavBrowser(self.service.contract, search=self.service.search)
+        self.assertFalse(restored.process_one())
+        self.assertEqual(self.service.search.call_count, 1)
+        now[0] += 120
+        self.service.search.return_value = {'items': [{'name': 'ABC-123 1080p', 'uri': MAGNET}]}
+        self.assertTrue(restored.process_one())
+        self.assertEqual(restored.status('ABC-123')['state'], 'submitted')
+        self.remote.submit.assert_called_once()
+
+    def test_permanent_search_failure_is_not_automatically_requeued(self):
+        self.service.search.return_value = {'state': 'unavailable', 'items': [], 'error': '需要配置索引器'}
+        self.add()
+        self.service.process_one()
+        self.assertEqual(self.status().json()['state'], 'failed')
+        self.assertFalse(self.service.process_one())
+
+    def test_postprocess_retry_is_dispatched_by_the_download_scheduler_after_restart(self):
+        now = [1_800_000_000.0]
+        self.downloads.clock = lambda: now[0]
+        task = self.downloads.store.save(dl.DownloadTask(id=0, info_hash=HASH, provider='115', source_uri=MAGNET,
+            display_name='ABC-123', target='/115/Movies', state=dl.INGESTED, postprocess_state=dl.POSTPROCESS_PENDING))
+        self.downloads.store.fail_postprocess(task.id, TimeoutError('暂时超时'), now=now[0])
+        restored = dl.DownloadStore(self.downloads.store.database)
+        self.assertEqual(restored.pending_postprocess(now[0]), [])
+        self.assertEqual(self.downloads.poll_once(), 0)
+        self.downloads.after_ingest = lambda value: self.downloads.store.postprocess(value.id, dl.POSTPROCESS_QUEUED)
+        now[0] += 60
+        self.assertEqual(self.downloads.poll_once(), 1)
+        self.assertEqual(restored.get(task.id).postprocess_state, dl.POSTPROCESS_QUEUED)
+        self.remote.submit.assert_not_called()
+
+    def test_a_queued_title_can_move_to_the_front_of_the_search_queue(self):
+        for code in ("ABC-123", "ABP-616", "MIDV-339"):
+            self.assertEqual(self.add(code).json()["queue_position"], {"ABC-123": 1, "ABP-616": 2, "MIDV-339": 3}[code])
+        response = self.client.post("/api/jav-browser/prioritize", headers=self.script_headers, json={"code": "MIDV-339"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual((response.json()["state"], response.json()["queue_position"]), ("queued", 1))
+        self.assertEqual(self.client.get("/api/jav-browser", params={"code": "ABC-123"},
+                                         headers=self.script_headers).json()["queue_position"], 2)
+        # 顺序写进持久队列，重启后照样先搜它。
+        restored = JavBrowser(self.service.contract, search=self.service.search)
+        self.assertEqual(list(restored.rows), ["MIDV-339", "ABC-123", "ABP-616"])
+        self.service.process_one()
+        self.assertEqual(self.service.search.call_args.args[1]["code"], "MIDV-339")
+        # 不在排队中的番号不能提前。
+        for code in ("MIDV-339", "SSIS-001"):
+            response = self.client.post("/api/jav-browser/prioritize", headers=self.script_headers, json={"code": code})
+            self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(self.client.post("/api/jav-browser/prioritize", json={"code": "ABC-123"}).status_code, 401)
 
     def test_queued_request_searches_then_uses_the_cloud_download_contract(self):
         self.assertEqual(self.status().json()["state"], "idle")
@@ -263,6 +326,70 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.status().json()["state"], "no_match")
         self.remote.submit.assert_not_called()
 
+    def test_chosen_edition_puts_matching_magnets_first(self):
+        def magnet(digit, shown=""):
+            return f"magnet:?xt=urn:btih:{digit * 40}" + (f"&dn={shown}" if shown else "")
+        # 特典版有的种子名就是 SDJS-304V，有的只在磁力显示名或文件名里写着【特典版】。
+        regular = {"name": "SDJS-304 1080p H265", "uri": magnet("1")}
+        hidden_bonus = {"name": "SDJS-304", "uri": magnet("2", "%5BFHD%5D%20SDJS-304%20%E3%80%90%E7%89%B9%E5%85%B8%E7%89%88%E3%80%91")}
+        named_bonus = {"name": "[3xplanet][SDJS-304V]Matsunaga Akari", "uri": magnet("3")}
+        items = [hidden_bonus, regular, named_bonus]
+        self.assertIs(_download_candidate(items, "SDJS-304", edition="bonus"), hidden_bonus)
+        self.assertIs(_download_candidate(items, "SDJS-304", edition="regular"), regular)
+        self.assertIs(_download_candidate([named_bonus, regular], "SDJS-304", edition="bonus"), named_bonus)
+        # 没有选中版本的种子时退回第一个相符的；不指定版本时照旧，不收 SDJS-304V 写法。
+        self.assertIs(_download_candidate([named_bonus], "SDJS-304", edition="regular"), named_bonus)
+        self.assertIs(_download_candidate([named_bonus, regular], "SDJS-304"), regular)
+        self.assertIsNone(_download_candidate([named_bonus], "SDJS-304"))
+        # 只收这一部的特典版写法，序号不同的不混进来。
+        self.assertIsNone(_download_candidate([{"name": "SDJS-3045V", "uri": magnet("4")}], "SDJS-304", edition="bonus"))
+
+    def test_add_remembers_the_chosen_edition_for_magnet_switches(self):
+        bonus_page = "https://video.dmm.co.jp/av/content/?id=1sdjs00304v"
+        self.assertEqual(self.add("SDJS-304", source_url=bonus_page).status_code, 200)
+        self.assertEqual(self.service.rows["SDJS-304"]["edition"], "bonus")
+        self.service.rows.clear()
+        self.assertEqual(self.add("SDJS-304", source_url=bonus_page, edition="regular").status_code, 200)
+        self.assertEqual(self.service.rows["SDJS-304"]["edition"], "regular")
+        self.service.rows["SDJS-304"]["state"] = "failed"
+        self.assertEqual(self.add("SDJS-304", source_url=bonus_page, switch=True).status_code, 200)
+        self.assertEqual(self.service.rows["SDJS-304"]["edition"], "regular")
+        self.assertNotIn("edition", self.service.rows.get("ABC-123", {}))
+        self.assertEqual(self.add(edition="deluxe").status_code, 400)
+
+    def test_identification_reports_the_page_edition_when_a_bonus_edition_exists(self):
+        def identify(source):
+            response = self.client.get("/api/jav-browser/identify", params={"source_url": source}, headers=self.script_headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+        self.service.edition_probe = Mock(side_effect=lambda cid: cid == "1sdjs00304")
+        self.assertEqual(identify("https://video.dmm.co.jp/av/content/?id=1sdjs00304v")["edition"], "bonus")
+        self.assertEqual(identify("https://clip.fanza.jp/moment?id=img-sdjs00304v-001")["edition"], "bonus")
+        self.assertEqual(identify("https://video.dmm.co.jp/av/content/?id=1sdjs00304")["edition"], "regular")
+        self.assertNotIn("edition", identify("https://video.dmm.co.jp/av/content/?id=ssis00519"))
+        self.assertNotIn("edition", identify("https://www.mgstage.com/product/product_detail/300MIUM-1239/"))
+        # 特典版页面看商品号就够，只有通常版 DMM 页面才问。
+        self.assertEqual([call.args[0] for call in self.service.edition_probe.call_args_list], ["1sdjs00304", "ssis00519"])
+
+    def test_edition_probe_asks_each_product_once_and_pauses_after_a_failure(self):
+        clock = [0.0]
+        probe = EditionProbe(self.root, clock=lambda: clock[0])
+        asked = []
+        def ask(cid):
+            asked.append(cid)
+            if cid == "broken00001v":
+                raise OSError("DMM 未取得")
+            return cid == "1sdjs00304v"
+        probe._ask = ask
+        self.assertTrue(probe("1sdjs00304"))
+        self.assertTrue(probe("1SDJS00304"))
+        self.assertFalse(probe("1dandy00851c"))
+        self.assertFalse(probe("broken00001"))
+        self.assertFalse(probe("ssis00519"))
+        clock[0] += 601
+        self.assertFalse(probe("ssis00519"))
+        self.assertEqual(asked, ["1sdjs00304v", "broken00001v", "ssis00519v"])
+
     def test_no_match_requires_an_explicit_retry(self):
         self.service.search.return_value = {"items": []}
         self.add()
@@ -360,6 +487,26 @@ class BrowserTests(unittest.TestCase):
         self.downloads.store.save(task)
         self.assertEqual(self.status().json()["state"], "failed")
 
+    def test_library_ownership_keeps_the_latest_unfinished_postprocessing_visible_without_queue_cache(self):
+        self.add()
+        self.service.process_one()
+        task = self.downloads.store.get(self.status().json()['task_id'])
+        with self.downloads.store.database.write_transaction() as connection:
+            asset_id = connection.execute('INSERT INTO asset(path,name,location,medium,code) VALUES(?,?,?,?,?)',
+                (r'C:\Media\ABC-123.mp4', 'ABC-123.mp4', 'local', 'video', 'ABC-123')).lastrowid
+        task.state, task.asset_id = dl.INGESTED, asset_id
+        self.downloads.store.save(task)
+        self.downloads.store.postprocess(task.id, dl.POSTPROCESS_FAILED, detail='需要检查挂载')
+        self.service.rows.clear()
+        status = self.status().json()
+        self.assertEqual((status['state'], status['task_id'], status['download']['postprocess_state']),
+                         ('ingested', task.id, dl.POSTPROCESS_FAILED))
+        self.assertEqual(self.service.active()['items'][0]['download']['postprocess_state'], dl.POSTPROCESS_FAILED)
+        self.downloads.store.fail_postprocess(task.id, TimeoutError('暂时断开'))
+        self.assertEqual(self.status().json()['retry_attempt'], 1)
+        self.downloads.store.postprocess(task.id, dl.POSTPROCESS_COMPLETE)
+        self.assertEqual(self.status().json()['state'], 'owned')
+
     def test_status_projects_remote_progress_and_postprocessing_without_private_task_fields(self):
         self.add()
         self.service.process_one()
@@ -417,6 +564,50 @@ class BrowserTests(unittest.TestCase):
         self.downloads.store.save(task)
         self.assertEqual(listed(), {})
         self.assertEqual(self.client.get("/api/jav-browser/active").status_code, 401)
+
+    def test_finished_browser_tasks_stay_listed_until_dismissed(self):
+        def listed():
+            response = self.client.get("/api/jav-browser/active", headers=self.script_headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            return {item["code"]: item for item in response.json()["items"]}
+
+        def dismiss(body):
+            return self.client.post("/api/jav-browser/dismiss", json=body, headers=self.script_headers)
+
+        self.add()
+        self.service.process_one()
+        task = self.downloads.store.get(self.status().json()["task_id"])
+        self.assertTrue(task.origin.startswith("browser:"))
+        self.service.ended["since"] = "2026-01-01T00:00:00+00:00"
+        # 结束早已超过 10 分钟，没确认就一直列出。
+        task.state, task.postprocess_state = dl.INGESTED, dl.POSTPROCESS_COMPLETE
+        task.updated_at = task.postprocessed_at = "2026-06-01T00:00:00+00:00"
+        self.downloads.store.save(task)
+        item = listed()["ABC-123"]
+        self.assertEqual((item["ended_key"], item["dismissed"]), (f"{task.id}@2026-06-01T00:00:00+00:00", False))
+        # 之后又改了 updated_at（如停滞复查），结束键不变。
+        task.updated_at = dl.iso(time.time() - 3600)
+        self.downloads.store.save(task)
+        self.assertEqual(listed()["ABC-123"]["ended_key"], item["ended_key"])
+        self.assertEqual(dismiss({"keys": ["../ABC-123"]}).status_code, 400)
+        self.assertEqual(dismiss({"keys": [item["ended_key"]]}).status_code, 200)
+        self.assertEqual(listed(), {})
+        # 重试整理后再次结束是新的结束键，重新列出。
+        task.postprocessed_at = "2026-07-01T00:00:00+00:00"
+        self.downloads.store.save(task)
+        self.assertFalse(listed()["ABC-123"]["dismissed"])
+        response = dismiss({"all": True})
+        self.assertEqual((response.status_code, response.json()["items"]), (200, []))
+        self.assertEqual(json.loads(self.service.ended_path.read_text(encoding="utf-8"))["dismissed"], [])
+        # 刚结束、已被别的窗口确认的仍列出 10 分钟，只标 dismissed，本页状态照旧读得到。
+        task.postprocessed_at = task.updated_at = dl.iso(time.time() - 5)
+        self.downloads.store.save(task)
+        self.assertTrue(listed()["ABC-123"]["dismissed"])
+        # 不是浏览器添加的任务结束后不留存。
+        self.service.ended["since"] = "2026-01-01T00:00:00+00:00"
+        task.origin, task.postprocessed_at, task.updated_at = "wishlist:1", "2026-08-01T00:00:00+00:00", "2026-08-01T00:00:00+00:00"
+        self.downloads.store.save(task)
+        self.assertEqual(listed(), {})
 
     def test_disable_and_rotation_revoke_tokens(self):
         rotated = self.configure("rotate").json()["token"]
@@ -678,11 +869,17 @@ class BrowserTests(unittest.TestCase):
             "https://video.dmm.co.jp/av/content/?id=118abw00220": "ABW-220",
             "https://video.dmm.co.jp/av/content/?id=1dandy00851c": "DANDY-851C",
             "https://video.dmm.co.jp/av/content/?id=48midv00012ai": "MIDV-012AI",
+            "https://video.dmm.co.jp/av/content/?id=1sdjs00304v": "SDJS-304",
             "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=ssis00057/": "SSIS-057",
             "https://www.dmm.co.jp/mono/dvd/-/detail/=/cid=h_086iqqq00026/": "IQQQ-026",
             "https://www.mgstage.com/product/product_detail/300MIUM-1239/": "300MIUM-1239",
             "https://www.mgstage.com/product/product_detail/259LUXU-1475/": "259LUXU-1475",
             "https://www.mgstage.com/product/product_detail/104DANDY-851C/": "104DANDY-851C",
+            # 素人作品页与 FC2 内容市场商品页：地址里只有商品号或数字编号。
+            "https://video.dmm.co.jp/amateur/content/?id=mfc288": "MFC-288",
+            "https://adult.contents.fc2.com/article/4900901/": "FC2-PPV-4900901",
+            # FANZA 剪辑页：id 是 img-<DMM 商品号>-<片段序号>。
+            "https://clip.fanza.jp/moment?id=img-saba00978-011": "SABA-978",
         }
         for source, expected in cases.items():
             with self.subTest(source=source):
@@ -695,7 +892,8 @@ class BrowserTests(unittest.TestCase):
         self.remote.submit.assert_not_called()
         self.assertEqual(self.service.rows, {})
         for source in ("https://video.dmm.co.jp/av/content/?id=opaque_cid", "https://video.dmm.co.jp/av/content/?id=ssis00519&id=abw00123",
-                       "https://unrelated.invalid/av/content/?id=ssis00519", "https://www.mgstage.com/search/?q=300MIUM-1239"):
+                       "https://unrelated.invalid/av/content/?id=ssis00519", "https://www.mgstage.com/search/?q=300MIUM-1239",
+                       "https://clip.fanza.jp/moment?id=saba00978", "https://clip.fanza.jp/moment?id=img-saba00978"):
             with self.subTest(source=source):
                 result = self.client.get("/api/jav-browser/identify", params={"source_url": source}, headers=self.script_headers)
                 self.assertEqual(result.status_code, 400, result.text)

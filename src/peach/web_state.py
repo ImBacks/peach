@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -44,8 +47,30 @@ from .media import normalized_path
 # `previews` 是取图那一侧，不是 web 域处理器：依赖方向仍然只有一个走法。落盘名的
 # 规则必须和 `/logo` 用的是同一个函数，否则可用性判定迟早和取图对不上。
 from .previews import ENTITY_IMAGE_KINDS, LOGO_VARIANTS, entity_image_key, logo_key
-from .repository import LedgerDatabase
+from .repository import LedgerDatabase, writing_in_background
 from .task_runs import TaskRunStore
+
+LOGGER = logging.getLogger(__name__)
+
+#: 当前读请求的账本版本快照，见 `WebContract.revision_snapshot`；不在请求里时为 None，每次现读。
+_REVISION_SNAPSHOT: ContextVar[dict | None] = ContextVar("peach_revision_snapshot", default=None)
+_FRESH_AGGREGATES: ContextVar[bool] = ContextVar('peach_fresh_aggregates', default=False)
+
+
+@contextmanager
+def revision_snapshot():
+    """这一段里各表版本只读一次（一个读请求用一份）。
+
+    一次页面请求要核对十几个聚合缓存，每个都单独开连接读一遍版本表；账本表多、触发器多，
+    光是开连接、载入表结构就要十几毫秒一次。本进程有提交时（`cache_generation` 变了）
+    快照作废重读：请求里自己写过的，后面的缓存照样认得出来。快照记着是哪个契约读的，
+    换了契约也重读。
+    """
+    token = _REVISION_SNAPSHOT.set({})
+    try:
+        yield
+    finally:
+        _REVISION_SNAPSHOT.reset(token)
 
 
 class AvatarRootIndex(NamedTuple):
@@ -174,11 +199,24 @@ class WebContract:
         self.cache: OrderedDict[str, tuple[float, object, object]] = OrderedDict()
         self.cache_lock = threading.Lock()
         #: 按资产取键的读缓存，LRU 限界。键空间不封闭的场景走这里，见 `cached_lru()`。
-        self.keyed_cache: OrderedDict[str, tuple[float, object]] = OrderedDict()
+        self.keyed_cache: OrderedDict[str, tuple[float, object, object]] = OrderedDict()
         #: 每次 cache_bust 递增。在途计算据此判断自己出发后缓存是否失效过。
         self.cache_generation = 0
         self.revision_cache_keys: set[str] = set()
         self.aggregate_locks: dict[str, threading.RLock] = {}
+        #: 每个缓存键那一份结果出发时的 `cache_generation`；判它有没有包含最近一次前台写入。
+        self.cache_started: dict[str, int] = {}
+        #: 最近一次前台提交（不是 `repository.in_background` 包过的线程）之后的 `cache_generation`。
+        self.foreground_generation = 0
+        #: 最近一次后台提交之后的 `cache_generation`。进程外的写不经提交通知，两个数都不动。
+        self.background_generation = 0
+        #: 后台重算写回新值的次数，按那份结果读到的表各记一次，随结果版本下发，页面据此再取一次
+        #: （ADR-0146）。按表记而不是一个总数：写回一份封面统计不该让关注、发现几组页面也跟着重取。
+        self.cache_landed: dict[str, int] = {}
+        #: `/api/result-updates` 上一次下发的结果版本，见 `web_tasks.q_result_updates` 的节流。
+        self.published_versions: tuple[float, dict, int] | None = None
+        self.stale_refreshing: set[str] = set()
+        self._stale_refresher = None
         self.follow_check_lock = threading.Lock()
         #: 任务中心。每个后台任务的开始、进度与结束都写这一张表，`/tasks` 只读它。
         #: 只读端由 `api` 关掉写入：那边的账本是复制来的，写一行就是一处合不回去的分叉。
@@ -207,6 +245,7 @@ class WebContract:
         self.link_prune_job = self._job("PeachLinkPruneJob", "link-prune")
         self.scraping_cover_job = self._job("PeachScrapingCoverJob", "scraping-cover")
         self.amane_bridge_job = self._job("PeachAmaneBridgeJob", "amane-bridge")
+        self.source_check_job = self._job("PeachSourceCheckJob", "source-check")
         self.face_models_job = self._job("PeachFaceModelsJob", "face-models")
         self.library_processing_job = self._job(
             "PeachLibraryProcessingJob", "library-processing")
@@ -276,9 +315,11 @@ class WebContract:
                 # 时间戳沿用进入时的 now：算得比 TTL 还久的结果直接算过期，
                 # 宁可下次重算，也不要把一份已经旧了的数据当新的用。
                 self.cache[key] = (now, version, value)
+                self.cache_started[key] = generation
                 self.cache.move_to_end(key)
                 while len(self.cache) > CACHE_KEYS:
                     evicted, _ = self.cache.popitem(last=False)
+                    self.cache_started.pop(evicted, None)
                     # 键空间不封闭的聚合（按作者、按筛选口径）的锁和登记跟着结果一起走，
                     # 否则这两份只增不减。正被别的线程拿着的锁摘掉也无妨，持有者手里还有它；
                     # 同键再来时 `cached_until_changed` 会重新登记。
@@ -286,23 +327,40 @@ class WebContract:
                     self.aggregate_locks.pop(evicted, None)
         return value
 
-    def cached_lru(self, key, fn, *, maxsize: int = 192, ttl: float = CACHE_TTL):
+    def cached_for(self, key, fn, *, ttl: float):
+        """只按时间过期、不随提交通知清掉的缓存，给允许旧上几分钟的结果用（搜索推荐池）。
+
+        `cached` 的键每次提交都被 `cache_bust` 清掉；后台任务每几秒提交一次时，这类结果等于没有缓存。
+        """
+        with self.cache_lock:
+            self.revision_cache_keys.add(key)
+        return self.cached(key, fn, ttl=ttl)
+
+    def cached_lru(self, key, fn, *, maxsize: int = 192, ttl: float = CACHE_TTL, tables=None, inputs=()):
         """带 TTL 的 LRU 读缓存，给键空间不封闭的场景用（`/api/related` 按资产取键）。
 
         与聚合缓存分开计量，容量和 TTL 可由调用方指定。计算在锁外进行，
         计算期间发生提交或显式失效时，结果不进入缓存。
+
+        给了 `tables`（结果读到的账本表）时改按这些表的版本与 `inputs` 核验：提交通知不清它，
+        计算期间有提交也照样写回（版本在计算前读好，期间有写入，下一次读到新版本照样重算）。
+        后台任务每几秒提交一次时，不按版本核验的结果几乎存不住，算得比提交间隔慢的永远写不进。
         """
         now = time.monotonic()
+        version = None
+        if tables is not None:
+            revision = self.ledger_revision(tables)
+            version = None if revision is None else (revision, *inputs)
         with self.cache_lock:
             hit = self.keyed_cache.get(key)
-            if hit and now - hit[0] < ttl:
+            if hit and now - hit[0] < ttl and hit[1] == version:
                 self.keyed_cache.move_to_end(key)
-                return hit[1]
+                return hit[2]
             generation = self.cache_generation
         value = fn()
         with self.cache_lock:
-            if generation == self.cache_generation:
-                self.keyed_cache[key] = (now, value)
+            if generation == self.cache_generation or version is not None:
+                self.keyed_cache[key] = (now, version, value)
                 self.keyed_cache.move_to_end(key)
                 while len(self.keyed_cache) > maxsize:
                     self.keyed_cache.popitem(last=False)
@@ -312,35 +370,123 @@ class WebContract:
         """账本版本号：`ledger_revision` 各行之和（migration 0038）。
 
         每张账本表的增删改都由触发器给自己那一行加一，不论写的是服务、CLI 脚本还是
-        账本同步，所以这个数变了就是账本变了。任务中心的心跳不挂触发器。库还没迁移到
+        账本同步，所以这个数变了就是账本变了。任务中心的心跳不挂触发器；播放心跳只改的
+        观看进度列不推 asset 的版本（migration 0054）。库还没迁移到
         0038（或根本没有库）时返回 None。
         `tables` 非空时只累计这些表的版本。
         """
+        revisions = self._table_revisions()
+        if revisions is None:
+            return None
+        if not tables:
+            return sum(revisions.values())
+        return sum(revisions.get(table, 0) for table in set(tables))
+
+    def ledger_tables_except(self, excluded) -> tuple[str, ...]:
+        """登记了版本的账本表，去掉 `excluded`：聚合读的表太多、列不全时，按「除这几张以外」声明依赖。
+        读不到版本表时为空，`cached_until_changed` 随之退回整本账本的版本。"""
+        revisions = self._table_revisions()
+        if revisions is None:
+            return ()
+        return tuple(table for table in sorted(revisions) if table not in excluded)
+
+    def _table_revisions(self) -> dict[str, int] | None:
+        snapshot = _REVISION_SNAPSHOT.get()
+        if (snapshot is not None and snapshot.get("contract") is self
+                and snapshot.get("generation") == self.cache_generation):
+            return snapshot["revisions"]
+        generation = self.cache_generation
         try:
             with self.read_connection() as connection:
-                clause = " WHERE tbl IN (" + ','.join('?' for _ in tables) + ")" if tables else ''
-                row = connection.execute("SELECT total(n) FROM ledger_revision" + clause, tables).fetchone()
+                revisions = {str(table): int(count) for table, count in connection.execute(
+                    "SELECT tbl, total(n) FROM ledger_revision GROUP BY tbl")}
         except sqlite3.Error:
-            return None
-        return int(row[0])
+            revisions = None
+        if snapshot is not None:
+            snapshot.update(contract=self, generation=generation, revisions=revisions)
+        return revisions
 
-    def cached_until_changed(self, key: str, fn, *inputs, tables=()):
+    def cached_until_changed(self, key: str, fn, *inputs, tables=(), allow_stale=True):
         """只读账本聚合的缓存：账本版本号与 `inputs` 都没变就一直命中，不按时间过期。
 
         `inputs` 是聚合读到的账本之外的东西的版本（候选目录、头像目录、浏览历史库），
         由调用方给出：漏一样，那一样变了页面就一直是旧的。版本号在计算前读，计算期间
         有进程外的写，结果记在旧版本下，下一次请求读到新版本照样重算。库还没有版本号时
         退回 `CACHE_TTL`。
-        `tables` 声明聚合依赖的表；这类缓存经过提交通知后仍按声明的版本核验，
+        `tables` 声明聚合依赖的表，留空时累计全库版本；缓存经过提交通知后仍按版本核验，
         同键的并发请求共用一次计算。
+
+        带 `tables` 的键在版本变了、手上那份之后只有本进程的后台提交时，先回那一份，另起
+        后台重算（ADR-0146）：后台任务写的东西晚几秒无妨；前台写入与进程外的写之后照旧
+        当场重算。不带 `tables` 的键按全库版本同步核验，不返回过期结果。
+        `allow_stale=False` 的馆藏统计与本次读取的列表配对，后台写入后也同步重算。
         """
-        if not tables:
-            revision = self.ledger_revision()
-            return self.cached(key, fn, ttl=CACHE_TTL if revision is None else math.inf,
-                               version=(revision, *inputs))
+        if not allow_stale:
+            token = _FRESH_AGGREGATES.set(True)
+            try:
+                return self._cached_by_tables(key, fn, inputs, tables)
+            finally:
+                _FRESH_AGGREGATES.reset(token)
+        if not tables or _FRESH_AGGREGATES.get():
+            return self._cached_by_tables(key, fn, inputs, tables)
+        revision = self.ledger_revision(tables)
+        if revision is not None:
+            version = (tuple(tables), revision, *inputs)
+            schedule = False
+            with self.cache_lock:
+                hit = self.cache.get(key)
+                started = self.cache_started.get(key, -1)
+                # 手上那份之后只有后台提交：没有前台写入，也有一次本进程的后台提交说明版本为什么变了。
+                # 进程外的写（命令行、账本同步）不经提交通知，照旧当场重算。
+                stale = (hit is not None and hit[1] != version and started >= self.foreground_generation
+                         and self.background_generation > started)
+                if stale:
+                    self.cache.move_to_end(key)
+                    schedule = key not in self.stale_refreshing
+                    self.stale_refreshing.add(key)
+            if stale:
+                if schedule:
+                    self._refresh_later(key, fn, inputs, tables)
+                return hit[2]
+        return self._cached_by_tables(key, fn, inputs, tables)
+
+    def _refresh_later(self, key, fn, inputs, tables) -> None:
+        """一条后台线程依次重算过期的键，同一个键在途时不重复排。"""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def work():
+            try:
+                self._cached_by_tables(key, fn, inputs, tables)
+                with self.cache_lock:
+                    for table in set(tables):
+                        self.cache_landed[table] = self.cache_landed.get(table, 0) + 1
+            except Exception:  # noqa: BLE001 - 后台重算失败时下一次读照旧当场重算，原因记日志
+                LOGGER.exception("后台重算缓存 %s 失败", key)
+                with self.cache_lock:
+                    self.cache.pop(key, None)
+            finally:
+                with self.cache_lock:
+                    self.stale_refreshing.discard(key)
+
+        with self.cache_lock:
+            if self._stale_refresher is None:
+                self._stale_refresher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="PeachCacheRefresh")
+            refresher = self._stale_refresher
+        refresher.submit(work)
+
+    def _cached_by_tables(self, key: str, fn, inputs, tables):
         # 指定依赖表的聚合共用一次计算；提交后仍按这些表的代次核验。
         with self.cache_lock:
             lock = self.aggregate_locks.setdefault(key, threading.RLock())
+
+        def compute():
+            # 结果要记在刚读的新版本下：算的时候嵌套读到的缓存也当场核验、不回旧值，
+            # 否则新版本号底下存的是一份旧结果，下一次后台写入之前一直命中。
+            token = _FRESH_AGGREGATES.set(True)
+            try:
+                return fn()
+            finally:
+                _FRESH_AGGREGATES.reset(token)
         with lock:
             revision = self.ledger_revision(tables)
             with self.cache_lock:
@@ -348,8 +494,8 @@ class WebContract:
                     self.revision_cache_keys.discard(key)
                 else:
                     self.revision_cache_keys.add(key)
-            return self.cached(key, fn, ttl=CACHE_TTL if revision is None else math.inf,
-                               version=(tuple(tables), revision, *inputs))
+            version = (tuple(tables), revision, *inputs) if tables else (revision, *inputs)
+            return self.cached(key, compute, ttl=CACHE_TTL if revision is None else math.inf, version=version)
 
     def stop_background_jobs(self) -> None:
         """服务关停时丢掉后台任务状态并等线程收工。
@@ -371,26 +517,37 @@ class WebContract:
         self.organize_job.stop()
         self.media_repair_job.stop()
         self.amane_bridge_job.stop()
+        self.source_check_job.stop()
         self.face_models_job.stop()
         if hasattr(self, 'task_resource_monitor'):
             self.task_resource_monitor.close()
         if hasattr(self, "jav_discovery_metadata"):
             self.jav_discovery_metadata.stop()
         self.followups.stop()
+        if self._stale_refresher is not None:
+            self._stale_refresher.shutdown(wait=False, cancel_futures=True)
 
     def cache_bust(self):
         with self.cache_lock:
             self.cache = OrderedDict((key, value) for key, value in self.cache.items()
                                      if key in self.revision_cache_keys)
-            self.keyed_cache.clear()
+            # 按版本核验的那几条留着：版本没变就还是对的，变了下一次读自然重算。
+            self.keyed_cache = OrderedDict((key, value) for key, value in self.keyed_cache.items()
+                                           if value[1] is not None)
             # 在途计算靠这个数认出「我出发之后缓存失效过」，从而放弃写回。
             self.cache_generation += 1
+            # 前台写入之后，出发更早的那份缓存不许再先回旧值：写的人要立刻看到自己写的。
+            if writing_in_background():
+                self.background_generation = self.cache_generation
+            else:
+                self.foreground_generation = self.cache_generation
 
     def read_connection(self):
         return self.database.read_connection()
 
-    def write_transaction(self):
-        return self.database.write_transaction()
+    def write_transaction(self, *, notify: bool = True):
+        """`notify=False` 的写入不清缓存，给只改观看进度的播放心跳用（`LedgerDatabase.write_transaction`）。"""
+        return self.database.write_transaction(notify=notify)
 
     def has_snapshot(self, raw_path: str | None) -> bool:
         return self.snapshot_file(raw_path) is not None
@@ -438,16 +595,21 @@ class WebContract:
         「新近修改」的做法，目录时间距今不足 `SETTLE_SECONDS` 时扫出的结果只按
         `SETTLE_TTL` 缓存，版本里另记一档，目录静下来之后重扫一次才按 `ttl` 缓存。
         `ttl` 为无穷时这一份不随提交通知清掉。
+
+        同一个目录的重扫单飞：封面刮削期间目录一直在变，一屏卡片的几个并发请求同时没命中时，
+        后到的等先到的那一次扫完直接命中，不各扫一遍（重建要读两千多份边车）。
         """
         version = path_version(root)
-        if version is None:
-            return self.cached(key, scan, version=None)
-        if ttl == math.inf:
-            with self.cache_lock:
+        with self.cache_lock:
+            lock = self.aggregate_locks.setdefault(key, threading.RLock())
+            if version is not None and ttl == math.inf:
                 self.revision_cache_keys.add(key)
-        settling = time.time_ns() - version < SETTLE_SECONDS * 1_000_000_000
-        return self.cached(key, scan, ttl=SETTLE_TTL if settling else ttl,
-                           version=(version, settling))
+        with lock:
+            if version is None:
+                return self.cached(key, scan, version=None)
+            settling = time.time_ns() - version < SETTLE_SECONDS * 1_000_000_000
+            return self.cached(key, scan, ttl=SETTLE_TTL if settling else ttl,
+                               version=(version, settling))
 
     def _scan_cover_root(self) -> dict[str, dict]:
         """一次目录扫描同时收集封面存在性和两份 sidecar。目录不存在就是空索引。"""

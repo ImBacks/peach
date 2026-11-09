@@ -24,5 +24,6 @@
   {"name": "area:metadata", "color": "5319e7", "description": "刮削、来源及元数据编目 / Scraping, sources and metadata cataloging"},
   {"name": "area:tooling", "color": "bfd4f2", "description": "测试、构建、持续集成与开发工具 / Tests, builds, CI and developer tooling"},
   {"name": "status:needs-info", "color": "d876e3", "description": "缺少定位所需信息；见维护者具体问题 / Missing information; see maintainer questions"},
-  {"name": "status:needs-verification", "color": "fbca04", "description": "修复版本已发布，等待目标环境验证 / Fix released; awaiting verification"}
+  {"name": "status:needs-verification", "color": "fbca04", "description": "修复版本已发布，等待目标环境验证 / Fix released; awaiting verification"},
+  {"name": "status:needs-template", "color": "e4e669", "description": "未按模板填写，已自动关闭；补齐章节后重开 / Missing template sections; closed until filled in"}
 ]

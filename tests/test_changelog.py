@@ -1,6 +1,7 @@
 import contextlib
 import io
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -177,17 +178,42 @@ class SectionTests(unittest.TestCase):
         labeled = raw.replace("web：", "**界面**：")
         changelog.require_labeled_entries(labeled, "0.8.0")
 
+    def test_a_release_refuses_an_entry_longer_than_one_sentence(self):
+        """条目给使用者扫读：标签之后超过上限就拒绝定版，正好到上限的照常通过。"""
+        head = "## [0.8.0] - 2026-09-19\n\n### 修复\n\n- **界面**："
+        changelog.require_labeled_entries(head + "字" * changelog.ENTRY_LIMIT + "\n", "0.8.0")
+        with self.assertRaisesRegex(VersionError, f"超过 {changelog.ENTRY_LIMIT} 字"):
+            changelog.require_labeled_entries(head + "字" * (changelog.ENTRY_LIMIT + 1) + "\n", "0.8.0")
+        # 链接地址读者看不到，只计显示的文字。
+        linked = "字" * (changelog.ENTRY_LIMIT - 2) + "[说明](docs/DOCKER.md#一键更新可选-watchtower)"
+        changelog.require_labeled_entries(head + linked + "\n", "0.8.0")
+
+    def test_an_overlong_entry_in_an_older_release_also_blocks_the_release(self):
+        """旧版本改写时也守住上限：任一已发布版本有超长条目，新版本就不能定版；旧版本没有标签也照样按字数算。"""
+        current = "## [0.8.0] - 2026-09-19\n\n### 修复\n\n- **界面**：修好一处界面。\n\n"
+        older = "## [0.7.0] - 2026-09-01\n\n### 修复\n\n- " + "字" * (changelog.ENTRY_LIMIT + 1) + "\n"
+        with self.assertRaisesRegex(VersionError, "0.7.0："):
+            changelog.require_labeled_entries(current + older, "0.8.0")
+        changelog.require_labeled_entries(current + older.replace("字", "", 1), "0.8.0")
+
 
 class NotesTests(unittest.TestCase):
-    """Release 页正文：那一节原文加安装提示，缺那一节就拒绝。"""
+    """Release 页正文：那一节原文、到上一版的完整变更链接、安装提示；缺那一节或链接就拒绝。"""
 
-    def test_the_notes_are_the_section_followed_by_the_install_note(self):
+    def test_the_notes_are_the_section_its_full_changelog_and_the_install_note(self):
         self.assertEqual(changelog.notes(DOCUMENT, "0.27.1"),
-                         f"第四个预发布。\n\n{changelog.INSTALL_NOTE}\n")
+                         "第四个预发布。\n\n[Full Changelog / 完整变更]"
+                         "(https://github.com/owner/repo/releases/tag/v0.27.1)\n\n"
+                         f"{changelog.INSTALL_NOTE}\n")
 
     def test_a_version_without_a_section_cannot_be_released(self):
         with self.assertRaisesRegex(VersionError, "0.28.0"):
             changelog.notes(DOCUMENT, "0.28.0")
+
+    def test_a_section_without_its_link_cannot_be_released(self):
+        unlinked = DOCUMENT.replace("[0.27.1]: https://github.com/owner/repo/releases/tag/v0.27.1\n", "")
+        with self.assertRaisesRegex(VersionError, r"\[0\.27\.1\]:"):
+            changelog.notes(unlinked, "0.27.1")
 
     def test_the_command_line_names_what_it_failed_to_produce(self):
         """`--notes` 失败说的是 Release 正文，不借用定版那条「变更日志未更新」。"""
@@ -208,6 +234,54 @@ class NotesTests(unittest.TestCase):
         self.assertIn("--to release/RELEASE_NOTES.md", workflow)
         self.assertIn("--notes-file RELEASE_NOTES.md", workflow)
         self.assertNotIn("--notes 'Windows", workflow)
+
+
+class RecordedMergeTests(unittest.TestCase):
+    """`merge -s ours` 只为署名记入社区提交，那些改动不在主线上，不进日志也不抬版本级别。"""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.git("init", "-q", "-b", "master")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "user.name", "Test")
+        self.commit("chore: 起点")
+        self.git("tag", "v0.1.0")
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True,
+                              text=True, encoding="utf-8").stdout
+
+    def commit(self, subject):
+        name = f"{len(list(self.root.glob('*.txt')))}.txt"
+        (self.root / name).write_text(subject, encoding="utf-8")
+        self.git("add", "--", name)
+        self.git("commit", "-q", "-m", subject)
+
+    def test_only_commits_whose_changes_reached_master_are_drafted(self):
+        self.git("checkout", "-q", "-b", "community")
+        self.commit("feat(web): 对方的整套译文")
+        self.git("checkout", "-q", "master")
+        self.git("merge", "-q", "-s", "ours", "--no-ff", "-m", "chore(i18n): 记入社区译法", "community")
+        self.git("checkout", "-q", "-b", "worker")
+        self.commit("fix(web): 正常合入的修复")
+        self.git("checkout", "-q", "master")
+        self.git("merge", "-q", "--no-ff", "-m", "Merge branch 'worker'", "worker")
+        self.commit("fix(web): 主线上的修复")
+        expected = ["fix(web): 主线上的修复", "fix(web): 正常合入的修复"]
+        self.assertEqual([c.subject for c in changelog.read_commits(self.root, "v0.1.0..HEAD")], expected)
+        self.assertEqual(changelog.version_bump.subjects_in(self.root, "v0.1.0..HEAD"), expected)
+
+    def test_master_commits_the_recorded_branch_merged_in_still_count(self):
+        self.commit("fix(web): 标签之后的主线修复")
+        self.git("checkout", "-q", "-b", "community")
+        self.git("merge", "-q", "--no-ff", "-m", "Merge master into community", "master")
+        self.commit("feat(web): 对方的整套译文")
+        self.git("checkout", "-q", "master")
+        self.git("merge", "-q", "-s", "ours", "--no-ff", "-m", "chore(i18n): 记入社区译法", "community")
+        self.assertEqual([c.subject for c in changelog.read_commits(self.root, "v0.1.0..HEAD")],
+                         ["fix(web): 标签之后的主线修复"])
 
 
 class DueTests(unittest.TestCase):

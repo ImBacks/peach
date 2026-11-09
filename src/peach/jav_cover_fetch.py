@@ -97,10 +97,12 @@ SMALL_MIN_WIDTH = 240
 PLACEHOLDER = re.compile(r"now_?printing", re.I)
 #: 官方候选一张都量不出可用尺寸时的两种说法，下标是「有没有量到过偏小的图」。
 NO_USABLE_OFFICIAL = ("官方封面地址都没有取到图片", "官方封面只有缩略图或占位图")
-#: 占位图是来源自己说「没有图」：DMM 下架的作品两个版本都只剩这一张。
-PLACEHOLDER_REASON = "来源给的是「准备中」占位图"
+#: 两句占位图原因共有的那几个字，取图记录按它认出「官方只回占位图」。
+PLACEHOLDER_MARK = "「准备中」占位图"
+#: 占位图是来源自己说「没有图」：DMM 发售前还没出图、下架的作品两个版本都只剩这一张。
+PLACEHOLDER_REASON = f"来源给的是{PLACEHOLDER_MARK}"
 #: 官方候选里取到的只有占位图、没有偏小的真图时的说法。
-OFFICIAL_PLACEHOLDER_ONLY = "官方封面地址只回「准备中」占位图，作品多半已从官方下架"
+OFFICIAL_PLACEHOLDER_ONLY = f"官方封面地址只回{PLACEHOLDER_MARK}：未发售的新作是官方还没出图，旧作多半已从官方下架"
 #: 韩国 MIB 的编号不在 JAV 目录站上，封面来源一律不问；记进日志算确认落空，不重探。
 MIB_NOT_JAV = "韩国 MIB 不适用 JAV 封面来源"
 #: 量尺寸只需要 JPEG 头部，别把整张 1 MB 的图拉下来。
@@ -212,6 +214,11 @@ class HostLimitedTransport:
     def __call__(self, request: HttpRequest, timeout: float, limit: int):
         self.limiter.wait(request.url)
         return self.inner(request, timeout, limit)
+
+    def exhausted(self) -> str:
+        """里层传输的本趟预算到顶时那一句说明；里层不设预算的返回空串。"""
+        check = getattr(self.inner, "exhausted", None)
+        return check() if check else ""
 
     def renew(self) -> None:
         if hasattr(self.inner, "renew"):

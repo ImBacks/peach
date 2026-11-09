@@ -16,7 +16,7 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "scripts"
-from . import (changelog, check_readme_impact, co_author, commit_subject,
+from . import (changelog, check_public_text, co_author, commit_subject,
                test_evidence, test_runner, version_bump)
 from .release_tag import MASTER_WRITER
 
@@ -133,12 +133,12 @@ def preflight(repo: Path, target_branch: str = "master") -> dict[str, object]:
             "metadata": "passed", "tests": "not_checked", "pull_request": "not_checked"}
 
 
-def ready(repo: Path, target_branch: str = "master") -> dict[str, object]:
+def ready(repo: Path, target_branch: str = "master", *, ci_run: int | None = None) -> dict[str, object]:
     report = _worker_delivery(repo, target_branch)
-    require_verified(repo, target_branch, set(report["files"]))
+    proof = require_verified(repo, target_branch, set(report["files"]), ci_run=ci_run)
     if _git(repo, "rev-parse", "HEAD").stdout.strip() != report["head"]:
         raise WorkspaceError("验证检查期间工作者分支改变，请重试")
-    return {"ok": True, "action": "ready", **report}
+    return {"ok": True, "action": "ready", **report, "verification": proof}
 
 
 def require_metadata(worker: Path, target_branch: str) -> str:
@@ -148,8 +148,7 @@ def require_metadata(worker: Path, target_branch: str) -> str:
         raise WorkspaceError("验证工作树必须干净")
     if _git(worker, "merge-base", "--is-ancestor", target_branch, "HEAD", check=False).returncode:
         raise WorkspaceError("目标分支已前进；请在工作树 rebase 后运行 auto 验证")
-    problems = (check_readme_impact.check(worker, target_branch)
-                + co_author.check(worker, target_branch)
+    problems = (co_author.check(worker, target_branch)
                 + commit_subject.check(worker, target_branch))
     if problems:
         raise WorkspaceError("; ".join(problems))
@@ -159,15 +158,33 @@ def require_metadata(worker: Path, target_branch: str) -> str:
     return head
 
 
-def require_verified(worker: Path, target_branch: str, paths: Iterable[str]) -> None:
+def require_verified(worker: Path, target_branch: str, paths: Iterable[str], *,
+                     ci_run: int | None = None) -> dict:
     head = require_metadata(worker, target_branch)
-    scopes, _ = test_runner.scopes_for_changes(paths, contents=test_runner.changed_contents(worker, target_branch, paths))
-    state = test_evidence.key(worker)
-    if not test_evidence.covers(test_evidence.read(worker, state), scopes):
-        raise WorkspaceError("缺少有效测试记录；请在工作树运行统一测试入口 auto")
+    scopes, _ = test_runner.scopes_for_changes(paths, contents=test_runner.changed_contents(worker, target_branch, paths),
+                                              root=worker)
+    from . import ci_test_evidence
+    proof, ci_error = None, None
+    try:
+        run_id = ci_run if ci_run is not None else ci_test_evidence.remembered(worker)
+        if run_id is not None:
+            proof = ci_test_evidence.verify(worker, run_id, scopes, target_branch)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        ci_error = error
+    if proof is None and ci_run is None:
+        state = test_evidence.key(worker)
+        if test_evidence.covers(test_evidence.read(worker, state), scopes):
+            proof = {"source": "local", "state": state, "scopes": list(scopes)}
+    if proof is None:
+        if ci_error is not None:
+            raise WorkspaceError(f"CI 测试证明未取得或无效：{ci_error}") from ci_error
+        raise WorkspaceError("缺少有效测试记录；请运行统一测试入口 auto，或 ready --ci-run 指定成功 Test")
     if _git(worker, "rev-parse", "HEAD").stdout.strip() != head or \
             _git(worker, "status", "--porcelain").stdout.strip():
         raise WorkspaceError("验证检查期间工作树改变，请重试")
+    if proof['source'] == 'github':
+        ci_test_evidence.remember(worker, proof)
+    return proof
 
 
 ISSUE_LINK = re.compile(
@@ -207,7 +224,24 @@ def require_pull_request(worker: Path, branch: str, target_branch: str, head: st
         raise WorkspaceError(f"PR 目标分支不是 {target_branch}")
     body = pr.get("body") if isinstance(pr.get("body"), str) else ""
     refs = [line.strip() for line in body.splitlines() if ISSUE_LINK.fullmatch(line.strip())]
-    return {"url": pr["url"], "head": head, "base": target_branch, "refs": refs}
+    return {"url": pr["url"], "head": head, "base": target_branch, "refs": refs, "body": body}
+
+
+def require_public_text(repo: Path, texts: dict[str, str]) -> None:
+    """PR 正文与提交说明都公开在 GitHub 上：成串列出本机馆藏细节的拒收；PR 正文还不收内部用语。
+
+    判据在 `scripts/check_public_text.py`：馆藏细节只读本机账本，没有账本的机器放行；内部用语
+    只查 PR 正文，提交说明写给开发者，改工作树脚本的提交本来就要写工作树。
+    """
+    library = check_public_text.load_library(repo)
+    found = [f"{name}（{'；'.join(problems)}）" for name, text in texts.items()
+             for problems in [check_public_text.problems(text, library)] if problems]
+    if found:
+        raise WorkspaceError("公开文字成串列出了馆藏细节，改写 PR 正文或提交说明后再合入：" + "，".join(found))
+    insider = check_public_text.insider_terms(texts.get("PR 正文", ""))
+    if insider:
+        raise WorkspaceError("PR 正文用了外部读者看不懂的内部用语（" + "；".join(insider) + "），"
+                             + check_public_text.INSIDER_HINT + "；改写后再合入")
 
 
 def merge_message(branch: str, pull_request: dict[str, object]) -> str:
@@ -277,6 +311,10 @@ def _integrate_locked(repo: Path, worker_branch: str,
     worker_head = _git(main, "rev-parse", worker_branch).stdout.strip()
     require_verified(workers[0], target_branch, worker_files)
     pull_request = require_pull_request(workers[0], worker_branch, target_branch, worker_head)
+    commits = _git(main, "log", "--format=%h%x00%B%x1e", f"{base}..{worker_head}").stdout
+    require_public_text(main, {"PR 正文": str(pull_request.get("body") or ""), **{
+        f"提交 {sha}": message for sha, _, message in
+        (entry.strip().partition("\0") for entry in commits.split("\x1e") if entry.strip())}})
     if _git(main, "rev-parse", worker_branch).stdout.strip() != worker_head or \
             _git(workers[0], "rev-parse", "HEAD").stdout.strip() != worker_head:
         raise WorkspaceError("验证检查期间工作者分支改变，请重试")
@@ -608,6 +646,8 @@ def main() -> int:
     for name in ("preflight", "ready"):
         inspect = sub.add_parser(name)
         inspect.add_argument("--target", default="master")
+        if name == 'ready':
+            inspect.add_argument('--ci-run', type=int, help='复用同一提交的受信 GitHub Test 运行')
     merge = sub.add_parser("integrate")
     merge.add_argument("--branch", required=True)
     merge.add_argument("--target", default="master")
@@ -623,7 +663,7 @@ def main() -> int:
         elif args.command == "preflight":
             result = preflight(args.repo, args.target)
         elif args.command == "ready":
-            result = ready(args.repo, args.target)
+            result = ready(args.repo, args.target, ci_run=args.ci_run)
         elif args.command == "prune":
             result = prune(args.repo, args.target, apply=args.apply)
         elif args.command == "processes":

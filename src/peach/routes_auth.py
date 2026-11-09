@@ -15,8 +15,9 @@ from collections import OrderedDict
 import threading
 import time
 from urllib.parse import urlsplit
-from . import access, tunnel
+from . import access, distribution, tunnel
 from .web_entry import page_shell
+from .web_local_access import local_client
 from starlette.concurrency import run_in_threadpool
 from urllib.parse import parse_qs
 
@@ -68,6 +69,22 @@ def _policy(request: Request) -> dict:
     return policy
 
 
+def sessions(request: Request) -> access.Sessions | None:
+    path = request.app.state.settings.access_path
+    return access.Sessions(access.sessions_path(path)) if path is not None else None
+
+
+def _client(request: Request) -> dict:
+    """设备记录要的三样：浏览器简称、来源网段、是否经公网隧道进来。"""
+    key = _attempt_key(request)
+    return {"device": access.device_name(request.headers.get("user-agent", "")[:512]),
+            "network": access.network_of(key.removeprefix("cf:")), "remote": key.startswith("cf:")}
+
+
+def valid_session(request: Request, policy: dict) -> bool:
+    return access.valid_session(policy, request.cookies.get(access.COOKIE, ""), sessions(request), **_client(request))
+
+
 def _first_query_values(request: Request) -> dict[str, str]:
     """兼容 urllib.parse.parse_qs：取首值并忽略空值。"""
     result: dict[str, str] = {}
@@ -89,7 +106,7 @@ def _authorized(request: Request, token: str, args: dict[str, str]) -> bool:
     if policy["mode"] == "legacy":
         if hmac.compare_digest(request.cookies.get("tok", "").encode(), token.encode()):
             return True
-    return access.valid_session(policy, request.cookies.get(access.COOKIE, ""))
+    return valid_session(request, policy)
 
 
 class PageLoginRequired(Exception):
@@ -263,7 +280,7 @@ def require_authenticated_client(request: Request) -> None:
     policy = _policy(request)
     if policy['mode'] not in {'password', 'legacy'} or not policy.get('key'):
         raise HTTPException(401, 'unauthorized')
-    authenticated = access.valid_session(policy, request.cookies.get(access.COOKIE, ''))
+    authenticated = valid_session(request, policy)
     if policy['mode'] == 'legacy':
         authenticated = _authorized(request, policy['key'], _first_query_values(request))
     if not authenticated:
@@ -299,23 +316,45 @@ def set_auth_cookie(response: Response, request: Request, *, days: int = 30, log
     policy = _policy(request)
     response.headers["Cache-Control"] = "no-store"
     if token and policy["mode"] in {"password", "legacy"} and (login or _query_token_matches(request)):
-        value, max_age = access.issue(policy, days)
+        value, max_age = access.issue(policy, days, sessions(request), **_client(request))
         response.set_cookie(access.COOKIE, value, max_age=max_age, path="/", httponly=True,
                             samesite="lax", secure=request.url.scheme == "https")
         response.delete_cookie("tok", path="/")
 
 
-def login_html(next_path: str, *, invalid: bool = False, error: str = "") -> str:
-    """登录页的薄壳：表单由页面包画，服务端只给净化过的 `next`、口令是否错误与限流或参数错误的原因。"""
+#: Docker 首次设置或访问设置的来源不满足时给的那句话；页面上的同一句写在页面包里。
+FIRST_ACCESS_DENIED = "请从部署 Peach 的机器或同一局域网打开 Peach 完成设置，或在启动容器时设置 PEACH_ACCESS_PASSWORD。"
+FIRST_ACCESS_DENIED_CODE = "setup.firstAccessDenied"
+
+
+def login_mode(request: Request) -> str:
+    """登录页画哪一种，由服务端判定后交给页面，页面不自己猜。
+
+    有访问策略时是 `password`，框里填访问密码。没有策略（`legacy`）时，非 Docker 部署
+    填自动生成的访问口令；Docker 已经配置过（全新部署走首次设置页）时改在这里设访问密码或选免登录
+    （`setup`），来源须过 `local_client`：本机或私有网络、不带代理转发头。来源不满足的是
+    `denied`，只能用口令登录（ADR-0149）。
+    """
+    if access.load(request.app.state.settings.access_path)["mode"] != "legacy":
+        return "password"
+    if not distribution.docker():
+        return "legacy"
+    return "setup" if local_client(request) else "denied"
+
+
+def login_html(next_path: str, *, mode: str = "password", invalid: bool = False, error: str = "") -> str:
+    """登录页的薄壳：表单由页面包画，服务端只给净化过的 `next`、页面模式、口令是否错误与限流或参数错误的原因。"""
     data = {"next": next_path}
+    if mode != "password":
+        data["mode"] = mode
     if invalid:
         data["invalid"] = "true"
     if error:
         data["error"] = error
-    return page_shell("登录 Peach", "login", data)
+    return page_shell("Peach · 访问设置" if mode == "setup" else "登录 Peach", "login", data)
 
 
-def _safe_next(value: str) -> str:
+def safe_next(value: str) -> str:
     """登录后去哪：只认站内路径，`//` 开头的协议相对地址会跳出本站。"""
     return value if value.startswith("/") and not value.startswith("//") else "/"
 
@@ -327,11 +366,11 @@ def _wants_page(request: Request) -> bool:
 
 @router.get("/login", response_class=HTMLResponse)
 def login(request: Request, next: str = "/"):
-    next_path = _safe_next(next)
+    next_path = safe_next(next)
     if _authorized(request, request.app.state.settings.token,
                    _first_query_values(request)):
         return RedirectResponse(next_path, status_code=303)
-    return HTMLResponse(login_html(next_path))
+    return HTMLResponse(login_html(next_path, mode=login_mode(request)))
 
 
 @router.post("/login")
@@ -340,19 +379,20 @@ async def login_submit(request: Request):
     form = parse_qs(
         (await request.body()).decode("utf-8", "replace"), keep_blank_values=True,
     )
-    next_path = _safe_next((form.get("next") or ["/"])[0])
+    next_path = safe_next((form.get("next") or ["/"])[0])
+    mode = login_mode(request)
     try:
         _login_attempt(request)
     except HTTPException as exc:
         if not _wants_page(request):
             raise
-        return HTMLResponse(login_html(next_path, error=str(exc.detail)), status_code=exc.status_code,
+        return HTMLResponse(login_html(next_path, mode=mode, error=str(exc.detail)), status_code=exc.status_code,
                             headers=exc.headers)
     token = request.app.state.settings.token
     supplied = (form.get("token") or [""])[0]
     policy = access.load(request.app.state.settings.access_path)
     if token and policy["mode"] != "open" and not await run_in_threadpool(access.verify, policy, supplied, token):
-        return HTMLResponse(login_html(next_path, invalid=True), status_code=401)
+        return HTMLResponse(login_html(next_path, mode=mode, invalid=True), status_code=401)
     try:
         days = int((form.get("days") or ["0"])[0])
         if not 0 <= days <= 365:
@@ -360,8 +400,14 @@ async def login_submit(request: Request):
     except ValueError:
         message = "请选择有效的保持登录时间"
         if _wants_page(request):
-            return HTMLResponse(login_html(next_path, error=message), status_code=400)
+            return HTMLResponse(login_html(next_path, mode=mode, error=message), status_code=400)
         raise HTTPException(400, message) from None
     response = RedirectResponse(next_path, status_code=303)
-    set_auth_cookie(response, request, days=days, login=True)
+    try:
+        set_auth_cookie(response, request, days=days, login=True)
+    except OSError:
+        message = "登录设备未能记下，请检查数据目录能否写入后重试"
+        if _wants_page(request):
+            return HTMLResponse(login_html(next_path, mode=mode, error=message), status_code=503)
+        raise HTTPException(503, message) from None
     return response

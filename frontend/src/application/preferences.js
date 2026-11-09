@@ -2,6 +2,7 @@
 import { loadMediaSources } from './../query/media-sources';
 import { buildBars, catalogState, dropOfflineFromDefaultLoc, homePath, loadCatalog, paintCatalogFilter, repaintCatalogGrid } from './catalog.js';
 import { appSettingsStore } from './../appearance/settings';
+import { interfaceLanguage, storedInterfaceLanguage, t } from '../i18n';
 import { entityDisplayName, setNameLanguage } from '../core/entity-names';
 import { playUiSound, setUiSoundsEnabled, wireUiSounds } from '../ui-kit/sounds';
 import { applyTheme, watchSystemTheme } from './../appearance/theme';
@@ -18,6 +19,7 @@ import { refreshFeedRows, syncFeedAutoScroll } from './feed.js';
 import { stageApi } from '../react/application-residents';
 import { syncJavImages } from './../jav-artwork';
 import { coverAnchor } from './../card-art/framing';
+import { DEFAULT_SFW_SHORTCUT, SFW_SHORTCUT_KEY, parseShortcut, serializeShortcut } from './../keyboard-shortcut';
 import { mediaState, repaintDetailPoster } from './media.js';
 import { loadingState } from './loading.js';
 import { updateManagedRoute } from './../history/managed';
@@ -120,6 +122,18 @@ export function setCensored(on){
   if(on)releaseHoverPreviews();
 }
 
+/** SFW 开关键：本机存的那份读不出来时回到默认 Shift+S。 */
+export function sfwShortcut(){
+  return parseShortcut(localStorage.getItem(SFW_SHORTCUT_KEY))||parseShortcut(DEFAULT_SFW_SHORTCUT);
+}
+
+/** 传空恢复默认。存本机、不进同步设置，见 `keyboard-shortcut.ts`。 */
+export function setSfwShortcut(shortcut){
+  if(shortcut)localStorage.setItem(SFW_SHORTCUT_KEY,serializeShortcut(shortcut));
+  else localStorage.removeItem(SFW_SHORTCUT_KEY);
+  preferencesState.settingsStore.notify();
+}
+
 export function setHighContrast(on){
   localStorage.setItem('peach.high-contrast',String(on));
   document.documentElement.classList.toggle('board-high-contrast',on);
@@ -140,11 +154,11 @@ export function installPreferences5() {
 preferencesState.sourceOnline = {};
 preferencesState.sourceProblems = {};
 preferencesState.sourceOffline = key=>preferencesState.sourceOnline[key]===false;
-preferencesState.OFFLINE_HINT = '媒体目录无法访问，请检查目录、读取权限和网盘挂载状态';
-preferencesState.OFFLINE_REASON = {local:'无法读取媒体目录，请检查目录是否存在及读取权限。',
-  '115':'无法读取 115 媒体目录，请检查目录权限及网盘挂载工具是否正常运行。',
-  pikpak:'无法读取 PikPak 媒体目录，请检查目录权限及网盘挂载工具是否正常运行。'};
-preferencesState.offlineReason = key=>preferencesState.sourceProblems[key]||preferencesState.OFFLINE_REASON[key]||'无法读取这个来源的媒体目录，请检查目录权限及挂载状态。';
+preferencesState.OFFLINE_HINT = t('shell:storageOffline.hint');
+preferencesState.OFFLINE_REASON = {local:t('shell:storageOffline.localLabel'),
+  '115':t('shell:storageOffline.drive115'),
+  pikpak:t('shell:storageOffline.pikpak')};
+preferencesState.offlineReason = key=>preferencesState.sourceProblems[key]||preferencesState.OFFLINE_REASON[key]||t('shell:storageOffline.other');
 preferencesState.settingsStore = appSettingsStore();
 preferencesState.appSettings = preferencesState.settingsStore.value;
 setNameLanguage(preferencesState.appSettings.performerNameLanguage);
@@ -165,6 +179,10 @@ preferencesState.settingsEffects = {
     setNameLanguage(preferencesState.appSettings.performerNameLanguage);
     loadingState.syncPageTitle(location.href);
     catalogState.barsRendered='';buildBars();
+  },
+  /* 按本地存下的那份重新算一遍：算出来和页面正在用的不同才重载。存储不可写时算出来还是旧语言，不会一直重载。 */
+  interfaceLanguage:()=>{
+    if(storedInterfaceLanguage()!==interfaceLanguage)location.reload();
   },
   theme:()=>applyTheme(),
   /* 开这一格时立刻响一声开关音，人才知道它开了。关的那一声由 document 上的 change 监听
@@ -211,7 +229,7 @@ preferencesState.SRCICON = {
     [location,mark.startsWith('data:')?`<img class="source-icon" src="${mark}" alt="">`:icon(mark)])),
   online:icon('rss'),
 };
-preferencesState.srcBadge = (loc,cost,cls)=>{const label=`${LOC[loc]||loc}${cost==='metered'?' · 计费':''}`;
+preferencesState.srcBadge = (loc,cost,cls)=>{const label=cost==='metered'?t('shell:storageLabel.metered', { label: LOC[loc]||loc }):LOC[loc]||loc;
   return `<span class="${cls||'src'} ${cost==='metered'?'metered':'free'}" title="${esc(label)}" aria-label="${esc(label)}">`
     +(preferencesState.SRCICON[loc]||'')+'</span>'};
 preferencesState.emptyState = emptyStateHtml;

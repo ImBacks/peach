@@ -46,21 +46,10 @@ export function requiredEnv(name: string): string {
 }
 
 export async function launch(): Promise<Browser> {
-  const args: string[] = [];
-  if (process.platform === 'win32') {
-    // 仅隔离 E2E：Chromium 572515601 的回环随机端口缺陷会返回 WSAENOBUFS 10055。
-    // 重复 --disable-features 会覆盖默认值；保留锁定 Playwright 1.64.1 的全部条目。
-    // browser-launch.test.ts 从真实 Chrome 对照默认参数，依赖升级时检查此表漂移。
-    const disabled = [
-      'AvoidUnnecessaryBeforeUnloadCheckSync', 'DestroyProfileOnBrowserClose', 'DialMediaRouteProvider',
-      'GlobalMediaControls', 'HttpsUpgrades', 'LensOverlay', 'MediaRouter', 'PaintHolding',
-      'ThirdPartyStoragePartitioning', 'BlockOriginHeaderModificationOnRedirect',
-      'AvoidCorsURLLoaderRestartOnRedirect', 'Translate', 'AutoDeElevate', 'OptimizationHints',
-      'NetworkTimeServiceQuerying', 'AimEnabled', 'msForceBrowserSignIn', 'msEdgeUpdateLaunchServicesPreferredVersion',
-      'TcpPortRandomizationWin',
-    ];
-    args.push('--disable-features=' + disabled.join(','));
-  }
+  // 界面语言默认跟浏览器语言走（ADR-0156）；用例断言的是中文文案，浏览器语言固定成简体中文，CI 上的 en-US 不影响结果。
+  // Chromium 572515601 的回环随机端口缺陷（WSAENOBUFS 10055）由 Playwright 默认禁用的
+  // `TcpPortRandomizationWin` 规避；这里不另传 --disable-features，否则会整串覆盖默认值。
+  const args: string[] = ['--lang=zh-CN'];
   const networkLogs = process.env.PEACH_E2E_NET_LOG_DIR;
   if (networkLogs) {
     mkdirSync(networkLogs, { recursive: true });
@@ -210,6 +199,28 @@ export async function visit(browser: Browser, path: string, viewport: Viewport,
     throw error;
   }
   return { page, problems, close };
+}
+
+/** 时间轴预览的桩：`/api/timeline` 回固定间隔的自有接触印相，`/timeline` 回合成的 10×10 拼图，
+ *  每格写「页-格」序号，截图里看得出取的是哪一格。返回每页被请求的次数。 */
+export async function stubTimelineSheets(page: Page, { frames, interval }: { frames: number; interval: number }) {
+  const requested = new Map<number, number>();
+  await page.route((url) => url.pathname === '/api/timeline', (route) => route.fulfill({
+    json: { source: 'peach', frames, interval, sheets: Math.ceil(frames / 100), columns: 10, rows: 10, frame_width: 160 },
+  }));
+  await page.route((url) => url.pathname === '/timeline', (route) => {
+    const sheet = Number(new URL(route.request().url()).searchParams.get('s'));
+    requested.set(sheet, (requested.get(sheet) ?? 0) + 1);
+    const count = Math.min(100, frames - sheet * 100), rows = Math.ceil(count / 10);
+    const cells = Array.from({ length: count }, (_, slot) => {
+      const x = slot % 10 * 160, y = Math.floor(slot / 10) * 90;
+      return `<rect x="${x}" y="${y}" width="160" height="90" fill="hsl(${(sheet * 100 + slot) * 7 % 360} 40% 35%)"/>`
+        + `<text x="${x + 80}" y="${y + 58}" font-size="36" font-family="sans-serif" fill="#fff" text-anchor="middle">${sheet}-${slot}</text>`;
+    }).join('');
+    return route.fulfill({ contentType: 'image/svg+xml',
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="${rows * 90}">${cells}</svg>` });
+  });
+  return requested;
 }
 
 /* 越界名单只报根因：页面一旦被撑宽，移动视口跟着变宽，`fixed` 的顶栏、Toast 会一起

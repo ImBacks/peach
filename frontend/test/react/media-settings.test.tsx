@@ -220,14 +220,14 @@ describe('媒体目录', () => {
     ]);
   });
 
-  it('已保存的目录回填代理保护，用户可改为正常读取', async () => {
+  it('已保存的目录回填流量保护，用户可改为正常读取', async () => {
     const fetcher = fetchMock(200, { saved: true, url: '/', revision: 'rev-2' });
     vi.stubGlobal('fetch', fetcher);
     const host = await open({ windows: true, media_sources: [
       { location: 'onedrive', root: 'O:\\Movies', path: 'O:\\Movies', cost: 'metered' },
     ] });
     const policy = rows(host)[0]?.querySelector('[data-media-read-policy] [aria-haspopup="listbox"]');
-    expect(policy?.textContent).toContain('代理保护');
+    expect(policy?.textContent).toContain('流量保护');
     await choose(policy, '正常读取');
     await submit(host.querySelector('form'));
     expect(sentBody(fetcher).media_sources).toMatchObject([
@@ -311,7 +311,7 @@ describe('保存', () => {
       await submit(host.querySelector('form'));
       await settle();
       const dialog = document.querySelector('dialog');
-      expect(dialog?.textContent).toContain('由命令行或托盘发起，在独立进程里运行，不受重启影响');
+      expect(dialog?.textContent).toContain('这个任务由命令行或托盘发起，不受重启影响');
       await click(dialog!.querySelector('[data-modal-cancel]'));
       await settle();
       expect(fetcher).not.toHaveBeenCalled();

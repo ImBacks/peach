@@ -21,11 +21,11 @@ class LibraryShortcutsTests(unittest.TestCase):
             c.executescript("""
                 CREATE TABLE profile(id TEXT PRIMARY KEY,settings_json TEXT,updated_at TEXT);
                 INSERT INTO profile VALUES('local-default','{"sidebarOrder":["tags"]}','');
-                CREATE TABLE entity(id INTEGER PRIMARY KEY,kind TEXT,canonical_name TEXT);
-                INSERT INTO entity VALUES(1,'studio','厂牌'),(2,'series','系列'),(3,'tag','剧情');
+                CREATE TABLE entity(id INTEGER PRIMARY KEY,kind TEXT,canonical_name TEXT,normalized_name TEXT);
+                INSERT INTO entity VALUES(1,'studio','厂牌','厂牌'),(2,'series','系列','系列'),(3,'tag','剧情','剧情');
                 CREATE TABLE entity_redirect(old_id INTEGER,target_id INTEGER);
-                CREATE TABLE entity_alias(entity_id INTEGER,alias TEXT);
-                INSERT INTO entity_alias VALUES(3,'故事');
+                CREATE TABLE entity_alias(entity_id INTEGER,alias TEXT,normalized_alias TEXT);
+                INSERT INTO entity_alias VALUES(3,'故事','故事');
                 CREATE TABLE asset(id INTEGER PRIMARY KEY,medium TEXT,disposal TEXT,size INTEGER,snapshot_path TEXT,name TEXT,path TEXT);
                 CREATE TABLE asset_entity(asset_id INTEGER,entity_id INTEGER,role TEXT);
             """)
@@ -44,6 +44,18 @@ class LibraryShortcutsTests(unittest.TestCase):
             c.execute("UPDATE entity SET canonical_name='规范厂牌' WHERE id=1")
         self.assertEqual([row['name'] for row in self.read()['favorites']], ['规范厂牌'])
         self.assertEqual(self.write(action="favorite", entity_id=1, on=False)['favorites'], [])
+
+    def test_saved_filters_reorder_atomically_and_reject_stale_members(self):
+        self.write(action="save_filter", name="筛选一", href="/?q=one")
+        before = self.write(action="save_filter", name="筛选二", href="/?q=two")['filters']
+        ids = [row['id'] for row in reversed(before)]
+        ordered = self.write(action="reorder_filters", ids=ids)['filters']
+        self.assertEqual(ordered, list(reversed(before)))
+        for invalid in ([ids[0], ids[0]], ids[:1], [*ids, 'removed'], [1, 2], None):
+            with self.assertRaises(ValueError):
+                self.write(action="reorder_filters", ids=invalid)
+            self.assertEqual(self.read()['filters'], ordered)
+        self.assertEqual(web_settings.q_settings(self.contract)['sidebarOrder'], ['tags'])
 
     def test_merge_collapses_favorites_and_cancel_accepts_old_id(self):
         self.write(action="favorite", entity_id=1, on=True)
@@ -105,8 +117,8 @@ class LibraryShortcutsTests(unittest.TestCase):
         from peach.web_catalog import entity_ref
         with closing(sqlite3.connect(self.path)) as c, c:
             c.executescript("""
-                INSERT INTO entity VALUES(4,'creator','创作者');
-                INSERT INTO entity VALUES(5,'creator','同名待确认');
+                INSERT INTO entity VALUES(4,'creator','创作者','创作者');
+                INSERT INTO entity VALUES(5,'creator','同名待确认','同名待确认');
                 CREATE TABLE follow_source(id INTEGER PRIMARY KEY,provider TEXT,ref TEXT,entity_id INTEGER,metadata_json TEXT);
                 INSERT INTO follow_source VALUES(1,'kemono','fanbox/123',4,'{}');
                 INSERT INTO follow_source VALUES(2,'pawchive','fanbox/123',4,'{}');

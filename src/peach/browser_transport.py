@@ -49,7 +49,8 @@ CLICK_SECONDS = 120.0
 IDLE_SECONDS = 600.0
 #: 站点的年龄门之类点一下就过的页：点完之后最多等多久跳回去。
 GATE_SECONDS = 15.0
-#: 启动时窗口放的位置：屏幕外（系统会把它钳到 -16384）。自动能过的验证在那里照样过。
+#: 启动时窗口放的位置：屏幕外（系统会把它钳到 -16384）。自动能过的验证在那里照样过。窗口在任务栏上
+#: 有按钮，点它只会在屏幕外激活、最小化、再还原回屏幕外，所以验证页上用户把它最小化就当作要看（见 `_load`）。
 OFFSCREEN = (-32000, -32000)
 #: 要人点时窗口放回屏幕内的位置与大小。
 ONSCREEN = (200, 100)
@@ -245,6 +246,8 @@ class _Browser:
         self.process: subprocess.Popen | None = None
         self.socket: _WebSocket | None = None
         self.window_id = None
+        #: 窗口是 Peach 收起来的（`place(visible=False)`）。这时还原位置已在屏幕内，用户点任务栏能自己唤出。
+        self.put_away = False
 
     def start(self) -> None:
         self.profile.mkdir(parents=True, exist_ok=True)
@@ -332,6 +335,7 @@ class _Browser:
         """
         if self.socket is None or self.window_id is None:
             return
+        self.put_away = not visible
         if visible:
             self.socket.call("Browser.setWindowBounds", windowId=self.window_id, bounds={"windowState": "normal"})
             self.socket.call("Browser.setWindowBounds", windowId=self.window_id,
@@ -340,6 +344,17 @@ class _Browser:
             self.socket.call("Page.bringToFront")
         else:
             self.socket.call("Browser.setWindowBounds", windowId=self.window_id, bounds={"windowState": "minimized"})
+
+    def minimized_by_user(self) -> bool:
+        """窗口被最小化了、又不是 Peach 收的：屏幕外的窗口只有用户点任务栏按钮才会这样。
+
+        这种窗口的还原位置仍在屏幕外，点任务栏还原也看不见，只有最大化才上屏（2026-11-09 本机 Chrome 实测：
+        最小化再还原落回 -16384）。`place(visible=True)` 从这里出发能把它放回 (200, 100)。
+        """
+        if self.socket is None or self.window_id is None or self.put_away:
+            return False
+        bounds = self.socket.call("Browser.getWindowBounds", windowId=self.window_id).get("bounds", {})
+        return bounds.get("windowState") == "minimized"
 
     def close(self) -> None:
         if self.socket is not None:
@@ -473,6 +488,8 @@ class BrowserTransport:
            从弹出那一刻起再等 `click_seconds`，这一段不受 `timeout` 约束——人点验证要的时间不归一条请求的
            预算管。还没过就记进 `_unsolved` 并报 `ChallengeUnsolved`，同一站之后不再弹，直到哪次页面正常打开，
            所以一个站最多让整趟多等一次 `click_seconds`。
+        4. 验证页还没弹窗时用户就点任务栏把屏幕外的窗口最小化了：当作要看，立刻按第 3 步弹出并开始等点击，
+           `_unsolved` 里的站也一样。
         """
         host = urlsplit(url).hostname or url
         referrer = next((value for key, value in headers.items() if key.lower() == REFERRER_HEADER), None)
@@ -485,8 +502,19 @@ class BrowserTransport:
         challenged_seen = False
         cleared = False
         shown_at: float | None = None
+
+        def show(reason: str) -> float:
+            browser.place(visible=True)
+            _set_attention(host, f"{host} 的人机验证需要点一下，浏览器窗口已打开")
+            LOGGER.warning("%s 的验证页%s，窗口已放到屏幕内，等待用户点击", host, reason)
+            return self._clock()
+
         try:
             while True:
+                # 先看窗口再读页面：最小化的窗口里页面脚本要好几秒才回（2026-11-09 本机 Chrome 实测），
+                # 先拉上屏，用户点完任务栏马上就能看到。
+                if shown_at is None and challenged_seen and browser.minimized_by_user():
+                    shown_at = show("被用户从任务栏唤出")
                 state = self._state(browser)
                 challenged = any(mark in state["head"] or mark in state["title"] for mark in CHALLENGE_MARKS)
                 # DOM 解析完（`interactive`）就够：验证页的标记在页头里，此时已经看得到；不等外部
@@ -513,10 +541,7 @@ class BrowserTransport:
                         if host in self._unsolved:
                             raise ChallengeUnsolved(f"{host} 的人机验证在 {int(elapsed)} 秒内没有自动通过；"
                                                     "窗口上次弹出后没点过去，这次不再弹")
-                        shown_at = now
-                        browser.place(visible=True)
-                        _set_attention(host, f"{host} 的人机验证需要点一下，浏览器窗口已打开")
-                        LOGGER.warning("%s 的验证页没有自动通过，等待用户点击", host)
+                        shown_at = show("没有自动通过")
                 elif elapsed >= timeout:
                     raise PageTimeout(f"{host} 的页面在 {int(elapsed)} 秒内没有打开")
                 self._sleep(1.0)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .config import PROJECT_ROOT
-from .jav_browser import identify_source
+from .jav_browser import identify_source, page_edition
 from .routes_auth import require_auth
 
 
@@ -46,7 +46,11 @@ def active(service=Depends(browser_client)):
 
 def identify(source_url: str, code: str = "", service=Depends(browser_client)):
     try:
-        return JSONResponse(service.status(identify_source(source_url, code)), headers={"Cache-Control": "no-store"})
+        status = service.status(identify_source(source_url, code))
+        # 作品同时有特典版与通常版时带回来源页是哪一版，用户脚本据此给出两个添加按钮。
+        edition = page_edition(source_url, service.edition_probe)
+        return JSONResponse({**status, **({"edition": edition} if edition else {})},
+                            headers={"Cache-Control": "no-store"})
     except ValueError as error:
         raise HTTPException(400, str(error)) from None
 
@@ -65,9 +69,42 @@ def people(request: Request, codes: str, performers: list[str] = Query(default=[
         raise HTTPException(400, str(error)) from None
 
 
+def performer(request: Request, source_url: str, names: list[str] = Query(default=[]),
+              service=Depends(browser_client)):
+    from .web_jav_browser_performer import performer_status
+    try:
+        result = performer_status(service.contract, request.app.state.preview_service, source_url, names)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+def follow_performer(request: Request, body: dict = Body(...), service=Depends(browser_client)):
+    from .web_jav_browser_performer import follow_performer as follow
+    try:
+        result = follow(service.contract, request.app.state.preview_service, body)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
 def retry_postprocess(body: dict = Body(...), service=Depends(browser_client)):
     try:
         return JSONResponse(service.retry_postprocess(body.get("code")), headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+def prioritize(body: dict = Body(...), service=Depends(browser_client)):
+    try:
+        return JSONResponse(service.prioritize(body.get("code")), headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+def dismiss(body: dict = Body(...), service=Depends(browser_client)):
+    try:
+        return JSONResponse(service.dismiss(body), headers={"Cache-Control": "no-store"})
     except ValueError as error:
         raise HTTPException(400, str(error)) from None
 
@@ -115,6 +152,10 @@ def create_router(local_only) -> APIRouter:
     router.add_api_route("/api/jav-browser/people", people, methods=["GET"])
     router.add_api_route("/api/jav-browser", add, methods=["POST"])
     router.add_api_route("/api/jav-browser/postprocess", retry_postprocess, methods=["POST"])
+    router.add_api_route("/api/jav-browser/prioritize", prioritize, methods=["POST"])
+    router.add_api_route("/api/jav-browser/performer", performer, methods=["GET"])
+    router.add_api_route("/api/jav-browser/performer", follow_performer, methods=["POST"])
+    router.add_api_route("/api/jav-browser/dismiss", dismiss, methods=["POST"])
     router.add_api_route("/api/jav-browser/errors", errors, methods=["POST"])
     permissions = [Depends(require_auth), Depends(local_only)]
     router.add_api_route("/api/configuration/jav-browser", settings, methods=["GET"], dependencies=permissions)

@@ -16,11 +16,13 @@ import { entityDisplayName } from '../../core/entity-names';
 import { useEntityNames } from '../use-entity-names';
 import { TabCount } from '../components/board-tabs';
 import { PillTabList } from '../components/pill-tabs';
+import { composingKey } from '../components/ime';
 import {
   menuModel, nextPage, shufflePicks, SUGGEST_DEBOUNCE, SUGGEST_EACH, SUGGEST_ONE_KIND, SUGGEST_PROFILE_KINDS, SUGGEST_RIGHT_KINDS, fold,
   type MenuModel, type MenuSection, type SearchApi, type SearchOption, type SearchProps, type SuggestCard,
   type Recommendations, type SuggestGroup, type SuggestItem, type SuggestResponse, type SuggestTab,
 } from './search';
+import { t as tr } from '../../i18n';
 
 interface Store {
   dismissed: boolean;
@@ -160,7 +162,7 @@ export function SearchPage(props: SearchProps) {
     <a href={group.href} onMouseDown={keep} onClick={event => {
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       event.preventDefault(); op.openPath(group.href!);
-    }}>{group.action || '查看全部'}</a>
+    }}>{group.action || tr('catalog:shared.viewAll')}</a>
   ) : null;
   // 「换一批」只是一枚图标：每点一次，图标的两股线各描一圈（首页换批键那一副）。
   const shuffling = (kind = '') => Date.now() < (s.shuffled[kind] ?? 0);
@@ -168,7 +170,7 @@ export function SearchPage(props: SearchProps) {
     <section key={group.kind ?? group.label} data-search-group="" data-kind={group.kind}>
       <h3>{group.label}{group.shuffle ? (
         <span data-search-head="">
-          <button type="button" data-search-shuffle="" aria-label={`${group.label}换一批`} title="换一批"
+          <button type="button" data-search-shuffle="" aria-label={tr('catalog:searchSuggest.shuffleGroup', { group: group.label })} title={tr('catalog:entityFilter.shuffle')}
             aria-busy={shuffling(group.kind) || undefined} onMouseDown={keep}
             onClick={() => op.reshuffle(group.kind!)}><Sprite name="shuffle" /></button>
           {link(group)}
@@ -190,7 +192,7 @@ export function SearchPage(props: SearchProps) {
       {model.tabs ? <Tabs tabs={model.tabs} kind={s.kind} onPick={op.pickKind} wire={props.helpers.wireScroller} /> : null}
       {model.recent ? section(model.recent) : null}
       {columns(model.left, model.right)}
-      {model.empty ? <p data-search-empty="" role="status">没有找到</p> : null}
+      {model.empty ? <p data-search-empty="" role="status">{tr('catalog:searchSuggest.noResults')}</p> : null}
     </div>
   );
 }
@@ -255,7 +257,7 @@ function createOps(props: () => SearchProps, s: Store, menu: () => HTMLElement |
     const field = input();
     field.dataset.suggestion = pick;
     s.cancelRoll();
-    const next = pick || '搜索馆藏';
+    const next = pick || tr('catalog:searchSuggest.placeholder');
     const roll = props().helpers.rollPlaceholder;
     if (roll) s.cancelRoll = roll(field, next);
     else { field.placeholder = next; s.cancelRoll = () => {} }
@@ -464,7 +466,7 @@ function createOps(props: () => SearchProps, s: Store, menu: () => HTMLElement |
   };
 
   const key = (event: KeyboardEvent) => {
-    if (event.isComposing) return;
+    if (composingKey(event)) return;
     const field = input();
     if (event.key === 'Escape') {
       if (isOpen()) { close(); event.preventDefault(); return }
@@ -495,7 +497,7 @@ function createOps(props: () => SearchProps, s: Store, menu: () => HTMLElement |
   };
   const onInput = (event: InputEvent) => {
     s.cancelRoll();
-    if (event.isComposing) return;
+    if (composingKey(event)) return;
     s.dismissed = false;
     props().helpers.typed(input());
     refresh();
@@ -505,13 +507,15 @@ function createOps(props: () => SearchProps, s: Store, menu: () => HTMLElement |
     openRecommendations();
     // 推荐栏的版式不等搜索记录：先照占位画出来，记录回来再补在栏底。
     if (s.recommendations.length && !input().value.trim()) paint();
-    void Promise.all([loadHistory(), loadPool()]).then(() => {
+    const reveal = () => {
       if (!focused()) return;
       // 带着 `?q=` 进来再点回输入框时，框里已经有词，补全该跟着这个词给。这两份数据回来之前
       // 人可能已经敲完字、那个词的补全也问过了，同一个词不再问第二遍。
       paint();
       if (input().value.trim() !== s.asked) refresh();
-    });
+    };
+    void loadHistory().then(reveal);
+    void loadPool().then(reveal);
   };
   return { input: onInput, key, focus, close, pick, peek, remove, pickKind, openPath, prefetch, warm, reshuffle, rotatePlaceholder };
 }
@@ -531,8 +535,8 @@ function Tabs({ tabs, kind, onPick, wire }: {
     </button>
   );
   return (
-    <PillTabList ref={row} data-search-tabs="" data-pill-nav="" role="tablist" aria-label="按种类看补全">
-      {tab('', '全部')}
+    <PillTabList ref={row} data-search-tabs="" data-pill-nav="" role="tablist" aria-label={tr('catalog:searchSuggest.tabsLabel')}>
+      {tab('', tr('catalog:shared.all'))}
       {tabs.map((t) => tab(t.kind, t.label, t.total))}
     </PillTabList>
   );
@@ -555,7 +559,7 @@ function Row({ entry, active, helpers, onPick, onPeek, onRemove }: {
   if (entry.type === 'more') {
     return (
       <button type="button" data-search-option="more" {...shared} onMouseDown={keep}>
-        查看全部 {entry.total.toLocaleString()} 个视频
+        {tr('catalog:searchSuggest.viewAllVideos', { count: entry.total })}
         <Sprite name="chevron-right" />
       </button>
     );
@@ -568,7 +572,7 @@ function Row({ entry, active, helpers, onPick, onPeek, onRemove }: {
         {entry.type === 'history' ? (
           /* 按下就 preventDefault，不让删除键把焦点从输入框抢走：抢走会触发 `#q` 的失焦，那个处理器
              140ms 后收起整个下拉栏，于是「删一条记录」实际等于「关掉整个下拉栏」。 */
-          <button type="button" data-remove-history={entry.value} aria-label={`删除历史 ${entry.value}`}
+          <button type="button" data-remove-history={entry.value} aria-label={tr('catalog:searchSuggest.removeHistory', { query: entry.value })}
             onMouseDown={keep} onClick={(event) => { event.stopPropagation(); void onRemove(entry.value) }}>
             <Sprite name="x" />
           </button>
@@ -596,18 +600,18 @@ function Row({ entry, active, helpers, onPick, onPeek, onRemove }: {
   if (kind === 'performer' || kind === 'creator' || kind === 'author') {
     // 一行里摆得下几部近作就摆几部；窄下拉整排收起，数据照给。
     const works = item.works ?? [];
-    const sub = item.subtitle || [`${(item.n ?? 0).toLocaleString()} 个视频`, item.agency].filter(Boolean).join(' · ');
+    const sub = item.subtitle || [tr('catalog:countLabel.videos', { count: item.n ?? 0 }), item.agency].filter(Boolean).join(' · ');
     return (
       <div data-search-option="person" data-open-entity={opens} {...shared} onMouseDown={keep}>
         <Face item={item} kind={kind} />
-        <button type="button" data-search-person="" data-search-meta="" aria-label={`查看 ${entityDisplayName(kind, item.value)}`}>
+        <button type="button" data-search-person="" data-search-meta="" aria-label={tr('catalog:searchSuggest.viewEntity', { name: entityDisplayName(kind, item.value) })}>
           <span data-search-name=""><span>{entityDisplayName(kind, item.value)}</span>{matched}</span>
           <span data-search-sub="">{sub}</span>
         </button>
         {works.length ? (
           <span data-search-peeks="">
             {works.map((card) => (
-              <button key={card.id} type="button" data-open-work={card.id} aria-label={`打开 ${card.code || item.value}`}
+              <button key={card.id} type="button" data-open-work={card.id} aria-label={tr('catalog:searchSuggest.openWork', { name: card.code || item.value })}
                 onMouseDown={keep} onClick={(event) => { event.stopPropagation(); onPeek(card) }}>
                 <Cover card={card} helpers={helpers} />
               </button>

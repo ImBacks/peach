@@ -94,6 +94,14 @@ def _serve(args: argparse.Namespace) -> int:
             raise SystemExit("redirect listener must use HTTP")
         _run_uvicorn(create_redirect_app(args.redirect_origin), host=args.host, port=args.port)
         return 0
+    if distribution.docker():
+        # Docker 没有托盘，日志的半年保留、按月切段与空进程日志清理在这里做；子进程还没起。
+        import logging
+        from . import log_retention
+        try:
+            log_retention.sweep(settings_file.active().directory("logs"))
+        except Exception:
+            logging.getLogger(__name__).warning("日志整理失败", exc_info=True)
     if bool(args.ssl_certfile) != bool(args.ssl_keyfile):
         raise SystemExit("--ssl-certfile and --ssl-keyfile must be provided together")
     for path in (args.ssl_certfile, args.ssl_keyfile):
@@ -118,12 +126,15 @@ def _serve(args: argparse.Namespace) -> int:
     if not distribution.standalone() and not _is_loopback(args.host) and (publish_mdns or TUNNEL_ENABLED):
         from .mdns import lan_ipv4
         tunnel_lan_address = args.mdns_address or lan_ipv4()
+    token = "" if args.setup else _serve_token(args)
+    secrets_dir = settings_file.active().directory("secrets")
     settings = PeachSettings(
         db_path=args.db,
         host=args.host,
         port=args.port,
-        token="" if args.setup else _serve_token(args),
-        access_path=settings_file.active().directory("secrets") / "access.json",
+        token=token,
+        token_file=auth.token_file(args.token, secrets_dir) if token else None,
+        access_path=secrets_dir / "access.json",
         configured=CONFIGURED and not args.setup,
         docs_enabled=args.docs,
         mdns_enabled=publish_mdns,
@@ -210,6 +221,11 @@ def _build_sync(args: argparse.Namespace, settings: PeachSettings) -> LedgerSync
 
 def _migrate(args: argparse.Namespace) -> int:
     _require_readable_settings()
+    if args.action == "upgrade":
+        # 托盘起服务前先跑这一步；恢复中断后账本可能暂时不在，不收拾就会迁出一个空账本。
+        from .ledger_backups import recover
+        if (settled := recover(args.db)) is not None:
+            print(f"restore marker: {settled['message']}")
     all_migrations, pending = plan(args.db, MIGRATIONS_DIR)
     print(f"database: {args.db}")
     print(f"migrations: {len(all_migrations)}, pending: {len(pending)}")
@@ -754,6 +770,22 @@ def _doctor(args: argparse.Namespace) -> int:
     return 1 if result["status"] == "failed" else 0
 
 
+
+def _check_sources(args: argparse.Namespace) -> int:
+    import json
+    from .source_preflight import check_sources
+
+    result = check_sources(settings_file.active().directory("secrets"), args.source)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print("检查来源页面与图片 CDN；连通不代表作品资料或登录会话已验证。")
+        for source in result["sources"]:
+            for target in source["results"]:
+                print(f"{source['label']} / {target['label']} [{target['outcome_label']}] {target.get('message', '')}")
+    return 0 if result["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peach")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -852,6 +884,11 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--db", type=Path, default=DEFAULT_DB)
     status.add_argument("--shared-db", type=Path, default=SHARED_DATABASE_PATH)
     status.set_defaults(handler=_status)
+
+    sources = commands.add_parser("check-sources", help="安装后有界检测外部资料源与图片 CDN，不读取影片")
+    sources.add_argument("--source", action="append", help="只检查指定来源 ID；可重复指定，默认检查全部资料源")
+    sources.add_argument("--json", action="store_true", help="输出不含凭据的 JSON 结果")
+    sources.set_defaults(handler=_check_sources)
 
     doctor = commands.add_parser("doctor", help="逐项诊断本机配置、数据库、工具与挂载，不执行修复")
     doctor.add_argument("--json", action="store_true", help="输出脱敏 JSON 报告")

@@ -17,6 +17,11 @@ from pathlib import Path
 VERSION_FILE = "src/peach/__init__.py"
 VERSION_PATTERN = re.compile(r'(__version__\s*=\s*")(\d+)\.(\d+)\.(\d+)(")')
 
+#: README 的下载直链带着版本号；靠人记得改，曾在 v0.50.0 停了六个版本。`--ship` 在 Release
+#: 制品齐了以后才把它们换到新版本，发布前后读者都拿得到能下载的链接。
+README_FILES = ("README.md", "README.zh-CN.md")
+DOWNLOAD_LINK = re.compile(r"releases/download/v(\d+\.\d+\.\d+)/Peach-(\d+\.\d+\.\d+)-([^)\s]+)")
+
 #: 版本标签的形状。`--match` 用它排除别的标签，免得把某个临时标签当成上一个发布点。
 TAG_GLOB = "v[0-9]*.[0-9]*.[0-9]*"
 
@@ -93,9 +98,26 @@ def release_range(root: Path) -> str:
     return f"{tag}..HEAD" if tag else "HEAD"
 
 
+def recorded_only(root: Path, spec: str) -> set[str]:
+    """`git merge -s ours` 记入的那一侧：合并前后树不变，对方的提交只进历史、不进代码。
+
+    记入社区 PR 是为了署名（贡献约定），那些提交的改动没有一行留在主线上，算进版本级别
+    或变更日志就是在报告没发生的变化。只算对方那一侧独有的提交：对方分支合过的主线提交
+    从第一父提交也到得了，照常计入。
+    """
+    excluded: set[str] = set()
+    for line in lines(git(root, "log", "--merges", "--format=%T %P", spec)):
+        tree, first, *others = line.split()
+        if others and git(root, "rev-parse", f"{first}^{{tree}}") == tree:
+            excluded.update(git(root, "rev-list", *others, f"^{first}").split())
+    return excluded
+
+
 def subjects_in(root: Path, spec: str) -> list[str]:
-    """区间里的提交主题，合并提交不算——它们的主题只说明分支名。"""
-    return lines(git(root, "log", "--no-merges", "--format=%s", spec))
+    """区间里的提交主题，合并提交和只记入历史的提交不算——前者的主题只说明分支名。"""
+    skipped = recorded_only(root, spec)
+    rows = (line.split(" ", 1) for line in lines(git(root, "log", "--no-merges", "--format=%H %s", spec)))
+    return [row[1] if len(row) > 1 else "" for row in rows if row[0] not in skipped]
 
 
 def changed_in(root: Path, spec: str) -> list[str]:
@@ -164,6 +186,54 @@ def read_version(root: Path) -> str:
     if match is None:
         raise VersionError(f"{VERSION_FILE} does not declare __version__")
     return f"{match.group(2)}.{match.group(3)}.{match.group(4)}"
+
+
+def point_downloads_at(text: str, version: str) -> str:
+    """把正文里每条 Release 下载直链换到 `version`，其余字节不动。"""
+    return DOWNLOAD_LINK.sub(
+        lambda match: f"releases/download/v{version}/Peach-{version}-{match.group(3)}", text)
+
+
+def readme_assets(root: Path, version: str) -> list[str]:
+    """README 直链要下载的制品文件名，按 `version` 拼出。"""
+    names = set()
+    for name in README_FILES:
+        text = (root / name).read_bytes().decode("utf-8")
+        names.update(f"Peach-{version}-{suffix}" for *_, suffix in DOWNLOAD_LINK.findall(text))
+    return sorted(names)
+
+
+def readme_link_problems(root: Path) -> list[str]:
+    """README 直链须指向当前版本或变更日志里紧挨着的上一版；更旧就是发布后漏换了。
+
+    `--ship` 等 Release 制品齐了才换，所以定版之后、换链之前指向上一版是正常状态。
+    """
+    current = read_version(root)
+    released = re.findall(r"^## \[(\d+\.\d+\.\d+)\]",
+                          (root / "CHANGELOG.md").read_bytes().decode("utf-8"), re.M)
+    allowed = released[released.index(current):][:2] if current in released else [current]
+    problems = []
+    for name in README_FILES:
+        links = DOWNLOAD_LINK.findall((root / name).read_bytes().decode("utf-8"))
+        versions = {version for tag, asset, _ in links for version in (tag, asset)}
+        if not links:
+            problems.append(f"{name}: 没有 Release 下载直链")
+        elif len(versions) != 1 or not versions <= set(allowed):
+            problems.append(f"{name}: 下载直链版本 {'、'.join(sorted(versions))} 不是 "
+                            f"{' 或 '.join(allowed)}；用 release_tag.py --point-readme --apply 换到当前版本")
+    return problems
+
+
+def point_readmes(root: Path, version: str) -> list[str]:
+    """把两份 README 的下载直链换到 `version`，返回实际改动的文件。不提交。"""
+    changed = []
+    for name in README_FILES:
+        readme = root / name
+        text = readme.read_bytes().decode("utf-8")
+        if (pointed := point_downloads_at(text, version)) != text:
+            readme.write_bytes(pointed.encode("utf-8"))
+            changed.append(name)
+    return changed
 
 
 def write_version(root: Path, part: str) -> str:

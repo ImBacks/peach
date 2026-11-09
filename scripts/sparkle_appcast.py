@@ -98,7 +98,8 @@ def publish(feeds: list[Path]) -> list[dict]:
                             "--header-upload", "Cache-Control: public, max-age=60"], env=environment, check=True)
             item = {"name": feed.name, "size": feed.stat().st_size,
                     "sha256": hashlib.sha256(feed.read_bytes()).hexdigest()}
-            verify_download(f"{base}/sparkle/{feed.name}", item)
+            # 公开入口缓存一分钟，裸地址可能还是上传前的旧文件或 404：带上本次摘要，取回刚写进 R2 的那份。
+            verify_download(f"{base}/sparkle/{feed.name}?sha256={item['sha256']}", item)
             published.append(item)
     return published
 

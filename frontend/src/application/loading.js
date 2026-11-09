@@ -5,7 +5,9 @@ import { photoSize } from './../appearance/layout';
 import { $, ROUTE_ENTITIES } from '../core';
 import { fitSkeleton, LOAD_MORE_STATUS, loadingDotsHtml, revealSkeleton } from '../ui-kit';
 import { junkCountSkeletonHtml, junkRoute } from './../junk-queue';
-import { state } from './../shell/index';
+import { state, presentedItem } from './../shell/index';
+import { homeRouteLabel, mediaRouteLabel, postRouteLabel } from '../history/page-title';
+import { subscribeNames } from '../core/entity-names';
 import { catalogCardRatio, catalogHeadProps, catalogSkeletonHtml, clearCatalogGrid, gridTaken, paintCatalogFilter, syncCatalogFilterScreen } from './catalog.js';
 import { followListLayout, followManageParams, indexState, showIndexContainer } from './index.js';
 import { applicationEffects } from './effects';
@@ -16,9 +18,10 @@ import { showEntityLoading } from './entity.js';
 import { routeMetaOf } from './../history/route-meta';
 import { javTab } from '../react/jav/jav-navigation';
 import { paintWallBootSkeleton } from '../react/video-wall/wall-boot';
+import { t } from '../i18n';
 export const loadingState = { setGridCards: undefined, gridCards: undefined, managementPlaceholder: undefined, wantsDiscoveryBars: undefined, entityShapesReady: undefined, ENTITY_SHAPES_WAIT: undefined, syncPageTitle: undefined };
 
-export function renderCatalogLoading(label='正在读取作品'){
+export function renderCatalogLoading(label=t('shell:skeleton.loadingVideos')){
   if(location.pathname==='/wall'){$('#loadSentinel').hidden=true;return}
   const count=$('#count');
   /* 垃圾文件那一屏的计数行是自己的：一块摘要面加一条分类切换，没有排序也没有换批。
@@ -86,18 +89,18 @@ export function renderInitialSurfaceLoading(){
   if(path==='/junk-files'){
     /* 垃圾文件是一屏同质卡片，等的是内容结构不是后台进度：Loading Dots 说的是
        「还在跑」，这里要说的是「等下会出现几张什么形状的卡」，所以用目录骨架。 */
-    renderCatalogLoading('正在读取垃圾文件');
+    renderCatalogLoading(t('shell:skeleton.loadingJunkFiles'));
     return;
   }
   if(path==='/jav'&&javTab(new URLSearchParams(location.search).get('tab'))==='library'){
-    renderCatalogLoading('正在读取馆藏');return;
+    renderCatalogLoading(t('shell:skeleton.loadingCollection'));return;
   }
   /* 管理区、播放列表页与关注页的占位由各页面接手。 */
   if(navigationState.managedPagePath(path)){
     hideDiscoveryBars();
     const stats=$('#stats');stats.hidden=false;clearCatalogGrid();
     stats.innerHTML=path.startsWith('/follow')&&path!=='/subscriptions'
-      ?followState.followSkeletonHtml('正在读取关注内容')
+      ?followState.followSkeletonHtml(t('shell:skeleton.loadingFollowing'))
       :loadingState.managementPlaceholder(path);
     fitSkeleton(stats);
     return;
@@ -130,10 +133,10 @@ export function renderInitialSurfaceLoading(){
 
 export function installLoading3() {
 followState.followContentSkeletonHtml = (media=new URLSearchParams(location.search).get('media')==='images'?'images':'videos',
-  label='正在读取关注内容')=>pageSkeletonHtml(label,{cards:true,className:'follow-content-skeleton postercard-skeleton',
+  label=t('shell:skeleton.loadingFollowing'))=>pageSkeletonHtml(label,{cards:true,className:'follow-content-skeleton postercard-skeleton',
   gridClass:media==='images'?'followlist followphotowall':'',gridSize:photoSize()});
-followState.followSkeletonHtml = (label='正在读取关注内容')=>`<div class="peach-react"><div class="follow" data-follow-feed>
-  <div data-follow-head><h2 data-follow-title>关注</h2></div>
+followState.followSkeletonHtml = (label=t('shell:skeleton.loadingFollowing'))=>`<div class="peach-react"><div class="follow" data-follow-feed>
+  <div data-follow-head><h2 data-follow-title>${t('shell:routeTitle.following')}</h2></div>
   <div class="tier followauthors" data-skeleton-tier="av"></div>
   <div class="tier followworks" data-skeleton-tier="brandpill"></div>
   <div class="board-filter-frame" data-filter-frame>
@@ -150,11 +153,18 @@ loadingState.wantsDiscoveryBars = ()=>$('#catalogFilter').style.display!=='none'
 loadingState.entityShapesReady = null;
 loadingState.ENTITY_SHAPES_WAIT = 400;
 loadingState.syncPageTitle = path=>{
-  const url=new URL(path,location.origin);
-  const pathname=decodeURIComponent(url.pathname);
-  const label=routeMetaOf(pathname)?.title;
-  document.title=label?`${label} · Peach`:'Peach · 蜜桃';
+  const url=writePageTitle(path);
   document.body.dataset.surface=url.pathname;
   paintNav();
 };
+/* 资料页标题是人名：名单晚到、换了中文或日文写法时只重写标题。 */
+subscribeNames(()=>writePageTitle(location.href));
+}
+
+function writePageTitle(path){
+  const url=new URL(path,location.origin);
+  const pathname=decodeURIComponent(url.pathname);
+  const label=mediaRouteLabel(pathname,presentedItem)||postRouteLabel(pathname)||homeRouteLabel(pathname,url.search)||routeMetaOf(pathname)?.title;
+  document.title=label?`${label} · Peach`:t('shell:documentTitle.fallback');
+  return url;
 }

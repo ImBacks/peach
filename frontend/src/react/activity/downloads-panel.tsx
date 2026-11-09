@@ -8,8 +8,8 @@
  * 一条任务都没有时整段不画。失败的任务给中文原因；失败、取消与停滞的可以重新提交，被判
  * 违规的不给（服务端也会拒）。每张卡都能复制磁力：接口失效时退回手动添加。 */
 import { useId, useState, type CSSProperties } from 'react';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { RiArrowDownSLine } from '@remixicon/react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { showToast } from '../toaster';
 
 import { Chip } from '@/components/base/badges/chip';
 import { Button } from '@/components/base/buttons/button';
@@ -22,6 +22,8 @@ import type { DownloadsSnapshot, DownloadTask } from '../bundle';
 import { cardClass } from '../components/card';
 import { Note } from '../components/note';
 import { Progress } from '../components/progress';
+import { DataTableFooter } from '../components/table-controls';
+import { CollapseRegion } from '../components/collapse-region';
 import { ErrorText } from '../settings/section';
 import { busyProps, useAction } from '../settings/use-action';
 import { momentText } from './tasks';
@@ -30,6 +32,7 @@ import { ArtSlot } from '../components/art-slot';
 import { avatarInner, coverImage, relayoutCovers } from '@peach/card-art';
 import { entityPath } from '@peach/legacy/core';
 import { COVER_FRONT_RATIO } from '@peach/appearance';
+import { joinList, t } from '../../i18n';
 
 export const DOWNLOADS_URL = '/api/downloads';
 export const DOWNLOADS_KEY = ['downloads'] as const;
@@ -41,7 +44,7 @@ export const downloadPollInterval = (data: DownloadsSnapshot | undefined) =>
 
 const STATE_COLORS: Record<string, 'lime' | 'rose' | 'yellow' | 'blue' | 'neutral'> = {
   ingested: 'lime', failed: 'rose', cancelled: 'neutral', stalled: 'yellow',
-  remote_running: 'blue', remote_done: 'lime', landed: 'lime', submitted: 'neutral',
+  remote_running: 'blue', remote_done: 'lime', landed: 'lime', submitted: 'neutral', submit_pending: 'yellow',
 };
 
 const taskName = (task: DownloadTask) => {
@@ -49,42 +52,47 @@ const taskName = (task: DownloadTask) => {
   const { title } = javTitleParts({
     is_jav: Boolean(code), code, name: task.display_title ?? task.title ?? task.display_name ?? task.remote_name,
   });
-  return [code, title].filter(Boolean).join(' · ') || `磁力 ${task.info_hash?.slice(0, 8) ?? task.id}`;
+  return [code, title].filter(Boolean).join(' · ') || t('manage:downloadsPanel.magnetHash', { hash: task.info_hash?.slice(0, 8) ?? task.id });
 };
 
 export const failureText = (task: DownloadTask) =>
   task.failure_label ? [task.failure_label, task.failure_detail].filter(Boolean).join('：') : '';
 
+// 服务端的入库后处理说明是中文原文（后端文案阶段再本地化），这里只把两句内部用语换成用户读得懂的说法。
 const postprocessDetail = (task: DownloadTask) => (task.postprocess_detail || '')
-  .replace('正片已绑定', '已确认主视频对应的作品')
-  .replace('整理跳过：', '未整理文件：');
+  .replace('正片已绑定', '已确认主视频对应的作品') // i18n-exempt: 改写服务端返回的中文说明
+  .replace('整理跳过：', '未整理文件：'); // i18n-exempt: 改写服务端返回的中文说明
 
 export function DownloadsPanel() {
   const id = useId();
-  const query = useInfiniteQuery({
-    queryKey: [...DOWNLOADS_KEY, 'pages'],
-    initialPageParam: null as number | null,
-    queryFn: ({ signal, pageParam }) => apiGet<DownloadsSnapshot>(
-      `${DOWNLOADS_URL}?limit=20${pageParam === null ? '' : `&before_id=${pageParam}`}`, signal),
-    getNextPageParam: (page) => page.has_more ? page.next_before_id ?? undefined : undefined,
-    refetchInterval: (state) => state.state.data?.pages.some((page) => downloadPollInterval(page) === 5_000) ? 5_000 : 30_000,
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const query = useQuery({
+    queryKey: [...DOWNLOADS_KEY, 'page', page, pageSize],
+    queryFn: ({ signal }) => apiGet<DownloadsSnapshot>(`${DOWNLOADS_URL}?limit=${pageSize}&page=${page}`, signal),
+    refetchInterval: (state) => downloadPollInterval(state.state.data),
+    placeholderData: (previous) => previous,
   });
-  const pages = query.data?.pages || [];
-  const tasks = [...new Map(pages.flatMap((page) => page.tasks).map((task) => [task.id, task])).values()];
+  const [lastData, setLastData] = useState(query.data);
+  if (query.data && query.data !== lastData) setLastData(query.data);
+  const data = query.data || lastData;
+  const tasks = data?.tasks || [];
   if (!tasks.length && !query.error) return null;
   return (
     <section id="cloudDownloads" aria-labelledby={id} className="flex min-w-0 flex-col gap-3">
-      <h3 id={id} className="text-title-2-medium text-text-primary">云下载</h3>
+      <h3 id={id} className="text-title-2-medium text-text-primary">{t('manage:downloadsPanel.title')}</h3>
       {query.error ? <Note tone="error">{errorMessage(query.error)}</Note> : null}
       {tasks.length
         ? <ul aria-live="polite" className="flex min-w-0 flex-col gap-3">
-            {tasks.map((task) => <TaskCard key={task.id} task={task} writable={pages[0]?.available ?? false} />)}
+            {tasks.map((task) => <TaskCard key={task.id} task={task} writable={data?.available ?? false} />)}
           </ul>
         : null}
-      {query.hasNextPage ? <Button variant="secondary" size="small" leadingIcon={RiArrowDownSLine}
-        className="self-start" {...busyProps(query.isFetchingNextPage)} onClick={() => {
-          if (!query.isFetching) void query.fetchNextPage();
-        }}>加载更多</Button> : null}
+      <DataTableFooter label={t('manage:downloadsPanel.title')} total={data?.total ?? tasks.length}
+        pagination={{ pageIndex: (data?.page || page) - 1, pageSize }}
+        onChange={(next) => {
+          if (next.pageIndex + 1 === page && next.pageSize === pageSize) void query.refetch();
+          else { setPage(next.pageIndex + 1); setPageSize(next.pageSize) }
+        }} />
     </section>
   );
 }
@@ -93,17 +101,16 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
   useEntityNames();
   const client = useQueryClient();
   const action = useAction();
-  const [copied, setCopied] = useState(false);
   const [fullTitle, setFullTitle] = useState(false);
   const titleId = useId();
   /* 还在对账的任务没有失败分类：暂时性故障只记下原因、退避后再查，底栏照样把它读出来。 */
   const reason = failureText(task)
-    || (task.cancellable && task.failure_detail ? `稍后自动重试 · ${task.failure_detail}` : '');
+    || (task.cancellable && task.failure_detail ? t('manage:downloadsPanel.retryLater', { detail: task.failure_detail }) : '');
   const artwork = task.artwork;
   const people = artwork?.performer_entities || [];
   const detailHref = task.state === 'ingested' && task.asset_id ? `/assets/${task.asset_id}` : undefined;
   const failed = task.state === 'failed' || task.postprocess_state === 'failed';
-  const meta = [task.display_code || task.code ? '' : '番号未识别', task.target, momentText(task.submitted_at)]
+  const meta = [task.display_code || task.code ? '' : t('manage:downloadsPanel.codeUnrecognized'), task.target, momentText(task.submitted_at)]
     .filter(Boolean).join(' · ');
   const refresh = () => { void client.invalidateQueries({ queryKey: DOWNLOADS_KEY }) };
 
@@ -116,7 +123,9 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
     void action.run('resubmit', (signal) => apiSend(DOWNLOADS_URL, body, 'POST', signal), refresh);
   };
   const copy = () => {
-    void navigator.clipboard.writeText(task.source_uri).then(() => setCopied(true), () => setCopied(false));
+    void navigator.clipboard.writeText(task.source_uri).then(
+      () => showToast(`download-copy-${task.id}`, { html: t('manage:downloadsPanel.magnetCopied'), alert: false, timeout: 4000, action: null }),
+      () => showToast(`download-copy-${task.id}`, { html: t('manage:downloadsPanel.copyFailed'), alert: true, timeout: 6000, action: null }));
   };
   const retryPostprocess = () => {
     void action.run('postprocess', (signal) => apiSend(
@@ -132,10 +141,10 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
         <div data-download-cover="" data-media-pic=""
           style={{ '--card-ratio': String(COVER_FRONT_RATIO) } as CSSProperties}
           className="w-20 shrink-0 self-start text-caption-1-regular text-text-secondary sm:w-32">
-          {!artwork?.has_cover ? <span data-media-nopic="">无封面</span> : null}
+          {!artwork?.has_cover ? <span data-media-nopic="">{t('manage:shared.noCover')}</span> : null}
           {artwork?.has_cover ? <ArtSlot artwork={{ kind: 'cover', html: coverImage(artwork, 'big') }}
             relayout={(root) => relayoutCovers(root, 'big')} /> : null}
-          {detailHref ? <a data-download-cover-link="" href={detailHref} aria-label={`打开作品详情：${taskName(task)}`}
+          {detailHref ? <a data-download-cover-link="" href={detailHref} aria-label={t('manage:downloadsPanel.openVideo', { title: taskName(task) })}
             className="absolute inset-0 z-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus-ring" /> : null}
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -156,14 +165,14 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
         {people.length ? <div className="flex min-w-0 items-center gap-2">
           <div className="flex shrink-0 items-center gap-1">
             {people.slice(0, 3).map((person) => <a key={person.id || person.name} data-media-avatar=""
-              href={entityPath('performer', person.name, person.id)} aria-label={`打开女优页：${entityDisplayName('performer', person.name, person.id)}`} title={entityDisplayName('performer', person.name, person.id)}
+              href={entityPath('performer', person.name, person.id)} aria-label={t('manage:downloadsPanel.openActress', { name: entityDisplayName('performer', person.name, person.id) })} title={entityDisplayName('performer', person.name, person.id)}
               dangerouslySetInnerHTML={{ __html: avatarInner(person.name, person, null) }} />)}
           </div>
           <span className="min-w-0 truncate text-caption-1-regular text-text-secondary"
-            title={people.map((person) => entityDisplayName('performer', person.name, person.id)).join('、')}>{people.map((person) => entityDisplayName('performer', person.name, person.id)).join('、')}{(artwork?.performer_total || 0) > people.length ? ` 等 ${artwork!.performer_total} 人` : ''}</span>
+            title={joinList(people.map((person) => entityDisplayName('performer', person.name, person.id)))}>{joinList(people.map((person) => entityDisplayName('performer', person.name, person.id)))}{(artwork?.performer_total || 0) > people.length ? t('manage:downloadsPanel.performerTotal', { total: artwork!.performer_total, count: artwork!.performer_total! - people.length }) : ''}</span>
         </div> : null}
         {task.state === 'remote_running' && task.progress != null
-          ? <Progress label="远端下载进度" value={Math.round(task.progress * 100)} max={100} />
+          ? <Progress label={t('manage:downloadsPanel.remoteProgress')} value={Math.round(task.progress * 100)} max={100} />
           : null}
         {task.ledger_path
           ? <p className="min-w-0 truncate text-caption-1-regular text-text-secondary" title={task.ledger_path}>{task.ledger_path}</p>
@@ -171,27 +180,29 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
         {action.error ? <ErrorText>{action.error}</ErrorText> : null}
         {/* 辅助的（看标题、抄磁力）靠左，改动这条任务的靠右，最右是这张卡此刻的主动作。 */}
         <div data-download-actions="" className="flex flex-wrap items-center gap-2 pt-1 sm:mt-auto">
-          <Button variant="ghost" size="small" aria-expanded={fullTitle} aria-controls={fullTitle ? titleId : undefined}
-            onClick={() => setFullTitle(!fullTitle)}>{fullTitle ? '收起标题' : '展开标题'}</Button>
-          <Button variant="ghost" size="small" onClick={copy}>{copied ? '已复制磁力' : '复制磁力'}</Button>
+          <Button variant="ghost" size="small" aria-expanded={fullTitle} aria-controls={titleId}
+            onClick={() => setFullTitle(!fullTitle)}>{fullTitle ? t('manage:downloadsPanel.collapseTitle') : t('manage:downloadsPanel.expandTitle')}</Button>
+          <Button variant="ghost" size="small" onClick={copy}>{t('manage:downloadsPanel.copyMagnet')}</Button>
           {writable && (task.cancellable || task.resubmittable || task.postprocess_retryable)
             ? <div className="ml-auto flex flex-wrap items-center gap-2">
                 {task.cancellable
-                  ? <Button variant="secondary" size="small" {...busyProps(action.busy === 'cancel')} onClick={cancel}>取消</Button>
+                  ? <Button variant="secondary" size="small" {...busyProps(action.busy === 'cancel')} onClick={cancel}>{t('manage:downloadsPanel.cancelDownload')}</Button>
                   : null}
                 {task.resubmittable
-                  ? <Button variant="secondary" size="small" {...busyProps(action.busy === 'resubmit')} onClick={resubmit}>重新提交</Button>
+                  ? <Button variant="secondary" size="small" {...busyProps(action.busy === 'resubmit')} onClick={resubmit}>{t('manage:downloadsPanel.resubmit')}</Button>
                   : null}
                 {task.postprocess_retryable
                   ? <Button variant="secondary" size="small" {...busyProps(action.busy === 'postprocess')}
-                      onClick={retryPostprocess}>重试入库后整理</Button>
+                      onClick={retryPostprocess}>{t('manage:downloadsPanel.retryPostprocess')}</Button>
                   : null}
               </div>
             : null}
         </div>
         </div>
       </div>
-      {fullTitle ? <p id={titleId} data-download-title-full className="wrap-anywhere px-5 pb-4 text-body-2-regular text-text-secondary">{taskName(task)}</p> : null}
+      <CollapseRegion open={fullTitle} id={titleId}>
+        <p data-download-title-full className="wrap-anywhere px-5 pb-4 text-body-2-regular text-text-secondary">{taskName(task)}</p>
+      </CollapseRegion>
       {reason || task.postprocess_detail
         ? <div className="flex min-h-14 flex-col justify-center rounded-b-2xl border-t border-separator-border bg-card-footer px-5 py-3">
             <p className="wrap-anywhere text-caption-1-regular text-text-secondary">{reason || postprocessDetail(task)}</p>

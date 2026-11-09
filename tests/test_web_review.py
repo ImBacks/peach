@@ -110,6 +110,56 @@ class ReviewQueueTests(unittest.TestCase):
                                "VALUES(900,'Example Alias','example alias','manual',1)")
         self.assertEqual(self.queue_keys('metadata_fields'), [])
 
+    def test_candidate_code_checks_share_only_matching_provider_evidence_within_request(self):
+        rows = []
+        for index, provider_id in enumerate(('EXM-001', 'EXM-001', 'EXM-002')):
+            candidate = {'candidate_key': 'javdb:title', 'source': 'javdb',
+                         'provider_id': provider_id, 'value': f'Title {index}'}
+            rows.append({'item_key': f'EXM-001:title:{index}', 'status': 'candidate',
+                         'code': 'EXM-001', 'field': 'title', 'current_value': '',
+                         'candidates_json': json.dumps([candidate])})
+        self.write_metadata_candidates(rows)
+        with mock.patch.object(rm_review, '_candidate_identifies_code',
+                               wraps=rm_review._candidate_identifies_code) as identifies:
+            first, _, _ = rm_review._review_rows(self.contract, 'metadata_fields')
+            self.assertEqual({row['item_key'] for row in first},
+                             {'EXM-001:title:0', 'EXM-001:title:1'})
+            self.assertEqual(identifies.call_count, 2)
+            self.write_metadata_candidates(rows)
+            rm_review._review_rows(self.contract, 'metadata_fields')
+            self.assertEqual(identifies.call_count, 4)
+
+    def test_counts_share_exact_members_without_loading_card_evidence(self):
+        self.write_metadata_rows([{'item_key': 'EXM-001:title', 'code': 'EXM-001',
+                                   'field': 'title', 'current': '', 'candidates': ['New title']}])
+        with mock.patch.object(rm_review, '_attach_review_asset_context',
+                               side_effect=AssertionError('计数不需要卡片旁证')), \
+                mock.patch.object(self.contract, 'cover_path',
+                                  side_effect=AssertionError('计数不需要图片')):
+            counts = rm_review.q_review_counts(self.contract)
+        full = rm_review.q_review(self.contract)
+        self.assertEqual(counts['counts'], full['counts'])
+        self.assertEqual(counts['sources'], full['sources'])
+        self.assertEqual(counts['skipped_rows'], full['skipped_rows'])
+        self.assertNotIn('sections', counts)
+
+    def test_member_snapshot_is_not_mutated_by_cards_and_ledger_changes_rebuild_it(self):
+        self.write_metadata_rows([{'item_key': 'EXM-001:title', 'code': 'EXM-001',
+                                   'field': 'title', 'current': '', 'candidates': ['New title']}])
+        with mock.patch.object(rm_review, '_metadata_queue_rows',
+                               wraps=rm_review._metadata_queue_rows) as project:
+            first = rm_review.q_review(self.contract)
+            first['sections']['metadata_fields'][0]['candidates'][0]['value'] = 'client mutation'
+            again = rm_review.q_review(self.contract)
+            self.assertEqual(again['sections']['metadata_fields'][0]['candidates'][0]['value'], 'New title')
+            self.assertEqual(project.call_count, 1)
+            rm_review.q_review_counts(self.contract)
+            self.assertEqual(project.call_count, 1)
+            with self.contract.write_transaction() as connection:
+                connection.execute("UPDATE asset SET catalog_title='Changed' WHERE id=1")
+            rm_review.q_review_counts(self.contract)
+            self.assertEqual(project.call_count, 2)
+
     def test_settled_creator_rows_do_not_load_asset_previews(self):
         self.write_candidates('creator-tags-candidate-20260818.csv', [
             {'board': str(index), 'creator': 'ukiru', 'tags': 'x', 'status': 'candidate'}
@@ -359,6 +409,65 @@ class ReviewQueueTests(unittest.TestCase):
         rows, _source, _skipped = rm_candidates.read_candidates("studio_logos", self.candidates)
 
         self.assertEqual([row["item_key"] for row in rows], ["FALENO"])
+
+    def test_reread_candidates_follow_the_file_and_stay_private_to_each_reader(self):
+        batch = self.candidates / "studio-logo-candidate-20260923.csv"
+        batch.write_text("studio,saved\nFALENO,FALENO.jpg\n", encoding="utf-8")
+        os.utime(batch, (2000, 2000))
+
+        first, _source, _skipped = rm_candidates.read_candidates("studio_logos", self.candidates)
+        first[0]["saved"] = "改过.jpg"
+        again, _source, _skipped = rm_candidates.read_candidates("studio_logos", self.candidates)
+        self.assertEqual(again[0]["saved"], "FALENO.jpg")
+
+        # 处理任务写完新一批：同名文件原地换内容，读到的必须是新那份。
+        batch.write_text("studio,saved\nFALENO,FALENO-v2.jpg\nSOD,SOD.jpg\n", encoding="utf-8")
+        os.utime(batch, (3000, 3000))
+        rows, _source, _skipped = rm_candidates.read_candidates("studio_logos", self.candidates)
+        self.assertEqual([(row["item_key"], row["saved"]) for row in rows],
+                         [("FALENO", "FALENO-v2.jpg"), ("SOD", "SOD.jpg")])
+
+    def test_a_rewrite_by_the_writer_is_read_back_without_parsing_the_file_again(self):
+        batch = self.candidates / "library-metadata-field-candidates.csv"
+        batch.write_text("item_key,field,candidates_json\nA:title,title,[]\n", encoding="utf-8")
+        rm_candidates.read_candidates("metadata_fields", self.candidates)
+
+        # 处理任务写回的是未转成字符串的值：数字、None、带换行的文本。
+        rm_candidates.write_rows(batch, ["item_key", "field", "candidates_json"], [
+            {"item_key": "A:title", "field": "title", "candidates_json": None},
+            {"item_key": "B:release_date", "field": 7, "candidates_json": '[{"value": "一\r\n二"}]'},
+        ], atomic=True)
+        with mock.patch.object(rm_candidates, "read_rows", side_effect=AssertionError("又整份解析了")):
+            cached, _source, _skipped = rm_candidates.read_candidates("metadata_fields", self.candidates)
+            shared = rm_candidates.read_rows_shared(batch)
+        fresh = rm_candidates.read_rows(batch)
+        self.assertEqual(shared, fresh)
+        self.assertEqual(cached, [{**row, "item_key": row["item_key"]} for row in fresh])
+        self.assertEqual(fresh[1]["candidates_json"], '[{"value": "一\r\n二"}]')
+
+        shared[0]["field"] = "改过"
+        self.assertEqual(rm_candidates.read_rows_shared(batch)[0]["field"], "title")
+
+    def test_non_atomic_rewrite_does_not_cache_rows_under_another_writers_file_stamp(self):
+        from contextlib import contextmanager
+
+        batch = self.candidates / "studio-logo-candidate-20260923.csv"
+        batch.write_text("studio,saved\nFALENO,initial.jpg\n", encoding="utf-8")
+        rm_candidates.read_candidates("studio_logos", self.candidates)
+        real_open = Path.open
+
+        @contextmanager
+        def intervening_write(path, *args, **kwargs):
+            with real_open(path, *args, **kwargs) as handle:
+                yield handle
+            if path == batch and args and args[0] == "w":
+                with real_open(path, "w", encoding="utf-8", newline="") as handle:
+                    handle.write("studio,saved\nFALENO,external.jpg\n")
+
+        with mock.patch.object(Path, "open", intervening_write):
+            rm_candidates.write_rows(batch, ["studio", "saved"],
+                                     [{"studio": "FALENO", "saved": "first.jpg"}])
+        self.assertEqual(rm_candidates.read_rows_shared(batch)[0]["saved"], "external.jpg")
 
     def test_older_batches_keep_their_undecided_rows_in_the_queue(self):
         """跑了新批次不该让上一批未复核的行消失。
@@ -1010,6 +1119,55 @@ class ReviewQueueTests(unittest.TestCase):
         finally:
             con.close()
         self.assertEqual(note["rule"], "adr-0038-chain-mgstage")
+
+    def _landed_cast(self, asset_id, item_key):
+        con = sqlite3.connect(self.db_path)
+        try:
+            landed = [row[0] for row in con.execute(
+                "SELECT e.canonical_name FROM entity e JOIN asset_entity ae ON ae.entity_id=e.id "
+                "WHERE ae.asset_id=? AND ae.role='performer'", (asset_id,))]
+            row = con.execute("SELECT note FROM review_decision WHERE item_key=?", (item_key,)).fetchone()
+        finally:
+            con.close()
+        return landed, json.loads(row[0]) if row else None
+
+    def test_the_name_wiki_names_the_amateur_cast_over_the_store_nickname(self):
+        """素人片 MGStage 写片中称呼、认人 Wiki 写艺名：落艺名，称呼记进被压下的取值（ADR-0145）。"""
+        self._asset(130, "300NTK-619", "300NTK-619.mp4")
+        self.write_metadata_rows([
+            {"item_key": "NTK", "field": "performers", "current": "", "code": "300NTK-619",
+             "candidates": [{"source": "mgstage", "value": [{"name": "まいな"}], "display": "まいな"},
+                            {"source": "sougouwiki", "value": [{"name": "優梨まいな"}], "display": "優梨まいな"}]},
+        ])
+        self.assertEqual(self._auto()["applied"], 1)
+        landed, note = self._landed_cast(130, "NTK")
+        self.assertEqual(landed, ["優梨まいな"])
+        self.assertEqual(note["rule"], "adr-0038-chain-sougouwiki")
+        self.assertEqual(note["overruled"], [{"source": "mgstage", "value": "まいな"}])
+
+    def test_the_name_wiki_names_the_cast_over_an_honorific_from_r18dev(self):
+        """r18.dev 写 `早見さん` 这种带称谓的片中称呼时，同样落 Wiki 给的艺名（ADR-0145）。"""
+        self._asset(131, "230ORETD-615", "230ORETD-615.mp4")
+        self.write_metadata_rows([
+            {"item_key": "ORETD", "field": "performers", "current": "", "code": "230ORETD-615",
+             "candidates": [{"source": "r18dev", "value": [{"name": "早見さん"}], "display": "早見さん"},
+                            {"source": "av_neme", "value": [{"name": "早美れむ"}], "display": "早美れむ"}]},
+        ])
+        self._auto()
+        landed, note = self._landed_cast(131, "ORETD")
+        self.assertEqual(landed, ["早美れむ"])
+        self.assertEqual(note["source"], "av_neme")
+        self.assertEqual(note["descriptive_dropped"], [{"source": "r18dev", "value": "早見さん"}])
+
+    def test_a_store_nickname_without_a_wiki_name_still_goes_to_review(self):
+        """没有别家给艺名时，片中称呼照旧交人工，不替人认（ADR-0145 只在有艺名时剔掉称呼）。"""
+        self._asset(132, "230ORETD-615", "230ORETD-615.mp4")
+        self.write_metadata_rows([
+            {"item_key": "ORETD", "field": "performers", "current": "", "code": "230ORETD-615",
+             "candidates": [{"source": "r18dev", "value": [{"name": "早見さん"}], "display": "早見さん"}]},
+        ])
+        self.assertEqual(self._auto()["applied"], 0)
+        self.assertEqual(self.queue_keys("metadata_fields"), ["ORETD"])
 
     def test_a_fallback_source_does_not_challenge_a_value_the_ledger_has(self):
         """兜底来源改不动账本已有的值，也不必让人看一眼（ADR-0038）。
@@ -2229,7 +2387,8 @@ class ReviewQueueTests(unittest.TestCase):
             {"source": "javdb", "value": "2024-01-05", "requires_review": True}])
         self.assertEqual(self.queue_keys("metadata_fields"), [])
 
-    def test_user_review_community_and_unowned_values_stay_in_the_queue(self):
+    def test_community_verification_dissent_leaves_every_owner_alone_and_off_the_queue(self):
+        """核查带回的社区异议只补空不挑战（ADR-0033、ADR-0139），现值归谁都不进队列、不写。"""
         cases = (("OWN-001", USER_MANUAL), ("OWN-002", review_owner("javdb")),
                  ("OWN-003", auto_owner("avbase")))
         keys = []
@@ -2246,7 +2405,15 @@ class ReviewQueueTests(unittest.TestCase):
             "item_key": key, "code": key.split(":")[0], "field": "studio", "current": "官方厂牌",
             "candidates": [{"source": "javdb", "value": "社区写法", "requires_review": True}],
         } for key in keys])
-        self.assertEqual(sorted(self.queue_keys("metadata_fields")), sorted(keys))
+        self.assertEqual(self.queue_keys("metadata_fields"), [])
+        self._auto()
+        con = sqlite3.connect(self.db_path)
+        try:
+            self.assertEqual({row[0] for row in con.execute("SELECT studio FROM asset WHERE id>=510")},
+                             {"官方厂牌"})
+            self.assertEqual(con.execute("SELECT count(*) FROM review_decision").fetchone()[0], 0)
+        finally:
+            con.close()
 
     def test_official_candidate_in_the_row_keeps_it_for_review(self):
         self._owned(520, "OFF-003", auto_owner("r18dev"))
@@ -2272,7 +2439,7 @@ class ReviewQueueTests(unittest.TestCase):
                          "field_label": "studio", "current_value": "官方厂牌",
                          "candidates_json": json.dumps([self._candidate(
                              {"item_key": key, "code": "LIB-001"}, 0, "javdb",
-                             {"source": "javdb", "value": "社区写法", "requires_review": True})],
+                             {"source": "javdb", "value": "社区写法"})],
                              ensure_ascii=False),
                          "source_count": "1", "source_profile": "library", "status": "candidate",
                          "size_gb": "", "videos": "1", "fetched_at": ""})
@@ -2580,6 +2747,69 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(
             self.queue_row("metadata_fields", "asset:125:title")["current_value"], "")
 
+    def _pinned_row(self, asset_id, field, code, path, value):
+        return {"item_key": f"asset:{asset_id}:{field}", "code": code, "query": code,
+                "asset_id": str(asset_id), "asset_path": path, "field": field, "field_label": field,
+                "current_value": "", "candidates_json": json.dumps([{
+                    "candidate_key": f"{code}:{field}:dmm", "source": "dmm", "display_value": value,
+                    "value": value, "confidence": 0.9, "provider_id": code, "source_url": "",
+                    "raw_snapshot": ""}], ensure_ascii=False),
+                "source_count": "1", "source_profile": "", "status": "candidate",
+                "size_gb": "", "videos": "1", "fetched_at": ""}
+
+    def test_a_row_left_on_a_purged_asset_follows_its_file_to_the_new_id(self):
+        """#486：77 永久删除后同一个文件重新登记成 759，卡片的通过与打开原视频都指向 759。"""
+        self._asset(759, "DASD-321", "DASD-321.mp4")
+        self.write_metadata_candidates([
+            self._pinned_row(77, "title", "DASD-321", "/x/DASD-321.mp4", "新しい題名"),
+            # 759 自己已有同字段的行：旧行让位，不出两张卡。
+            self._pinned_row(77, "studio", "DASD-321", "/x/DASD-321.mp4", "旧スタジオ"),
+            self._pinned_row(759, "studio", "DASD-321", "/x/DASD-321.mp4", "新スタジオ"),
+            # 文件也不在库了：哪个按钮都写不进去，不出现在任何队列里。
+            self._pinned_row(220, "title", "SSIS-220", "/x/SSIS-220.mp4", "消えた題名"),
+        ])
+        self.decide("metadata_fields", "asset:77:title", "skipped")
+        self.assertEqual(self.queue_keys("metadata_fields"), ["asset:759:studio"])
+        rows, _source, _skipped = rm_review._review_rows(self.contract, "metadata_fields", queue=None)
+        self.assertEqual({row["item_key"]: str(row["asset_id"]) for row in rows},
+                         {"asset:77:title": "759", "asset:759:studio": "759"})
+        later = next(row for row in rows if row["item_key"] == "asset:77:title")
+        result = rm_review.w_review_decision(self.contract, {
+            "category": "metadata_fields", "item_key": "asset:77:title", "status": "approved",
+            "candidate_key": later["candidates"][0]["candidate_key"],
+            "expected_revision": later["asset_mutation_revision"]})
+        self.assertEqual(result["applied_assets"], 1)
+        con = sqlite3.connect(self.db_path)
+        try:
+            self.assertEqual(con.execute("SELECT catalog_title FROM asset WHERE id=759").fetchone()[0],
+                             "新しい題名")
+        finally:
+            con.close()
+
+    def test_an_empty_tag_candidate_shows_only_while_a_genre_waits_to_be_mapped(self):
+        """#486：折完 genre 一个标签也不剩的候选，原来点通过报「标签候选为空」。
+
+        还带着未收录 genre 的照常出卡，卡上的「收录」是它唯一的入口，点通过直接结案；
+        什么都不剩的不摆出来。"""
+        self._asset(108, "FC2-PPV-3083211", "FC2-PPV-3083211.mp4")
+        self._asset(109, "ABW-251", "ABW-251.mp4")
+        self._asset(110, "FC2-PPV-1000001", "FC2-PPV-1000001.mp4")
+        self.write_metadata_rows([
+            {"item_key": "FC2-PPV-3083211:tags", "code": "FC2-PPV-3083211", "field": "tags", "current": "",
+             "candidates": [{"value": [], "display": "", "unmapped_genres": ["まだ知らない分類"]}]},
+            {"item_key": "FC2-PPV-1000001:tags", "code": "FC2-PPV-1000001", "field": "tags", "current": "",
+             "candidates": [{"value": [], "display": ""}]},
+            self._tag_row("ABW-251:tags", "ABW-251", ["Shaved Pussy", "まだ知らない分類"]),
+        ])
+        self.assertEqual(sorted(self.queue_keys("metadata_fields")), ["ABW-251:tags", "FC2-PPV-3083211:tags"])
+        row = self.queue_row("metadata_fields", "FC2-PPV-3083211:tags")
+        result = rm_review.w_review_decision(self.contract, {
+            "category": "metadata_fields", "item_key": "FC2-PPV-3083211:tags", "status": "approved",
+            "candidate_key": row["candidates"][0]["candidate_key"],
+            "expected_revision": row["asset_mutation_revision"]})
+        self.assertEqual(result["applied_assets"], 0)
+        self.assertEqual(self.queue_keys("metadata_fields"), ["ABW-251:tags"])
+
     def test_a_code_the_ledger_never_heard_of_keeps_the_snapshot_value(self):
         """账本里没有这个番号的资产，就没有「现值」可问，别把有值的改成空。"""
         self.write_metadata_rows([
@@ -2884,7 +3114,7 @@ class ReviewQueueTests(unittest.TestCase):
             ])
 
     def test_a_stale_candidate_lands_on_the_current_vocabulary(self):
-        """候选文件停在抓取那一刻：那时给的撤掉的粗桶与退役名，落库时按现在的词表处理。"""
+        """候选文件停在抓取那一刻：那时给的撤掉的粗桶、退役名与来源的分辨率，落库时按现在的词表处理。"""
         con = sqlite3.connect(self.db_path)
         con.execute("UPDATE asset SET code='ABC-001' WHERE id=1")
         con.commit(); con.close()
@@ -2892,7 +3122,7 @@ class ReviewQueueTests(unittest.TestCase):
             "candidate_key": "ABC-001:tags:r18dev:specific", "source": "r18dev",
             "source_url": "https://r18.dev/example", "confidence": 0.9,
             "provider_id": "ABC-001",
-            "value": ["乳系", "处女", "颜射"], "display_value": "乳系、处女、颜射",
+            "value": ["乳系", "处女", "颜射", "4K"], "display_value": "乳系、处女、颜射、4K",
             "warnings": [],
         }
         self.write_metadata_candidates([{

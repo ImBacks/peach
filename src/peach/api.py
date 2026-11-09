@@ -35,7 +35,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
-from . import (__version__, browser_transport, feeds, tunnel, web_contract,
+from . import (__version__, browser_transport, distribution, feeds, ledger_backups, tunnel, web_contract,
                web_feeds, web_follow, web_settings)
 from . import routes_api, routes_auth, routes_configuration, routes_jav_browser, routes_media, routes_pages, routes_subtitles
 from .buildinfo import frozen_build
@@ -73,12 +73,13 @@ from .previews import (
 from .follow_secrets import credential_store_for
 from .push_discovery import PushDiscoveryService
 from .web_downloads import build_download_service
+from .web_local_access import local_client
 from .sample_images import SampleCache
 from .sample_images import cache_root as sample_cache_root
 from .providers import OpenCodeGoClient, default_registry
 from .repository import LedgerDatabase, LedgerRepository
 from .review_mirror import ReviewMirror
-from .routes_auth import AssetLoginRequired, PageLoginRequired
+from .routes_auth import FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, AssetLoginRequired, PageLoginRequired
 # 两档缓存时长的实现在 `routes_media`，这里再导出：它们是对外的缓存契约，
 # tests/test_follow_web.py 按 `api.MEDIA_CACHE_SECONDS` 断言两者的关系。
 from .routes_media import AVATAR_CACHE_SECONDS, MEDIA_CACHE_SECONDS  # noqa: F401
@@ -86,6 +87,7 @@ from .segments import HlsSegmentService
 from .streaming import StreamSessionRegistry
 from .sync import LedgerSync
 from .transcodes import TranscodeService
+from .user_messages import UserFacingError, error_fields, message_fields
 
 
 LOGGER = logging.getLogger(__name__)
@@ -142,11 +144,42 @@ class ResponseHeadersMiddleware:
         await self.app(scope, receive, send_headers)
 
 
-#: Starlette 自己抛的那几种 HTTPException 带的是英文 detail，给人看之前换成中文。
+class FirstSetupSourceMiddleware:
+    """Docker 首次设置完成前，服务没有口令也没有访问策略，谁连得上谁就能调接口（ADR-0149）。
+
+    这段时间 `/api/` 与写请求只收 `local_client` 认的来源：本机或私有网络、不带代理转发头。
+    页面壳与静态资源照常给，来源不满足的浏览器也能看到首次设置页上那句说明。配置完成后
+    服务换成正常模式，由口令与访问策略把关，这一层不再起作用。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and distribution.docker():
+            request = Request(scope)
+            settings = request.app.state.settings
+            if (not settings.configured
+                    and (scope["path"].startswith("/api/") or scope["method"] not in {"GET", "HEAD"})
+                    and not local_client(request)):
+                response = JSONResponse({**message_fields(FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, key="error"),
+                                         "docker": True}, status_code=403)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+#: Starlette 自己抛的那几种 HTTPException 带的是英文 detail，给人看之前换成中文原文与 code。
 _DEFAULT_DETAILS = {
-    "Not Found": "这个地址下没有页面。",
-    "Method Not Allowed": "这个地址不接受这种请求。",
+    "Not Found": message_fields("这个地址下没有页面。", "http.notFound", key="error"),
+    "Method Not Allowed": message_fields("这个地址不接受这种请求。", "http.methodNotAllowed", key="error"),
 }
+
+
+def _navigation(request: Request) -> bool:
+    """浏览器地址栏直接打开页面路径：报错给一页话，`/api/` 与脚本取数（Accept 里没有 text/html）回 JSON。"""
+    return (request.method in {"GET", "HEAD"} and not request.url.path.startswith("/api/")
+            and "text/html" in request.headers.get("accept", ""))
 
 
 def _offline_response(exc: MediaOffline) -> JSONResponse:
@@ -200,13 +233,21 @@ def _restore_task_center(contract) -> None:
 
 #: 开机在后台先算一遍的聚合：口味、复核、垃圾复核、关注的全部条目与筛选项各要几秒到
 #: 十几秒，都按账本版本号缓存（`WebContract.cached_until_changed`），算好一次就一直用到
-#: 账本或文件真的变了。
-WARM_AGGREGATES = (("/api/taste", {"window": "all"}), ("/api/review", {}), ("/api/ads", {}),
+#: 账本或文件真的变了。排在前面的是每页都碰到的几份：形状名单、作品分组快照（目录、
+#: 索引、筛选项都建在它上面）、统计与搜索推荐池，重启后第一个打开页面的人不再等它们一起冷算。
+WARM_AGGREGATES = (("/api/entity/shapes", {}), ("/api/items", {"limit": "60"}), ("/api/stats", {}),
+                   ("/api/search/recommendations", {}),
+                   ("/api/taste", {"window": "all"}), ("/api/review", {}), ("/api/ads", {}),
                    ("/api/follow", {}))
 
 
 def _start_ledger_services(settings: PeachSettings, contract, services) -> bool:
     """只读核对当前账本后，恢复任务并启动依赖账本的后台服务。"""
+    try:
+        # 上次从备份恢复没走完：先把账本收拾到确定的状态，再判它能不能用（ADR-0138）。
+        ledger_backups.recover(settings.db_path)
+    except Exception:
+        LOGGER.exception('账本恢复标记未能处理')
     status = inspect_database(settings.db_path)
     repairs = getattr(contract, 'upgrade_repairs', None)
     if status['schema'] == 'pending' and repairs is not None and repairs.available:
@@ -342,6 +383,17 @@ class _LedgerActivation:
             await self.task
 
 
+def _configure_capacity_guard(settings, contract, services):
+    from .storage_budget import CapacityGuard
+    config = contract.upgrade_config
+    # 服务进程里这把闸门守的是播放、浏览与网络媒体缓存：总量超限只清理，不挡请求。
+    guard = (CapacityGuard(config, foreground=True)
+             if settings.transcode_root.parent.resolve() == config.directory('generated').resolve() else None)
+    contract.capacity_guard = guard
+    for service in services:
+        service.capacity_guard = guard
+
+
 def create_app(
     settings: PeachSettings | None = None,
     sync: LedgerSync | None = None,
@@ -377,10 +429,14 @@ def create_app(
     from .mount_reachability import source_roots
     mount_reachability = MountReachability(source_roots())
     from .network_reachability import NetworkReachability
-    network_reachability = NetworkReachability()
+    from .web_library_processing import retry_after_network_recovery
+    network_reachability = NetworkReachability(
+        on_recovered=lambda: retry_after_network_recovery(contract, sync))
+    # 处理任务在外部采集前按它判断网（`library_processing._network_gate`）。
+    contract.network_reachability = network_reachability
     resolver = FFmpegResolver(settings.ffmpeg_root)
     http_transport = HttpxTransport()
-    follow_media_resolver = FollowMediaResolver(http_transport).with_credential_loader(
+    follow_media_resolver = FollowMediaResolver(http_transport, state_root=settings.follow_state_root).with_credential_loader(
         lambda provider: web_follow._credential_store(contract).load(provider))
     # 检查更新、浏览与画面签名的取图共用这一份按站冷却：同一个站被限流，几处都得停。
     contract.follow_media_resolver = follow_media_resolver
@@ -408,8 +464,10 @@ def create_app(
                                                     quality=COVER_SMALL_THUMB_QUALITY)
     transcode_service = TranscodeService(resolver, settings.transcode_root, state_root=settings.follow_state_root)
     header_repairs = HeaderRepairStore(settings.transcode_root, resolver, runs=contract.task_runs)
+    # 分片计划按会话记住（`SessionPlans`），这里只跑没记过的那一次；一次可能要等 ffprobe，
+    # 两个线程时两部探不动的片子就让所有会话的分片排队。
     hls_plan_executor = ThreadPoolExecutor(
-        max_workers=2, thread_name_prefix="PeachHlsPlan",
+        max_workers=8, thread_name_prefix="PeachHlsPlan",
     )
     hls_service = HlsSegmentService(
         resolver, settings.stream_root, prefer_hardware=transcode_service.prefer_hardware,
@@ -454,7 +512,9 @@ def create_app(
     contract.downloads = downloads
     from .jav_browser import JavBrowser
     from .web_resource_search import q_resource_search
-    jav_browser = JavBrowser(contract, search=q_resource_search)
+    from .jav_editions import EditionProbe
+    jav_browser = JavBrowser(contract, search=q_resource_search,
+                             edition_probe=EditionProbe(contract.follow_secrets_root))
     contract.follow_scheduler = follow_scheduler
     # 订阅源拉取（ADR-0042）用同一个调度实现，只换 job id、状态文件与默认间隔。
     # 默认 6 小时：一位女优的 JavDB 演员页一天更新几条，比这更密只是把 JavDB 的配额
@@ -490,6 +550,8 @@ def create_app(
         available=managed_configuration() and bool(settings.configured),
     )
     upgrade_repairs = _configure_upgrade_repairs(settings, contract, sync)
+    _configure_capacity_guard(settings, contract,
+        (transcode_service, hls_service, entity_thumb_service, cover_thumb_service, cover_small_thumb_service))
 
     async def warm_startup_entries():
         """配置页首屏要的开机启动项状态，先在后台问一遍。
@@ -532,6 +594,8 @@ def create_app(
         try:
             yield
         finally:
+            # 外部播放器的最后一段观看要赶在账本收尾前落下。
+            await asyncio.to_thread(_app.state.playback_trackers.stop)
             await activation.stop()
             _app.state.ledger_background_ready = False
             aggregate_stop.set()
@@ -582,6 +646,8 @@ def create_app(
     app.state.media_engine = media_engine
     app.state.preview_service = preview_service
     app.state.photo_service = photo_service
+    from .subtitles import SidecarListings
+    app.state.sidecar_listings = SidecarListings()
     app.state.sample_cache = sample_cache
     app.state.entity_thumb_service = entity_thumb_service
     app.state.cover_thumb_service = cover_thumb_service
@@ -589,6 +655,8 @@ def create_app(
     app.state.transcode_service = transcode_service
     app.state.header_repairs = header_repairs
     app.state.hls_plan_executor = hls_plan_executor
+    from .segments import SessionPlans
+    app.state.hls_session_plans = SessionPlans()
     app.state.hls_service = hls_service
     app.state.mdns = mdns
     app.state.providers = providers
@@ -600,6 +668,10 @@ def create_app(
     app.state.follow_scheduler = follow_scheduler
     app.state.automatic_updates = automatic_updates
     app.state.upgrade_repairs = upgrade_repairs
+    from pathlib import Path
+    from .follow_evidence import Reclaim
+    app.state.follow_evidence = Reclaim(Path(contract.follow_sources_root) / "follow", contract,
+                                        runs=contract.task_runs)
     app.state.push_discovery = push_discovery
     app.state.downloads = downloads
     app.state.jav_browser = jav_browser
@@ -612,6 +684,8 @@ def create_app(
     app.state.strm_resources = StrmResources()
     import secrets
     app.state.external_playback_key = secrets.token_bytes(32)
+    from .playback_tracking import PlaybackTrackers
+    app.state.playback_trackers = PlaybackTrackers()
     app.state.sync = sync
     app.state.tunnel = tunnel_manager
 
@@ -648,23 +722,26 @@ def create_app(
         headers = _server_error_headers(request, exc, exc.status_code)
         detail = exc.detail
         if isinstance(detail, dict):
-            # 表单校验那种带字段明细的 4xx：`message` 是总话，其余键原样带给页面。
+            # 表单校验那种带字段明细的 4xx：`message` 是总话，其余键（含 `message_code`）原样带给页面。
             body = {"error": str(detail.get("message", "")), **{k: v for k, v in detail.items() if k != "message"}}
         else:
-            body = {"error": _DEFAULT_DETAILS.get(str(detail), str(detail))}
-        # 浏览器地址栏直接打开一个页面路径撞上 403／404／409 时，给人看的是一页话，
-        # 不是一行 JSON；`/api/` 与脚本取数（Accept 里没有 text/html）照旧回 JSON。
-        navigation = (request.method in {"GET", "HEAD"} and not request.url.path.startswith("/api/")
-                      and "text/html" in request.headers.get("accept", ""))
-        if navigation:
+            body = dict(_DEFAULT_DETAILS.get(str(detail)) or {"error": str(detail)})
+        # 浏览器地址栏直接打开一个页面路径撞上 403／404／409 时，给人看的是一页话，不是一行 JSON。
+        if _navigation(request):
             return HTMLResponse(routes_pages.error_page(exc.status_code, body["error"]),
                                 status_code=exc.status_code, headers=headers)
         return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
+    @app.exception_handler(UserFacingError)
+    def _user_facing_error_handler(request: Request, exc: UserFacingError):
+        if _navigation(request):
+            return HTMLResponse(routes_pages.error_page(exc.status_code, exc.message), status_code=exc.status_code)
+        return JSONResponse(error_fields(exc), status_code=exc.status_code)
+
     @app.exception_handler(Exception)
     def _server_exception_handler(request: Request, exc: Exception):
         headers = _server_error_headers(request, exc)
-        return JSONResponse({'error': '服务处理失败，请导出诊断报告',
+        return JSONResponse({**message_fields('服务处理失败，请导出诊断报告', 'http.serverError', key='error'),
                              'error_id': headers['X-Peach-Error-ID']}, status_code=500, headers=headers)
 
     # 第三方前端依赖固定版本并随 Peach 自托管；局域网断网时仍可播放。
@@ -674,6 +751,7 @@ def create_app(
         name="vendor",
     )
 
+    app.add_middleware(FirstSetupSourceMiddleware)
     app.add_middleware(ResponseHeadersMiddleware)
 
     # JSON 契约、页面脚本与样式是仅有的几类大文本响应，压下去省的字节最多：

@@ -1,0 +1,70 @@
+{
+  "http": {
+    "methodNotAllowed": "This address doesn't accept this kind of request.",
+    "notFound": "There's no page at this address.",
+    "serverError": "Peach couldn't process this. Export a diagnostic report."
+  },
+  "javBrowser": {
+    "notQueued": "This code isn't in the queue."
+  },
+  "release": {
+    "installation": {
+      "docker": "Docker image",
+      "source": "Running from source",
+      "standalone": "Standalone test build"
+    }
+  },
+  "repairCenter": {
+    "history": {
+      "catalog": "Metadata and code cleanup",
+      "dangling-candidates": "Stale review candidates",
+      "follow-evidence-reclaim": "Old follow snapshots removed",
+      "javdb-actor-records": "JavDB links on people pages",
+      "source-resolution-tags": "4K tags from sources",
+      "stale-filename-codes": "Misread codes cleared",
+      "studio-unbounded-misses": "Label lookup cache",
+      "verification-settlement": "Verification differences settled"
+    },
+    "items": {
+      "catalog": {
+        "summary": "Fixes codes, titles, and other automatic metadata under the new rules. Your manual edits are kept.",
+        "title": "Metadata and code cleanup"
+      },
+      "dangling-candidates": {
+        "summary": "Candidates left by deleted assets move to the file's new ID. Ones that don't match are withdrawn.",
+        "title": "Stale review candidates"
+      },
+      "display-cloud": {
+        "summary": "Reads each cloud drive video, which adds cloud drive cache and traffic. Starts after you confirm.",
+        "title": "Cloud drive video dimensions"
+      },
+      "display-local": {
+        "summary": "Rereads file headers of local and LAN videos to fix portrait and landscape detection.",
+        "title": "Local video dimensions"
+      },
+      "follow-evidence": {
+        "summary": "Keeps the 3 most recent raw snapshots of each followed source and any snapshots items still reference. The rest are deleted and can't be restored.",
+        "title": "Old follow snapshots"
+      },
+      "garbled-people": {
+        "summary": "Removes people links left by early garbled scrapes, then fetches performers again.",
+        "title": "Garbled people"
+      },
+      "javdb-entries": {
+        "summary": "Same-name performer pages that match the video credits as censored or uncensored no longer get a link. Subscriptions to them are turned off.",
+        "title": "JavDB links on people pages"
+      },
+      "resolution-tags": {
+        "summary": "A 4K tag on a metadata site means an official 4K release exists, not that this file is 4K. These tags are removed.",
+        "title": "4K tags from sources"
+      },
+      "system-files": {
+        "summary": "Moves NAS system thumbnails, macOS ._ files, and similar extras out of the collection. The files aren't deleted.",
+        "title": "System extras"
+      }
+    }
+  },
+  "setup": {
+    "firstAccessDenied": "Open Peach on the computer running Peach or on the same LAN to finish setup, or set PEACH_ACCESS_PASSWORD when starting the container."
+  }
+}

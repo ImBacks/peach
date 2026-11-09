@@ -13,6 +13,7 @@ import { clampPage, pageCount } from '../../pagination';
 import { selectRange } from '../../selection';
 import { queryClient } from '../query';
 import { localTime } from '../time';
+import { t } from '../../i18n';
 
 export const REVIEW_URL = '/api/review';
 export const REVIEW_DECISION_URL = '/api/review/decision';
@@ -23,15 +24,15 @@ export const REVIEW_KEY = ['review'] as const;
 
 /** 复核分类与它们在界面上的名字。次序就是页签次序。 */
 export const REVIEW_LABELS = {
-  metadata_fields: '元数据字段',
-  creator_tags: '创作者标签',
-  studio_logos: '厂牌 Logo',
-  performer_avatars: '女优头像',
-  western_identity: '西方身份回配',
-  code_creators: '番号目录存疑',
-  fc2_markings: 'FC2 评论标记',
-  fc2_similarity: 'FC2 跨号相似',
-  video_endcards: '片尾/出处证据',
+  metadata_fields: t('manage:reviewQueue.metadataFields'),
+  creator_tags: t('manage:reviewQueue.creatorTags'),
+  code_creators: t('manage:reviewQueue.codeCreators'),
+  western_identity: t('manage:reviewQueue.westernIdentity'),
+  performer_avatars: t('manage:taskSummary.actressAvatars'),
+  studio_logos: t('manage:reviewQueue.studioLogos'),
+  fc2_markings: t('manage:reviewQueue.fc2Markings'),
+  fc2_similarity: t('manage:reviewQueue.fc2Similarity'),
+  video_endcards: t('manage:reviewQueue.videoEndcards'),
 } as const;
 
 export type ReviewCategory = keyof typeof REVIEW_LABELS;
@@ -50,7 +51,7 @@ export const ENTITY_REVIEW_KINDS: Partial<Record<ReviewCategory, string>> = {
   creator_tags: 'creator', western_identity: 'creator',
 };
 
-/** 一页 20 张。接口一次给整条队列，卡的是把几百张候选表单一次画进 DOM。 */
+/** 默认每页 20 张；接口读取整条队列，页面按所选数量挂载候选表单。 */
 export const REVIEW_PAGE_SIZE = 20;
 
 export interface CatalogEvidence { display_value?: string; warnings?: string[] }
@@ -142,10 +143,10 @@ export interface ReviewMirror {
 export const REVIEW_QUEUES = ['pending', 'later', 'ignored'] as const;
 export type ReviewQueue = typeof REVIEW_QUEUES[number];
 export const REVIEW_QUEUE_LABELS: Record<ReviewQueue, string> = {
-  pending: '待处理', later: '稍后处理', ignored: '已忽略',
+  pending: t('manage:reviewQueue.pending'), later: t('manage:reviewQueue.later'), ignored: t('manage:reviewQueue.ignored'),
 };
 export const REVIEW_DECISION_LABELS: Record<string, string> = {
-  approved: '已通过', rejected: '已忽略', skipped: '稍后处理',
+  approved: t('manage:reviewQueue.approved'), rejected: t('manage:reviewQueue.ignored'), skipped: t('manage:reviewQueue.decisionLater'),
 };
 export const reviewQueueOf = (value: unknown): ReviewQueue =>
   value === 'later' || value === 'ignored' ? value : 'pending';
@@ -179,12 +180,12 @@ export interface ReviewGroup { key: string; title: string; rows: ReviewRow[] }
 /** 这一批队列能按什么分组。按来源、按字段两档要队列里真有那一项才出现。 */
 export function reviewGroupingOptions(rows: ReviewRow[], metadata: boolean): [ReviewGrouping, string][] {
   const options: [ReviewGrouping, string][] = [
-    ['candidates', metadata ? '按来源数量' : '不分组'],
+    ['candidates', metadata ? t('manage:reviewQueue.bySourceCount') : t('manage:reviewQueue.noGrouping')],
   ];
   if (rows.some((row) => row.source || row.candidates?.some((candidate) => candidate.source))) {
-    options.push(['source', '按来源']);
+    options.push(['source', t('manage:reviewQueue.bySource')]);
   }
-  if (rows.some((row) => row.field)) options.push(['field', '按字段']);
+  if (rows.some((row) => row.field)) options.push(['field', t('manage:reviewQueue.byField')]);
   return options;
 }
 
@@ -196,15 +197,15 @@ export function groupReviewRows(rows: ReviewRow[], by: ReviewGrouping): ReviewGr
     let title: string;
     if (by === 'field') {
       key = row.field || '__unspecified_field';
-      title = row.field_label || row.field || '未标注字段';
+      title = row.field_label || row.field || t('manage:reviewQueue.unspecifiedField');
     } else if (by === 'source') {
       const sources = [...new Set((row.candidates?.map((candidate) => candidate.source || '')
         || [row.source || '']).filter(Boolean))].sort();
       key = JSON.stringify(sources);
-      title = sources.join(' / ') || '未标注来源';
+      title = sources.join(' / ') || t('manage:reviewQueue.unspecifiedSource');
     } else {
       key = row.candidates ? (row.candidates.length === 1 ? 'single' : 'multiple') : 'pending';
-      title = key === 'single' ? '单一来源' : key === 'multiple' ? '需选择来源' : '资料';
+      title = key === 'single' ? t('manage:reviewQueue.singleSource') : key === 'multiple' ? t('manage:reviewQueue.chooseSource') : t('manage:scanFetch.slowWhatMetadata');
     }
     if (!groups.has(key)) groups.set(key, { key, title, rows: [] });
     groups.get(key)!.rows.push(row);
@@ -222,14 +223,14 @@ export function filterReviewRows(
 
 export interface ReviewWindow { page: number; pages: number; rows: ReviewRow[] }
 
-/** 当前这一页是哪二十行。页码越界时收回到最后一页，不画空列表。 */
-export function reviewWindow(rows: ReviewRow[], page: number): ReviewWindow {
-  const pages = pageCount(rows.length, REVIEW_PAGE_SIZE);
+/** 按每页数量切片，页码越界时收回到最后一页。 */
+export function reviewWindow(rows: ReviewRow[], page: number, pageSize = REVIEW_PAGE_SIZE): ReviewWindow {
+  const pages = pageCount(rows.length, pageSize);
   const current = clampPage(page, pages);
   return {
     page: current,
     pages,
-    rows: rows.slice((current - 1) * REVIEW_PAGE_SIZE, current * REVIEW_PAGE_SIZE),
+    rows: rows.slice((current - 1) * pageSize, current * pageSize),
   };
 }
 
@@ -322,7 +323,7 @@ export function decisionPayload(
 }
 
 export const decisionReceipt = (status: DecisionStatus): string => ({
-  approved: '已通过资料', rejected: '已忽略资料', skipped: '已移至稍后处理', restore: '已恢复待处理',
+  approved: t('manage:reviewQueue.receiptApproved'), rejected: t('manage:reviewQueue.receiptIgnored'), skipped: t('manage:reviewQueue.receiptLater'), restore: t('manage:reviewQueue.receiptPending'),
 })[status];
 
 /* ── 取数与写操作 ── */
@@ -331,7 +332,7 @@ export async function fetchReview(signal?: AbortSignal): Promise<ReviewData> {
   const data = await apiGet<ReviewData>(REVIEW_URL, signal);
   for (const key of ['later', 'ignored'] as const) {
     if (!data.queues?.[key]?.sections || !data.queues[key].counts) {
-      throw new Error(`${REVIEW_QUEUE_LABELS[key]}状态未取得，请刷新或更新写入端`);
+      throw new Error(t(key === 'later' ? 'manage:reviewQueue.laterStatusNotFound' : 'manage:reviewQueue.ignoredStatusNotFound'));
     }
   }
   return data;
@@ -418,7 +419,7 @@ export const reloadReview = (): Promise<void> =>
 export function mirrorText(
   mirror: ReviewMirror | null | undefined, readOnlyMessage: string,
 ): string {
-  if (mirror?.state === 'live') return '正在显示写入端的实时复核队列';
-  if (mirror?.state === 'cached') return `写入端暂时不可达，显示 ${localTime(mirror.fetched_at)} 的缓存`;
+  if (mirror?.state === 'live') return t('manage:reviewQueue.mirrorLive');
+  if (mirror?.state === 'cached') return t('manage:reviewQueue.mirrorCached', { time: localTime(mirror.fetched_at) });
   return mirror?.error || readOnlyMessage;
 }

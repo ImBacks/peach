@@ -2,11 +2,12 @@
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../api';
+import { t } from '../i18n';
 
 export interface NetworkStatus { state: 'checking' | 'online' | 'offline' | 'unknown'; checked_at: number | null }
 
 export const NETWORK_STATUS_KEY = ['network-status'] as const;
-export const NETWORK_OFFLINE_TEXT = 'Peach 连不上外网，资料采集、关注更新和在线来源暂不可用；本机媒体照常浏览和播放。';
+export const NETWORK_OFFLINE_TEXT = t('shell:networkBanner.offline');
 
 /** 服务端联网时十分钟才复查一次，断网或刚开始探测时一分钟一次；页面跟着它的节奏读。 */
 export function networkPollInterval(data?: NetworkStatus): number {
@@ -25,7 +26,7 @@ export function NetworkBanner() {
   return createPortal(
     <aside className="ui-project-banner ui-project-banner-warning" role="status" data-network-offline="">
       <div><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert" /></svg><p>{NETWORK_OFFLINE_TEXT}</p></div>
-      <a href="/settings/network#peachProxy">检查 Peach 代理</a>
+      <a href="/settings/network#peachProxy">{t('shell:networkBanner.checkProxy')}</a>
     </aside>,
     host,
   );

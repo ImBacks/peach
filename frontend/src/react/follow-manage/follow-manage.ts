@@ -20,6 +20,7 @@ import {
 import { clampPage, pageCount } from '../../pagination';
 import { queryClient } from '../query';
 import { localTime } from '../time';
+import { t } from '../../i18n';
 
 export const FOLLOW_URL = '/api/follow';
 export const FOLLOW_CREDENTIALS_URL = '/api/follow/credentials';
@@ -188,7 +189,7 @@ export interface SuggestData { q: string; groups: SuggestGroup[] }
 /* ── 视图与排序的取值 ── */
 
 /** 两种视图共用同一份来源集合、创作者顺序与勾选；表格视图一行一条来源。 */
-export const LAYOUTS = [['default', '默认视图'], ['table', '表格视图']] as const;
+export const LAYOUTS = [['default', t('follow:followLayout.default')], ['table', t('follow:followLayout.table')]] as const;
 export type Layout = (typeof LAYOUTS)[number][0];
 
 export const PAGE_SIZES = [10, 20, 50, 100] as const;
@@ -196,8 +197,6 @@ export const DEFAULT_PAGE_SIZE = 20;
 
 /* 排序维度与默认方向和首屏骨架共用一份，见 `frontend/src/follow-sort.ts`。 */
 export { DEFAULT_SORT, isSortKey, SORT_DEFAULT_DIR, SORT_OPTIONS, type SortDir, type SortKey };
-
-const SORT_LABELS: Record<SortKey, string> = Object.fromEntries(SORT_OPTIONS) as Record<SortKey, string>;
 
 /** 表格五列各自对应工具栏里的哪一档排序。列头点的就是同一个状态。 */
 export const COLUMN_SORT = {
@@ -210,18 +209,18 @@ export const isLayout = (value: unknown): value is Layout =>
 export const pageSizeOf = (value: unknown): number =>
   (PAGE_SIZES as readonly number[]).includes(Number(value)) ? Number(value) : DEFAULT_PAGE_SIZE;
 
-/** 方向词按维度各说各的：时间说远近、数量说多少，「正序」对一个时间戳不成立。
+/** 方向按维度各说各的：时间说远近、数量说多少，「正序」对一个时间戳不成立。每格是一整句无障碍名称。
  *  第一项是从升序点下去会得到的那一头，第二项是它的反面。 */
-const SORT_DIR_WORDS: Record<SortKey, readonly [string, string]> = {
-  checked: ['从近到远', '从远到近'], added: ['从近到远', '从远到近'],
-  name: ['倒序', '正序'], sources: ['从多到少', '从少到多'],
-  source: ['倒序', '正序'], provider: ['倒序', '正序'], status: ['倒序', '正序'],
+const SORT_ARIA: Record<SortKey, readonly [string, string]> = {
+  checked: [t('follow:manageSort.aria.checkedNewest'), t('follow:manageSort.aria.checkedOldest')], added: [t('follow:manageSort.aria.addedNewest'), t('follow:manageSort.aria.addedOldest')],
+  name: [t('follow:manageSort.aria.nameDesc'), t('follow:manageSort.aria.nameAsc')], sources: [t('follow:manageSort.aria.sourcesMost'), t('follow:manageSort.aria.sourcesFewest')],
+  source: [t('follow:manageSort.aria.sourceDesc'), t('follow:manageSort.aria.sourceAsc')], provider: [t('follow:manageSort.aria.providerDesc'), t('follow:manageSort.aria.providerAsc')],
+  status: [t('follow:manageSort.aria.statusDesc'), t('follow:manageSort.aria.statusAsc')],
 };
 
 /** 方向按钮的无障碍名称：说的是点下去会得到什么，所以取反方向的词。照抄当前方向，
  *  读屏那边会以为点下去还是这个顺序。 */
-export const sortLabel = (sort: SortKey, dir: SortDir): string =>
-  `按${SORT_LABELS[sort]}${SORT_DIR_WORDS[sort][dir === 'asc' ? 0 : 1]}排序`;
+export const sortLabel = (sort: SortKey, dir: SortDir): string => SORT_ARIA[sort][dir === 'asc' ? 0 : 1];
 
 /* ── 分组、排序、分页 ── */
 
@@ -235,10 +234,10 @@ export function statusRank(source: FollowSource): number {
 
 /** 这一条此刻是什么状态。四种写法对应四种徽章。 */
 export function statusText(source: FollowSource): string {
-  if (source.history_exhausted) return '没有更多';
-  if (!source.enabled) return '已暂停';
-  if (source.last_status === 'ok') return '正常';
-  return source.last_status === 'error' || source.last_status === 'unauthorized' ? '检查失败' : '未检查';
+  if (source.history_exhausted) return t('follow:sourceStatus.noMore');
+  if (!source.enabled) return t('follow:shared.paused');
+  if (source.last_status === 'ok') return t('follow:shared.ok');
+  return source.last_status === 'error' || source.last_status === 'unauthorized' ? t('follow:followCheck.checkFailed') : t('follow:feedSources.notChecked');
 }
 
 export const isBroken = (source: FollowSource): boolean =>
@@ -247,9 +246,9 @@ export const isBroken = (source: FollowSource): boolean =>
 /** 订阅源的拉取频率：一小时以内按分钟，两天以内按小时，再长按天。 */
 export function feedIntervalText(minutes: number): string {
   const value = Number(minutes) || 0;
-  if (value >= 2880) return `每 ${Math.round(value / 1440).toLocaleString()} 天`;
-  if (value >= 60) return `每 ${Math.round(value / 60)} 小时`;
-  return `每 ${value} 分钟`;
+  if (value >= 2880) return t('follow:feedInterval.days', { count: Math.round(value / 1440) });
+  if (value >= 60) return t('follow:feedInterval.hours', { count: Math.round(value / 60) });
+  return t('follow:feedInterval.minutes', { count: value });
 }
 
 /** 一段报错在列表里只露的那一行。Python traceback 的第一行永远是「Traceback (most recent call
@@ -474,13 +473,46 @@ export const renameAliasGroup = (key: string, name: string, signal?: AbortSignal
 export const saveCredential = (provider: string, values: Record<string, string>) =>
   apiSend<{ note?: string }>(FOLLOW_CREDENTIAL_URL, { provider, values });
 
-export const markItem = (item: number, to: string) =>
-  apiSend<{ ok: boolean }>(FOLLOW_STATUS_URL, { item, to });
+/** 一次批量写最多几条，与 `w_follow_status` 收 `items` 的上限相同；一页待处理也最多这么多组。 */
+export const MARK_BATCH = 1000;
+/** 「全部标为」最多取几轮待处理清单：一轮最多标 `MARK_BATCH` 组，十万条以上的积压不在一次点击里收完。 */
+const MARK_ROUNDS = 100;
 
-/** 待处理的未看条目。批量标记要先知道有哪些，取一趟再逐条写。 */
+export const markItems = (items: number[], to: string) =>
+  apiSend<{ ok: boolean; items: number[] }>(FOLLOW_STATUS_URL, { items, to });
+
+type PendingRow = { id: number; status: string };
+/** 待处理的未看条目，最多 `MARK_BATCH` 组；`has_more` 说后面还有。 */
 export const fetchPending = () =>
-  apiGet<{ groups?: { primary: { id: number; status: string }; variants: { id: number; status: string }[];
-    duplicates: { id: number; status: string }[] }[] }>(`${FOLLOW_URL}?status=new&limit=1000`);
+  apiGet<{ groups?: { primary: PendingRow; variants: PendingRow[]; duplicates: PendingRow[] }[]; has_more?: boolean }>(
+    `${FOLLOW_URL}?status=new&limit=${MARK_BATCH}`);
+
+/** 把未看条目全部标成 `to`：取一页待处理、按 `MARK_BATCH` 条一批写，写完再从第一页取，直到取不到为止。
+ *  标过的离开 `status=new`，所以不按偏移翻页；写失败的那批不再重取，免得一直撞同一个错。 */
+export async function markAllPending(to: string): Promise<{ total: number; failed: number; error?: unknown }> {
+  const tried = new Set<number>();
+  let failed = 0;
+  let error: unknown;
+  for (let round = 0; round < MARK_ROUNDS; round += 1) {
+    const pending = await fetchPending();
+    const ids = [...new Set((pending.groups || [])
+      .flatMap((group) => [group.primary, ...group.variants, ...group.duplicates])
+      .filter((item) => item.status === 'new' && !tried.has(item.id)).map((item) => item.id))];
+    if (!ids.length) break;
+    for (let start = 0; start < ids.length; start += MARK_BATCH) {
+      const batch = ids.slice(start, start + MARK_BATCH);
+      for (const id of batch) tried.add(id);
+      try {
+        await markItems(batch, to);
+      } catch (cause) {
+        failed += batch.length;
+        error ??= cause;
+      }
+    }
+    if (!pending.has_more) break;
+  }
+  return { total: tried.size, failed, error };
+}
 
 /** 一条订阅源。字段以 `feeds.sources`（`src/peach/feeds.py`）为准。 */
 export interface FeedSource {
@@ -515,7 +547,7 @@ export interface FeedsData {
 /** 认不出的响应当读失败：没有 sources 的那份不是订阅源的数据，画出来只会在第一次取长度时炸掉。 */
 export async function fetchFeeds(signal?: AbortSignal): Promise<FeedsData> {
   const payload = await apiGet<FeedsData>(FEEDS_URL, signal);
-  if (!Array.isArray(payload?.sources)) throw new Error('没有读到订阅源');
+  if (!Array.isArray(payload?.sources)) throw new Error(t('follow:feedSources.readFailed'));
   return payload;
 }
 
@@ -550,8 +582,11 @@ export interface FeedLookup {
   candidates: FeedCandidate[];
   /** 名字对得上、又只有一个人的那几张，先替用户勾上；同名不止一位时是空的。 */
   suggested: string[];
-  /** 数据库里按这个名字认得出的那位；认不出是 null，登记时会新建。 */
-  known: { id: number; name: string } | null;
+  /** 数据库里按这个名字认得出的那位；认不出是 null，登记时会新建。`subscribable` 是她已有
+   *  JavDB 演员页或 DMM 编号、不经搜索就能订，`following` 是已经在订。 */
+  known: { id: number; name: string; subscribable: boolean; following: boolean } | null;
+  /** JavDB 这一趟没搜成的原因；只在库里的她能直接订时随结果一起回来，否则整次查找报错。 */
+  unavailable?: string;
 }
 
 export const lookupFeedActor = (name: string, signal?: AbortSignal) =>
@@ -569,16 +604,19 @@ export interface FeedFollowed {
 export const followFeedByName = (name: string, ids: string[], signal?: AbortSignal) =>
   apiSend<FeedFollowed>(FEED_SOURCE_URL, { action: 'follow-name', name, ids }, 'POST', signal);
 
-/** 首屏：创作者来源、JAV 订阅与凭据状态取回来才画。
+/** 按库里认出的这位直接订，和人物页「订阅新作」开关同一个动作。 */
+export const followFeedEntity = (entityId: number, signal?: AbortSignal) =>
+  apiSend<{ entity_id: number; following: boolean; sources: number[] }>(
+    FEED_SOURCE_URL, { action: 'follow', entity_id: entityId, enabled: true }, 'POST', signal);
+
+/** 创作者来源、JAV 订阅与凭据分别读取，页面按各区域的状态显示。
  *
  * 两趟后台任务不在首屏里：它们的快照常年躺着上一趟的回执，等它们只会让首屏多等一个
  * 往返，而它们自己的键挂上去就会读。中止时 `fetchQuery` 把 `AbortError` 抛回挂载方。 */
 export async function prefetchFollowManage(signal: AbortSignal): Promise<void> {
-  await Promise.all([
-    queryClient.fetchQuery({ queryKey: FOLLOW_MANAGE_KEY, queryFn: () => fetchFollow(signal) }),
-    queryClient.fetchQuery({ queryKey: FOLLOW_CREDENTIALS_KEY, queryFn: () => fetchCredentials(signal) }),
-    queryClient.fetchQuery({ queryKey: FEEDS_KEY, queryFn: () => fetchFeeds(signal) }),
-  ]);
+  void queryClient.prefetchQuery({ queryKey: FOLLOW_CREDENTIALS_KEY, queryFn: () => fetchCredentials(signal) });
+  void queryClient.prefetchQuery({ queryKey: FEEDS_KEY, queryFn: () => fetchFeeds(signal) });
+  void queryClient.prefetchQuery({ queryKey: FOLLOW_MANAGE_KEY, queryFn: () => fetchFollow(signal) });
 }
 
 /** 把改动的那一条换进缓存。整页重取会把用户正在填的表单一起重画，也会让正在读这一屏的
@@ -616,12 +654,12 @@ export function checkReceipt(job: Pick<CheckJob, 'results'>): string {
   const updated = rows.reduce((total, row) => total + (row.updated || 0), 0);
   const failed = rows.filter((row) => !row.ok).length;
   const bits: string[] = [];
-  if (added) bits.push(`新增 ${added} 条`);
-  if (updated) bits.push(`更新 ${updated} 条`);
-  if (!bits.length && failed < rows.length) bits.push('没有更新');
-  if (failed) bits.push(`${failed} 个失败`);
-  if (!bits.length) bits.push('没有更新');
-  return `已检查 ${rows.length} 个来源：${bits.join(' · ')}`;
+  if (added) bits.push(t('follow:checkSummary.added', { count: added }));
+  if (updated) bits.push(t('follow:checkSummary.updated', { count: updated }));
+  if (!bits.length && failed < rows.length) bits.push(t('follow:checkSummary.noUpdates'));
+  if (failed) bits.push(t('follow:shared.failedCount', { count: failed }));
+  if (!bits.length) bits.push(t('follow:checkSummary.noUpdates'));
+  return t('follow:checkSummary.receipt', { count: rows.length, details: bits.join(' · ') });
 }
 
 /** 一次检查的完整统计。 */
@@ -638,19 +676,19 @@ export function checkSummary(job: CheckJob): string {
   const quiet = rows.filter((row) => row.ok && !row.added && !row.updated).length;
   const failed = rows.filter((row) => !row.ok).length;
   const bits: string[] = [];
-  if (added) bits.push(`新增 ${added} 条`);
-  if (updated) bits.push(`更新 ${updated} 条`);
-  if (skipped) bits.push(`跳过 ${skipped} 条无资源`);
-  if (compilations) bits.push(`排除 ${compilations} 个超大合集`);
-  if (history) bits.push(`跳过 ${history} 条超出首次采集范围的历史内容`);
-  if (probed) bits.push(`回查 ${probed} 条`);
-  if (quiet) bits.push(`${quiet} 个来源没有更新`);
-  if (!bits.length) bits.push('没有任何更新');
+  if (added) bits.push(t('follow:checkSummary.added', { count: added }));
+  if (updated) bits.push(t('follow:checkSummary.updated', { count: updated }));
+  if (skipped) bits.push(t('follow:checkSummary.skippedNoResource', { count: skipped }));
+  if (compilations) bits.push(t('follow:checkSummary.compilationsExcluded', { count: compilations }));
+  if (history) bits.push(t('follow:checkSummary.historySkipped', { count: history }));
+  if (probed) bits.push(t('follow:checkSummary.probed', { count: probed }));
+  if (quiet) bits.push(t('follow:checkSummary.quietSources', { count: quiet }));
+  if (!bits.length) bits.push(t('follow:checkSummary.nothingChanged'));
   /* 来源没有更多内容与本次没有更新分别计数。 */
   const exhausted = rows.filter((row) => row.exhausted).length;
-  if (exhausted) bits.push(`${exhausted} 个没有更多内容`);
-  if (failed) bits.push(`${failed} 个失败`);
-  return `检查了 ${rows.length} 个来源：${bits.join(' · ')}`;
+  if (exhausted) bits.push(t('follow:checkSummary.exhausted', { count: exhausted }));
+  if (failed) bits.push(t('follow:shared.failedCount', { count: failed }));
+  return t('follow:checkSummary.summary', { count: rows.length, details: bits.join(' · ') });
 }
 
 /** 页内持久行只装要处理的东西：失败与取证缺档。全部成功时没有这一行。 */
@@ -663,7 +701,7 @@ export const checkEvidenceGap = (job: CheckJob | null): string =>
 export { localTime };
 
 export const checkedText = (source: FollowSource): string =>
-  (source.last_checked_at ? localTime(source.last_checked_at) : '未检查');
+  (source.last_checked_at ? localTime(source.last_checked_at) : t('follow:feedSources.notChecked'));
 
 /** 有站点图标的来源。图标由服务端按 `follow_assets.SOURCE_ICON_URLS` 取回并存在本机，
  *  页面只认这份名单：没登记的来源直接不出 `<img>`。 */
@@ -677,7 +715,7 @@ export const sourceIconUrl = (provider: string): string =>
 
 /** 四种凭据状态四种说法：待办（缺凭据）和完成（已配置）不能同色，那正是要一眼分开的两件事。 */
 export const CREDENTIAL_STATE: Record<string, string> = {
-  required: '需要', optional: '可选', none: '不需要', blocked: '暂时无法连接',
+  required: t('follow:credentialState.required'), optional: t('follow:credentialState.optional'), none: t('follow:credentialState.none'), blocked: t('follow:credentialState.blocked'),
 };
 
 export const credentialDone = (row: CredentialRow): boolean =>

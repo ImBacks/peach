@@ -11,7 +11,7 @@ import { actionOrder, buttonNamed, choose, click, fetchMock, mount, section, sen
 
 const automatic = { mode: 'off', interval_hours: 24, available: true, download_available: true };
 const release: ReleaseState = {
-  current_version: '0.9.0', latest_version: null, channel: '测试版', installation: '独立测试包', in_app_update: true,
+  current_version: '0.9.0', latest_version: null, channel: '测试版', installation: '独立测试包', installation_code: 'standalone', in_app_update: true,
   state: 'unchecked', message: '尚未检查', release_url: 'https://github.com/peach-mitao/peach/releases',
 };
 const uninstall = { available: true, full_available: true, message: '', data_root: 'fixture', directories: ['fixture', 'fixture/cache'] };
@@ -33,6 +33,26 @@ it('分区依次是运行信息、新手教程、卸载；缺依赖的运行信�
   const link = facts.querySelector('a[href="https://ffmpeg.org/download.html"]');
   expect(link?.getAttribute('target')).toBe('_blank');
   expect(link?.textContent).toBe('下载 FFmpeg');
+});
+
+it('能装的缺失工具给「安装」，装完用服务端回的运行信息换掉那一行并回执', async () => {
+  const data: ConfigurationData = {
+    editable: true, notice: '', revision: 'r', media_dirs: [], library_count: 0, port: 9123,
+    facts: [{ term: 'untrunc', value: '未安装；缺索引的 MP4 需要它才修得了。', install_tool: 'untrunc' }],
+  };
+  const fetcher = fetchMock(200, { message: '已安装 untrunc（9d86ec9）', facts: [{ term: 'untrunc', value: '已安装，版本 9d86ec9' }] });
+  vi.stubGlobal('fetch', fetcher);
+  const receipt = vi.fn();
+  const host = await mount(<MaintenanceSettings data={data} receipt={receipt} reopenTutorial={vi.fn()} />);
+  const facts = section(host, '运行信息')!;
+  expect(facts.querySelector('a[target="_blank"]')).toBeNull();
+  await click(buttonNamed('安装', facts));
+  await settle();
+  expect(fetcher.mock.calls[0]?.[0]).toBe('/api/configuration/media-tools');
+  expect(sentBody(fetcher)).toEqual({ tool: 'untrunc' });
+  expect(facts.querySelector('dd')?.textContent).toBe('已安装，版本 9d86ec9');
+  expect(buttonNamed('安装', facts)).toBeNull();
+  expect(receipt).toHaveBeenCalledWith('已安装 untrunc（9d86ec9）');
 });
 
 describe('自动更新', () => {
@@ -118,7 +138,7 @@ describe('检查更新', () => {
     expect(updates.textContent).toContain('最新版本0.10.0');
     expect(updates.querySelector('[role="status"]')?.textContent).toContain('有可用更新');
     expect(buttonNamed('下载并安装', updates)).not.toBeNull();
-    expect(actionOrder(check.parentElement)).toEqual(['官网', 'GitHub', '查看发布页', '检查更新', '下载并安装']);
+    expect(actionOrder(check.parentElement)).toEqual(['官网', 'GitHub', '查看发布页', '本版更新说明', '检查更新', '下载并安装']);
     expect([...updates.querySelectorAll('a')].map((link) => [link.textContent, link.getAttribute('href')]))
       .toEqual([
         ['官网', 'https://peach.video/#download'],
@@ -145,6 +165,20 @@ describe('检查更新', () => {
     expect(buttonNamed('下载并安装', updates)).toBeNull();
     const link = [...updates.querySelectorAll('a')].find((a) => a.textContent === '下载新版本');
     expect(link?.getAttribute('href')).toBe(dmg);
+  });
+
+  it('Docker 镜像有新版时列出宿主机上的两步命令，不给下载或安装键', async () => {
+    const steps = [{ text: '拉取新镜像', command: 'docker compose pull' }, { text: '重建容器', command: 'docker compose up -d' }];
+    const docker = { ...release, installation: 'Docker 镜像', installation_code: 'docker' as const, in_app_update: false, steps };
+    const host = await mount(<ReleaseUpdates initial={{ ...docker, state: 'available', latest_version: '1.0.0', message: '有新镜像可拉取。' }} />);
+    const updates = section(host, '检查更新')!;
+    expect(updates.textContent).toContain('Docker 镜像');
+    const list = updates.querySelector('ol[aria-label="在宿主机上更新"]');
+    expect([...list!.querySelectorAll('code')].map((code) => code.textContent)).toEqual(['docker compose pull', 'docker compose up -d']);
+    expect(buttonNamed('下载并安装', updates)).toBeNull();
+    expect([...updates.querySelectorAll('a')].some((a) => a.textContent === '下载新版本')).toBe(false);
+    const current = await mount(<ReleaseUpdates initial={{ ...docker, state: 'current', latest_version: '0.9.0', message: '已是最新测试版。' }} />);
+    expect(current.querySelector('ol[aria-label="在宿主机上更新"]')).toBeNull();
   });
 
   it('已是最新就不再提示可用更新，也不给安装键', async () => {

@@ -129,20 +129,86 @@ def append(root: Path, *, scope: str, files: list[str], rows: list[dict],
     if folder is None and _running:
         return None
     try:
-        folder = history_dir(root) if folder is None else folder
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{time.strftime('%Y-%m')}.jsonl"
         header = run_header(root, scope, files, len(rows))
-        lines = [json.dumps(header, ensure_ascii=False)]
-        lines += [json.dumps({"type": "test", "run": header["run"], **row}, ensure_ascii=False)
-                  for row in kept(rows)]
-        with FileLock(path.with_suffix(".lock"), timeout=30):
-            with path.open("a", encoding="utf-8", newline="\n") as stream:
-                stream.write("\n".join(lines) + "\n")
-        return path
+        return _write(root, folder, [header, *({"type": "test", "run": header["run"], **row} for row in kept(rows))])
     except (OSError, ValueError, Timeout, subprocess.CalledProcessError) as error:
         print(f"测试结果历史没有写入（不影响本次判定）：{error}", file=sys.stderr, flush=True)
         return None
+
+
+def append_flaky(root: Path, selectors: list[str], folder: Path | None = None) -> Path | None:
+    """记一次偶发：失败后单独重跑通过的文件。一行 `type: flaky`，供 `flaky` 子命令排行。"""
+    if folder is None and _running:
+        return None
+    try:
+        header = run_header(root, "flaky", [], len(selectors))
+        line = {key: header[key] for key in ("time", "head", "branch", "worktree", "ci")}
+        return _write(root, folder, [{"type": "flaky", **line, "selectors": sorted(selectors)}])
+    except (OSError, ValueError, Timeout, subprocess.CalledProcessError) as error:
+        print(f"偶发记录没有写入（不影响本次判定）：{error}", file=sys.stderr, flush=True)
+        return None
+
+
+def _write(root: Path, folder: Path | None, records: list[dict]) -> Path:
+    folder = history_dir(root) if folder is None else folder
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{time.strftime('%Y-%m')}.jsonl"
+    lines = [json.dumps(record, ensure_ascii=False) for record in records]
+    with FileLock(path.with_suffix(".lock"), timeout=30):
+        with path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write("\n".join(lines) + "\n")
+    return path
+
+
+def flaky_ranking(records, *, since: str = "") -> list[dict]:
+    """按偶发次数排行：同一文件反复出现，说明它的等待写法或时限要修（docs/TESTING.md）。"""
+    ranks: dict[str, dict] = {}
+    for record in records:
+        if record.get("type") != "flaky" or str(record.get("time", "")) < since:
+            continue
+        for selector in record.get("selectors", ()):
+            rank = ranks.setdefault(selector, {"selector": selector, "count": 0, "ci": 0,
+                                               "days": set(), "branches": set(), "last": ""})
+            rank["count"] += 1
+            rank["ci"] += bool(record.get("ci"))
+            rank["days"].add(str(record.get("time", ""))[:10])
+            rank["branches"].add(record.get("branch") or "")
+            rank["last"] = max(rank["last"], str(record.get("time", "")))
+    rows = [{**rank, "days": len(rank["days"]), "branches": len(rank["branches"])} for rank in ranks.values()]
+    return sorted(rows, key=lambda row: (-row["count"], -row["days"], row["selector"]))
+
+
+def read_records(folders: list[Path]):
+    for folder in folders:
+        for path in sorted(folder.rglob("*.jsonl")):
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="测试结果历史的统计")
+    commands = parser.add_subparsers(dest="command", required=True)
+    flaky = commands.add_parser("flaky", help="按偶发次数排行失败后单独重跑通过的文件")
+    flaky.add_argument("--days", type=int, default=30, help="只看最近几天，默认 30")
+    flaky.add_argument("--folder", type=Path, action="append",
+                       help="另读的历史目录，可重复（如下载的 CI 制品）；默认读本机历史")
+    args = parser.parse_args(argv)
+    root = Path(__file__).resolve().parents[1]
+    folders = args.folder or [history_dir(root)]
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - args.days * 86400))
+    rows = flaky_ranking(read_records(folders), since=since)
+    if not rows:
+        print(f"最近 {args.days} 天没有偶发记录。")
+        return 0
+    print("次数\tCI\t天数\t分支\t最近\t文件")
+    for row in rows:
+        print(f"{row['count']}\t{row['ci']}\t{row['days']}\t{row['branches']}\t{row['last'][:16]}\t{row['selector']}")
+    return 0
 
 
 def vitest_rows(report: dict, frontend: Path) -> list[dict]:
@@ -220,3 +286,7 @@ def tap_rows(path: str, output: str) -> list[dict]:
         outcome = "skip" if match["skip"] else ("fail" if match["not"] else "pass")
         rows.append(result(" > ".join(["e2e:" + path, *parents, match["name"]]), outcome, seconds, message))
     return rows
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

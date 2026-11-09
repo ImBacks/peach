@@ -1,4 +1,5 @@
 import { apiGet } from '../../api';
+import { t } from '../../i18n';
 
 export interface MediaFolder {
   id: string; location: string; path: string; name: string; parent: string | null; root: string;
@@ -17,7 +18,7 @@ export interface FolderPage {
 }
 export interface FolderScope { loc?: string; library?: string }
 export const PURPOSES: Record<FolderPurpose, string> = {
-  category: '个人分类', creator: '创作者／账号', performer: '人物', seller: '卖家', studio: '厂牌',
+  category: t('catalog:folderRule.purposeCategory'), creator: t('catalog:folderRule.purposeCreator'), performer: t('catalog:folderRule.purposePeople'), seller: t('catalog:shared.sellers'), studio: t('catalog:shared.label'),
 };
 export function folderQuery(scope: FolderScope, folder = '', search = '') {
   const query = new URLSearchParams({ ...scope, folder, ...(search ? { q: search } : {}) });

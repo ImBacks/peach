@@ -4,6 +4,7 @@
  * 首屏两份一起取，卡片挂上去直接读缓存。 */
 import { apiGet } from '../../api';
 import { queryClient } from '../query';
+import { t } from '../../i18n';
 
 export const MEDIA_REPAIR_URL = '/api/media-repair';
 export const MEDIA_REPAIR_KEY = ['media-repair'] as const;
@@ -43,30 +44,31 @@ export const fetchRepairLibraries = async (signal?: AbortSignal) =>
   (await apiGet<{ libraries?: RepairLibrary[] }>('/api/libraries', signal)).libraries || [];
 
 export async function prefetchMediaRepair(signal: AbortSignal): Promise<void> {
-  await Promise.all([
-    queryClient.fetchQuery({ queryKey: MEDIA_REPAIR_KEY, queryFn: () => fetchMediaRepair(signal) }),
-    queryClient.fetchQuery({ queryKey: REPAIR_LIBRARIES_KEY, queryFn: () => fetchRepairLibraries(signal) }),
-  ]);
+  void queryClient.prefetchQuery({ queryKey: REPAIR_LIBRARIES_KEY, queryFn: () => fetchRepairLibraries(signal) });
+  await queryClient.fetchQuery({ queryKey: MEDIA_REPAIR_KEY, queryFn: () => fetchMediaRepair(signal) });
 }
 
 const count = (value: number) => Number(value).toLocaleString();
+/* 服务端 `stage` 是中文阶段名，显示时换成译文；认不出的原样显示。 */
+const SCAN_STAGE = '扫描', REPAIR_STAGE = '修复'; // i18n-exempt: 服务端返回的阶段值
+const STAGE_LABELS: Record<string, string> = { [SCAN_STAGE]: t('cleanup:mediaRepair.scanStage'), [REPAIR_STAGE]: t('cleanup:mediaRepair.repairStage') };
 
 /** 一句话说清此刻在干什么：扫描报进度，修复报进度加当前这部片。 */
 export function statusLine(state: MediaRepairState): string {
   if (state.status === 'running') {
     // 服务端偶尔报出超过总数的已查数，按总数封顶。
-    const where = state.total ? `${count(Math.min(state.checked || 0, state.total))} / ${count(state.total)}` : '准备中';
-    return state.stage === '修复' && state.message
-      ? `修复 ${where} · ${state.message}`
-      : `${state.stage || '扫描'} ${where}`;
+    const where = state.total ? `${count(Math.min(state.checked || 0, state.total))} / ${count(state.total)}` : t('cleanup:mediaRepair.preparing');
+    return state.stage === REPAIR_STAGE && state.message
+      ? t('cleanup:mediaRepair.repairingProgress', { progress: where, name: state.message })
+      : t('cleanup:mediaRepair.stageProgress', { stage: STAGE_LABELS[state.stage || SCAN_STAGE] ?? state.stage, progress: where });
   }
   if (state.status === 'complete' && (state.repaired || state.failed)) {
     return state.failed
-      ? `修好 ${count(state.repaired)} 部，${count(state.failed)} 部修不了`
-      : `修好 ${count(state.repaired)} 部`;
+      ? t('cleanup:mediaRepair.repairedWithFailures', { count: Number(state.repaired || 0), failed: Number(state.failed) })
+      : t('cleanup:mediaRepair.repairedDone', { count: Number(state.repaired || 0) });
   }
   return '';
 }
 
 export const missingToolText = (state: MediaRepairState) =>
-  `${count(state.missing_tool)} 部缺索引的片子要装上 untrunc 才修得了，下载入口在配置页的「运行信息」里。`;
+  t('cleanup:mediaRepair.missingToolNotice', { count: Number(state.missing_tool || 0) });

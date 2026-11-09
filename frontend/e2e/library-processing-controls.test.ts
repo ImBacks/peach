@@ -181,10 +181,10 @@ describe('扫描与采集控制', () => {
         assert.equal(await menu.getByRole('button').count(), 7);
         assert.equal(await menu.getByRole('group', { name: '日常同步', exact: true }).getByRole('button').count(), 2);
         assert.equal(await menu.getByRole('group', { name: '全库维护', exact: true }).getByRole('button').count(), 5);
-        for (const label of ['仅发现新增文件', '补全待处理影片', '同步整个媒体库', '仅扫描文件', '补全资料与预览', '仅补全影片资料', '仅补全预览图']) {
+        for (const label of ['仅发现新增文件', '补全待处理影片', '同步所有媒体库', '仅扫描文件', '补全资料与预览', '仅补全影片资料', '仅补全预览图']) {
           await menu.getByText(label, { exact: true }).waitFor();
         }
-        await menu.getByText('为已入库的本地视频生成九宫格', { exact: true }).waitFor();
+        await menu.getByText('为已入库的视频生成九宫格，跳过流量保护目录', { exact: true }).waitFor();
         await menu.screenshot({ path: path.join(artifacts, `${viewport.name}-processing-menu.png`) });
         await menu.press('Escape');
         await card.getByRole('button', { name: '同步新增文件', exact: true }).click();
@@ -284,7 +284,7 @@ describe('扫描与采集控制', () => {
         assert.equal(await pause.innerText(), '');
         assert.equal(await pause.locator('svg').count(), 1);
         await dock.getByRole('button', { name: '暂停', exact: true }).click();
-        await dock.getByText('正在暂停，当前步骤结束后暂停', { exact: true }).waitFor();
+        await dock.getByText('当前步骤结束后暂停', { exact: true }).waitFor();
         state.status = 'paused';
         const resume = dock.getByRole('button', { name: '继续', exact: true });
         await resume.waitFor();
@@ -302,7 +302,7 @@ describe('扫描与采集控制', () => {
         const cancelTask = dock.getByRole('button', { name: '取消任务', exact: true });
         assert.equal(await cancelTask.innerText(), '');
         await cancelTask.click();
-        const confirm = page.getByRole('dialog', { name: '取消任务「扫描与采集」', exact: true });
+        const confirm = page.getByRole('alertdialog', { name: '取消任务「扫描与采集」', exact: true });
         await confirm.getByRole('button', { name: '取消', exact: true }).click();
         await confirm.waitFor({ state: 'hidden' });
         assert.equal(writes.length, sent);

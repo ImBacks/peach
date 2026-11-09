@@ -9,13 +9,14 @@ import type { CleanupToolKey } from './cleanup-tools';
 import { cardClass } from './react/components/card';
 import { FIELDSET_BODY, FIELDSET_FOOT, fieldsetClass } from './react/components/fieldset-layout';
 import { repairCardSkeletonHtml } from './management';
+import { t } from './i18n';
 
-export const ORGANIZE_TEXT = '清理文件名中的特殊符号与乱码，也可按模板改名并归入目录。先预览，确认后执行；执行过的一批可以整批退回。';
-export const ORGANIZE_SCOPE_HINT = '指定路径时包含子目录，目录模板以该路径为起点。模板均留空时只清理文件名。';
-export const ORGANIZE_PARAMETER_HINT = '点击参数插入光标处，选中文字可替换。方括号里的内容在字段为空时整段省略。';
-export const RESOURCE_SYNC_TEXT = '按馆藏记录逐条查找本地磁盘与网盘上的文件，列出文件已不存在的记录、空文件夹，以及不再被引用的缓存。';
-export const ORPHAN_RECORDS_TEXT = '这些作品的源文件已删除，喜欢、稍后看、播放列表与观看历史仍保留。选择替代文件后，这些记录会转移到该文件，旧作品记录随之删除。';
-export const BATCH_DELETE_TEXT = '勾选女优，永久删除她们在全部来源中的影片文件、影片资料和观看记录，包括回收站中的影片。女优档案和照片保留。共同出演的同一文件只删除一次。';
+export const ORGANIZE_TEXT = t('cleanup:organize.description');
+export const ORGANIZE_SCOPE_HINT = t('cleanup:organize.scopeHint');
+export const ORGANIZE_PARAMETER_HINT = t('cleanup:organize.parameterHint');
+export const RESOURCE_SYNC_TEXT = t('cleanup:resourceSync.description');
+export const ORPHAN_RECORDS_TEXT = t('cleanup:orphans.description');
+export const BATCH_DELETE_TEXT = t('cleanup:performerDelete.description');
 
 const WAITING = 'disabled data-skeleton-action';
 const text = (width: string) => `<span class="skeleton skeleton-text" style="width:${width}"></span>`;
@@ -39,39 +40,39 @@ const smallKey = (variant: 'secondary' | 'ghost', width: string) =>
 /* 骨架淡出那一拍与真卡同在页面上，所以不带 `id` 与测试认卡用的 `data-*`，只留决定样式的标记。 */
 function organize(): string {
   return `<section class="${fieldsetClass('stack')}">
-    <div class="${FIELDSET_BODY.stack}">${title('整理', 'mb-3')}
+    <div class="${FIELDSET_BODY.stack}">${title(t('cleanup:organize.title'), 'mb-3')}
       <p class="text-body-regular text-text-secondary">${ORGANIZE_TEXT}</p>
       <div class="mt-3 flex flex-col gap-3">
-        <div class="flex min-w-0 flex-wrap items-start gap-2">${islandSelect(text('3em'), { prefix: '来源', className: 'w-fit min-w-25', attrs: 'aria-disabled="true"' })}
-          <div class="flex min-w-0 basis-64 flex-1 items-start gap-2">${input('留空整理整个来源', { className: 'min-w-0 flex-1' })}<button type="button" class="relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-2lg bg-background-primary-default text-foreground-icon-primary border border-border-button-default shadow-xs size-9">${islandGlyph('folder-search', 'size-5 shrink-0')}</button></div>
+        <div class="flex min-w-0 flex-wrap items-start gap-2">${islandSelect(text('3em'), { prefix: t('cleanup:organize.storagePrefix'), className: 'w-fit min-w-25', attrs: 'aria-disabled="true"' })}
+          <div class="flex min-w-0 basis-64 flex-1 items-start gap-2">${input(t('cleanup:organize.pathPlaceholder'), { className: 'min-w-0 flex-1' })}<button type="button" class="relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-2lg bg-background-primary-default text-foreground-icon-primary border border-border-button-default shadow-xs size-9">${islandGlyph('folder-search', 'size-5 shrink-0')}</button></div>
         </div>
         <p class="text-caption-1-regular text-text-secondary">${ORGANIZE_SCOPE_HINT}</p>
-        ${input(text('12em'), { label: '文件名模板' })}${input(text('8em'), { label: '目录模板' })}
-        <div class="flex flex-col gap-2"><p class="text-caption-1-medium text-text-secondary">套用模板</p><div class="flex flex-wrap gap-2">${PRESET_WIDTHS.map(width => smallKey('secondary', width)).join('')}</div></div>
-        <p class="text-caption-1-regular text-text-secondary">路径示例：${text('16em')}</p>
-        <div class="flex flex-col gap-2"><p class="text-caption-1-regular text-text-secondary"><strong class="text-caption-1-semibold text-text-primary">插入参数</strong>（到文件名模板）</p><div class="flex flex-wrap gap-1">${PARAMETER_WIDTHS.map(width => smallKey('ghost', width)).join('')}</div></div>
+        ${input(text('12em'), { label: t('cleanup:organize.fileTemplate') })}${input(text('8em'), { label: t('cleanup:organize.dirTemplate') })}
+        <div class="flex flex-col gap-2"><p class="text-caption-1-medium text-text-secondary">${t('cleanup:organize.applyPreset')}</p><div class="flex flex-wrap gap-2">${PRESET_WIDTHS.map(width => smallKey('secondary', width)).join('')}</div></div>
+        <p class="text-caption-1-regular text-text-secondary">${t('cleanup:organize.examplePath')}${text('16em')}</p>
+        <div class="flex flex-col gap-2"><p class="text-caption-1-regular text-text-secondary"><strong class="text-caption-1-semibold text-text-primary">${t('cleanup:organize.insertParameter')}</strong>${t('cleanup:organize.insertTarget', { target: t('cleanup:organize.fileTemplate') })}</p><div class="flex flex-wrap gap-1">${PARAMETER_WIDTHS.map(width => smallKey('ghost', width)).join('')}</div></div>
         <p class="text-caption-1-regular leading-4.5 text-text-secondary">${ORGANIZE_PARAMETER_HINT}</p>
       </div>
     </div>
-    <footer class="${FIELDSET_FOOT.stack}">${islandButton({ label: '预览', attrs: WAITING })}</footer>
+    <footer class="${FIELDSET_FOOT.stack}">${islandButton({ label: t('cleanup:organize.preview'), attrs: WAITING })}</footer>
   </section>`;
 }
 
 /* 键名跟上一趟扫描走（检查文件／重新扫描），骨架画头一次进来的那一版。 */
 const resourceSync = () => `<section class="flex scroll-mt-20 flex-col gap-4">
-  <section class="${fieldsetClass('split')}"><div class="${FIELDSET_BODY.split}">${title('资源同步', 'mb-2')}
+  <section class="${fieldsetClass('split')}"><div class="${FIELDSET_BODY.split}">${title(t('cleanup:tools.resourceSync'), 'mb-2')}
     <p class="max-w-190 text-body-2-regular leading-5 text-text-secondary">${RESOURCE_SYNC_TEXT}</p></div>
-    <footer class="${FIELDSET_FOOT.split}">${islandButton({ glyph: 'git-compare', label: '检查文件', attrs: WAITING })}</footer></section>
+    <footer class="${FIELDSET_FOOT.split}">${islandButton({ glyph: 'git-compare', label: t('cleanup:resourceSync.checkFiles'), attrs: WAITING })}</footer></section>
 </section>`;
 
 /** 链接管理那张卡：四格读数（总数与三类链接）和三个主要站点等数据，键名同样画头一次的那一版。 */
 const linkStat = (label: string, note = false) => `<div class="flex min-w-0 flex-col gap-0.5"><span class="text-caption-1-regular leading-5 text-text-secondary">${label}</span><b class="text-title-2-semibold font-bold leading-5 tabular-nums text-text-primary">${text('3em')}</b>${note ? `<small class="text-caption-1-regular leading-5 text-text-secondary">${text('14em')}</small>` : ''}</div>`;
 const links = () => `<section class="flex scroll-mt-20 flex-col gap-4">
-  <section class="${fieldsetClass('stack')}"><div class="${FIELDSET_BODY.stack}">${title('链接管理', 'mb-2')}
-    <div class="link-stat-grid mt-4 gap-x-8 gap-y-3">${linkStat('链接总数', true)}${[0, 1, 2].map(() => linkStat(text('5em'))).join('')}</div>
-    <div class="mt-4 flex min-w-0 flex-col gap-0.5"><span class="text-caption-1-regular text-text-secondary">主要站点</span><div class="flex min-w-0 flex-wrap gap-x-5 gap-y-2">${
+  <section class="${fieldsetClass('stack')}"><div class="${FIELDSET_BODY.stack}">${title(t('cleanup:tools.links'), 'mb-2')}
+    <div class="link-stat-grid mt-4 gap-x-8 gap-y-3">${linkStat(t('cleanup:links.totalLinks'), true)}${[0, 1, 2].map(() => linkStat(text('5em'))).join('')}</div>
+    <div class="mt-4 flex min-w-0 flex-col gap-0.5"><span class="text-caption-1-regular text-text-secondary">${t('cleanup:links.topSites')}</span><div class="flex min-w-0 flex-wrap gap-x-5 gap-y-2">${
       ['7em', '10em', '8em'].map(width => `<span class="inline-flex min-w-0 items-center gap-1.5 text-body-2-medium">${block(16, 16)}${text(width)}${block(28, 24)}</span>`).join('')}</div></div></div>
-    <footer class="${FIELDSET_FOOT.stack}">${islandButton({ glyph: 'link', label: '检查死链', attrs: WAITING })}</footer></section>
+    <footer class="${FIELDSET_FOOT.stack}">${islandButton({ glyph: 'link', label: t('cleanup:links.checkLinks'), attrs: WAITING })}</footer></section>
 </section>`;
 
 /** `DataTable` 的等待态：填充卡里工具行、说明、表头与几行占位、分页行，列宽取列定义的缺省宽度。
@@ -87,41 +88,41 @@ function dataTable({ title: name, description, search = '', columns, rows }:
   const searchBox = search ? `<div data-index-search class="ml-auto min-w-0 max-w-80 flex-1">${islandSearchInput('', '', search)}</div>` : '';
   return `<div data-data-table-panel class="${cardClass({ padding: 'none', className: 'flex flex-col gap-4 px-6 py-5 max-sm:px-4' })}">
     <div data-responsive-toolbar><div data-toolbar-heading>${title(name, '')}<span class="text-body-2-regular tabular-nums text-text-secondary">${text('4em')}</span></div>
-      <div data-toolbar-actions>${searchBox}<div class="flex flex-none gap-2">${islandButton({ variant: 'secondary', label: '显示列' })}${islandButton({ variant: 'secondary', label: '重置列宽' })}</div>
-        <span class="flex flex-none items-center gap-2">${islandSelect('默认顺序', { prefix: '排序' })}${islandButton({ variant: 'secondary', glyph: 'arrow-up', attrs: WAITING })}</span></div></div>
+      <div data-toolbar-actions>${searchBox}<div class="flex flex-none gap-2">${islandButton({ variant: 'secondary', label: t('shell:tableColumns.columns') })}${islandButton({ variant: 'secondary', label: t('shell:tableColumns.resetWidths') })}</div>
+        <span class="flex flex-none items-center gap-2">${islandSelect(t('shell:tableSort.defaultOrder'), { prefix: t('shell:shared.sort') })}${islandButton({ variant: 'secondary', glyph: 'arrow-up', attrs: WAITING })}</span></div></div>
     <p class="text-body-2-regular text-text-secondary">${description}</p>
     <div data-board-data-table data-resizable-table data-follow-table><div class="relative min-w-0"><div class="w-full overflow-x-auto"><table class="bui-table bui-table-sm" style="min-width:${least}px"><thead><tr>${head}</tr></thead><tbody>${row.repeat(rows)}</tbody></table></div></div></div>
-    <div data-table-pagination class="flex flex-wrap items-center justify-between gap-3"><span class="mr-auto text-body-2-regular tabular-nums text-text-secondary">${text('8em')}</span><div data-toolbar-actions>${islandSelect('每页 20 条', { size: 'sm' })}</div></div>
+    <div data-table-pagination class="flex flex-wrap items-center justify-between gap-3"><span class="mr-auto text-body-2-regular tabular-nums text-text-secondary">${text('8em')}</span><div data-toolbar-actions>${islandSelect(t('shell:tablePagination.perPage', { count: 20, unit: t('shell:tablePagination.pageUnit') }), { size: 'sm' })}</div></div>
   </div>`;
 }
 
 const twoLines = (first: string, second: string) => `<span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="text-body-regular">${text(first)}</span><small class="text-caption-1-regular">${text(second)}</small></span>`;
 const orphanRecords = () => `<section class="flex scroll-mt-20 flex-col gap-4">${dataTable({
-  title: '文件已丢失的记录', description: ORPHAN_RECORDS_TEXT, rows: 4,
+  title: t('cleanup:tools.orphanRecords'), description: ORPHAN_RECORDS_TEXT, rows: 4,
   columns: [
-    { label: '作品', width: 480, cell: `<span class="flex min-w-0 items-center gap-3"><span class="skeleton flex-none rounded-lg max-cleanup-tight:hidden" style="width:96px;height:60px"></span>${twoLines('70%', '40%')}</span>` },
-    { label: '个人记录', width: 176, cell: text('6em') },
-    { label: '操作', width: 128, cell: islandButton({ variant: 'secondary', size: 'small', label: '删除记录', attrs: WAITING }) },
+    { label: t('cleanup:shared.video'), width: 480, cell: `<span class="flex min-w-0 items-center gap-3"><span class="skeleton flex-none rounded-lg max-cleanup-tight:hidden" style="width:96px;height:60px"></span>${twoLines('70%', '40%')}</span>` },
+    { label: t('cleanup:orphans.columnActivity'), width: 176, cell: text('6em') },
+    { label: t('cleanup:shared.actions'), width: 128, cell: islandButton({ variant: 'secondary', size: 'small', label: t('cleanup:orphans.deleteRecord'), attrs: WAITING }) },
   ],
 })}</section>`;
 
 const batchDelete = () => `<section class="flex min-w-0 scroll-mt-20 flex-col gap-3">${dataTable({
-  title: '批量删除', description: BATCH_DELETE_TEXT, search: '搜索女优姓名或别名', rows: 12,
+  title: t('cleanup:tools.bulkDelete'), description: BATCH_DELETE_TEXT, search: t('cleanup:performerDelete.search'), rows: 12,
   columns: [
-    { label: '女优', width: 280, cell: `<span class="flex min-w-0 items-center gap-3">${block(32, 32, true)}${text('5em')}</span>` },
-    { label: '影片', width: 104, cell: text('3em') },
-    { label: '文件', width: 104, cell: text('3em') },
-    { label: '登记大小', width: 136, cell: text('4em') },
+    { label: t('cleanup:shared.actress'), width: 280, cell: `<span class="flex min-w-0 items-center gap-3">${block(32, 32, true)}${text('5em')}</span>` },
+    { label: t('cleanup:shared.videos'), width: 104, cell: text('3em') },
+    { label: t('cleanup:shared.files'), width: 104, cell: text('3em') },
+    { label: t('cleanup:performerDelete.columnSize'), width: 136, cell: text('4em') },
   ],
 })}</section>`;
 
 const BODIES: Record<CleanupToolKey, { label: string; body: () => string }> = {
-  organize: { label: '正在读取整理配置', body: organize },
-  'resource-sync': { label: '正在读取资源同步状态', body: resourceSync },
-  'orphan-records': { label: '正在读取文件已丢失的记录', body: orphanRecords },
-  'media-repair': { label: '正在读取媒体修复状态', body: repairCardSkeletonHtml },
-  links: { label: '正在读取链接统计', body: links },
-  'batch-delete': { label: '正在读取女优列表', body: batchDelete },
+  organize: { label: t('cleanup:organize.loading'), body: organize },
+  'resource-sync': { label: t('cleanup:resourceSync.statusLoading'), body: resourceSync },
+  'orphan-records': { label: t('cleanup:orphans.loading'), body: orphanRecords },
+  'media-repair': { label: t('cleanup:mediaRepair.loading'), body: repairCardSkeletonHtml },
+  links: { label: t('cleanup:links.loading'), body: links },
+  'batch-delete': { label: t('cleanup:performerDelete.loadingLabel'), body: batchDelete },
 };
 
 /** 二级页骨架：外层是读屏的等待状态，里面那一列与 React `Page` 同宽同间距，整块 `inert`。 */

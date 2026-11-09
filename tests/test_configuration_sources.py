@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -90,6 +91,8 @@ class ConfigurationIsolationTests(unittest.TestCase):
                 stack.enter_context(patch.object(routes, "snapshot", return_value={"media_dirs": [], "port": 8900}))
                 stack.enter_context(patch.object(routes, "network_payload", return_value={"scope": "local"}))
                 stack.enter_context(patch.object(routes, "tunnel_payload", return_value={"state": "idle"}))
+                stack.enter_context(patch.object(routes, "api_token_payload", return_value={"rotatable": False}))
+                stack.enter_context(patch.object(routes, "certificate_payload", return_value=None))
                 for key, module, name in (("push_discovery", routes, "push_discovery_payload"),
                                           ("downloads", routes.web_downloads, "settings_payload")):
                     stack.enter_context(patch.object(module, name, side_effect=OSError("private-detail"))
@@ -268,21 +271,35 @@ class MediaConfigurationTests(unittest.TestCase):
 
     def test_runtime_fact_entries_list_dependencies_only_when_missing(self):
         from peach import web_entry
+        from peach.ffmpeg import BinaryChoice
         with tempfile.TemporaryDirectory() as directory:
             config = settings_file.load_config(environ={"PEACH_DATA_ROOT": str(Path(directory).resolve())})
-            with patch("peach.ffmpeg.FFmpegResolver.ffmpeg", return_value=Path("ffmpeg")), \
-                    patch("peach.ffmpeg.FFmpegResolver.ffprobe", return_value=Path("ffprobe")), \
-                    patch("peach.mp4recover.untrunc_path", return_value=Path("untrunc")):
-                present = [row["term"] for row in web_entry.runtime_fact_entries(config)]
-            with patch("peach.ffmpeg.FFmpegResolver.ffmpeg", return_value=None), \
-                    patch("peach.ffmpeg.FFmpegResolver.ffprobe", return_value=None), \
-                    patch("peach.mp4recover.untrunc_path", return_value=None):
-                missing = {row["term"]: row for row in web_entry.runtime_fact_entries(config)}
+
+            def facts(choice, untrunc, *, installable):
+                with patch("peach.ffmpeg.FFmpegResolver.ffmpeg", return_value=choice), \
+                        patch("peach.ffmpeg.FFmpegResolver.ffprobe", return_value=choice), \
+                        patch("peach.mp4recover.untrunc_path", return_value=untrunc), \
+                        patch("peach.media_tools.supported", return_value=installable):
+                    return {row["term"]: row for row in web_entry.runtime_fact_entries(config)}
+
+            present = facts(BinaryChoice(Path("ffmpeg"), "path"), Path("untrunc"), installable=True)
+            missing = facts(None, None, installable=False)
+            installable = facts(None, None, installable=True)
+            tools = config.directory("tools")
+            (tools / "ffmpeg").mkdir(parents=True)
+            (tools / "ffmpeg" / "manifest.json").write_text('{"version": "9.0.2"}', encoding="utf-8")
+            managed = facts(BinaryChoice(tools / "ffmpeg" / "bin" / "ffmpeg.exe", "peach-managed"),
+                            (tools / "untrunc" / "untrunc.exe").resolve(), installable=True)
         self.assertNotIn("FFmpeg", present)
         self.assertNotIn("untrunc", present)
         self.assertIn("版本", present)
         self.assertEqual(missing["FFmpeg"]["download_label"], "下载 FFmpeg")
         self.assertEqual(missing["untrunc"]["download_label"], "下载 untrunc")
+        self.assertEqual({term: (row.get("install_tool"), "download_url" in row) for term, row in installable.items()
+                          if term in ("FFmpeg", "untrunc")},
+                         {"FFmpeg": ("ffmpeg", False), "untrunc": ("untrunc", False)})
+        self.assertEqual(managed["FFmpeg"]["value"], "已安装，版本 9.0.2")
+        self.assertEqual(managed["untrunc"]["value"], "已安装在数据目录")
 
     def test_windows_cloud_sources_keep_policy_ids_and_offline_roots(self):
         roots, mounts, errors = media_config.validate([
@@ -341,6 +358,56 @@ class MediaConfigurationTests(unittest.TestCase):
         config = replace(settings_file.PeachConfig(Path('/unused'), Path('/unused/config.toml')), locations={"115": ("B:/",)}, mounts={"115": ("/Volumes/115",)})
         with patch("peach.platform.os.scandir", side_effect=OSError("Device not configured")):
             self.assertFalse(media_config.rows(config, windows=False, probe=True)[0]["online"])
+
+    def test_settings_read_mount_state_from_the_reachability_snapshot_without_listing_the_mount(self):
+        """所有设置页都等配置接口；网盘卡住时它不能跟着卡在列目录上。"""
+        from peach.mount_reachability import MountReachability, MountRoot
+        config = replace(settings_file.PeachConfig(Path('/unused'), Path('/unused/config.toml')),
+                         locations={"115": ("B:/",)}, mounts={"115": ("/Volumes/115",)})
+        monitor = MountReachability([MountRoot("115", "115", "B:/", Path("/Volumes/115"))],
+                                    probe=lambda path: "ok")
+        monitor.tick()
+        for _ in range(200):
+            monitor.tick()
+            if monitor.sources()[0]["online"] is not None:
+                break
+            threading.Event().wait(0.01)
+        with patch("peach.platform.os.scandir", side_effect=AssertionError("配置接口不该列举网盘根")):
+            row = media_config.rows(config, windows=False, probe=True,
+                                    known=media_config.reachability_states(monitor))[0]
+        self.assertTrue(row["online"])
+
+    def test_a_root_the_snapshot_is_still_checking_is_probed_on_the_spot(self):
+        """服务刚启动、快照还没探完时，不能把在线的根报成未检测。"""
+        from peach.mount_reachability import MountReachability, MountRoot
+        config = replace(settings_file.PeachConfig(Path('/unused'), Path('/unused/config.toml')),
+                         locations={"115": ("B:/",)}, mounts={"115": ("/Volumes/115",)})
+        monitor = MountReachability([MountRoot("115", "115", "B:/", Path("/Volumes/115"))])
+        self.assertIsNone(monitor.sources()[0]["online"])
+        with patch("peach.platform.root_status", return_value="ok"):
+            row = media_config.rows(config, windows=False, probe=True,
+                                    known=media_config.reachability_states(monitor))[0]
+        self.assertTrue(row["online"])
+
+    def test_a_root_missing_from_the_snapshot_is_probed_with_a_deadline(self):
+        """刚保存、服务还没重载的目录不在快照里：现场探测，网盘不回话时按时报未检测。"""
+        config = replace(settings_file.PeachConfig(Path('/unused'), Path('/unused/config.toml')),
+                         locations={"115": ("B:/",)}, mounts={"115": ("/Volumes/115",)})
+        release = threading.Event()
+        calls = []
+
+        def hung(path):
+            calls.append(path)
+            release.wait(5)
+            return "ok"
+        try:
+            with patch("peach.platform.root_status", hung), \
+                    patch("peach.mount_reachability.PROBE_TIMEOUT", 0.05):
+                self.assertIsNone(media_config.rows(config, windows=False, probe=True, known={})[0]["online"])
+                self.assertIsNone(media_config.rows(config, windows=False, probe=True, known={})[0]["online"])
+            self.assertEqual(len(calls), 1, "上一次探测还没返回时不另起线程")
+        finally:
+            release.set()
 
     def test_setup_answers_keep_the_cloud_source_and_its_windows_root(self):
         from peach.routes_pages import _read_answers

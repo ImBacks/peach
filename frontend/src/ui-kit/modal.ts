@@ -5,6 +5,7 @@ import { setActionBusy } from './controls';
 import { noteHtml } from './markup';
 import { playUiSound } from './sounds';
 import { attachOverlayScrollbar } from './overlay-scrollbar';
+import { t } from '../i18n';
 
 /* Geist Modal 的另一种正文：要填的一份表单，而不是一句待确认的话。
 
@@ -14,7 +15,7 @@ import { attachOverlayScrollbar } from './overlay-scrollbar';
 
    返回值里的 `dialog` 交给调用方接自己的行事件，`done` 在弹层关掉时兑现。 */
 let formModalSeq=0;
-export function formModal({title,description='',body='',confirmLabel,cancelLabel='取消',
+export function formModal({title,description='',body='',confirmLabel,cancelLabel=t('shell:shared.cancel'),
                            onConfirm=null,confirmDisabled=false}:{
   title?: string; description?: string; body?: string; confirmLabel?: string; cancelLabel?: string;
   onConfirm?: (()=>unknown)|null; confirmDisabled?: boolean;
@@ -60,7 +61,7 @@ export function formModal({title,description='',body='',confirmLabel,cancelLabel
       settled={confirmed:true,result:await onConfirm()};
       dialog.close();
     }catch(error:any){
-      failure.innerHTML=noteHtml(error.message||'操作未完成',{variant:'error'});
+      failure.innerHTML=noteHtml(error.message||t('shell:confirmModal.actionFailed'),{variant:'error'});
       setActionBusy(accept,false);
     }finally{busy=false}
   };
@@ -87,7 +88,7 @@ export function confirmModal(options:{
   items?: readonly string[];
   onConfirm?: () => Promise<unknown>;
 }):Promise<{confirmed:boolean;result?:unknown}>;
-export function confirmModal({title,body,items=[],confirmLabel,cancelLabel='取消',onConfirm=null,danger=false}:{
+export function confirmModal({title,body,items=[],confirmLabel,cancelLabel=t('shell:shared.cancel'),onConfirm=null,danger=false}:{
   title?: string; body?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean;
   items?: readonly string[];
   onConfirm?: (()=>unknown)|null;
@@ -97,9 +98,12 @@ export function confirmModal({title,body,items=[],confirmLabel,cancelLabel='取�
   dialog.className='ui-geist-modal';
   const titleId=`geist-modal-title-${++modalSeq}`;
   dialog.setAttribute('aria-labelledby',titleId);
+  dialog.setAttribute('aria-describedby',`${titleId}-body`);
+  // 不可撤销的确认读作 alertdialog：读屏进来先念标题和那句后果，而不是当成普通对话框（同 BoardUI Modal）。
+  if(danger)dialog.setAttribute('role','alertdialog');
   dialog.innerHTML=`<header class="ui-geist-modal-header"><h3 id="${titleId}"></h3></header>
     <div class="ui-geist-modal-scroll"><div class="ui-geist-modal-body">
-      <p></p><div data-modal-error></div></div></div>
+      <p id="${titleId}-body"></p><div data-modal-error></div></div></div>
     <footer class="geist-modal-footer">
       <div><button type="button" class="geist-button" data-modal-cancel></button></div>
       <div><button type="button" class="geist-button primary" data-modal-confirm></button></div>
@@ -111,7 +115,7 @@ export function confirmModal({title,body,items=[],confirmLabel,cancelLabel='取�
     const host=document.createElement('div');
     host.className='ui-geist-modal-list';
     list=document.createElement('ul');
-    list.setAttribute('aria-label','所选记录');
+    list.setAttribute('aria-label',t('shell:confirmModal.selectedItems'));
     list.tabIndex=0;
     for(const text of items){
       const item=document.createElement('li');
@@ -151,7 +155,7 @@ export function confirmModal({title,body,items=[],confirmLabel,cancelLabel='取�
         settled={confirmed:true,result:await onConfirm()};
         dialog.close();
       }catch(error:any){
-        failure.innerHTML=noteHtml(error.message||'操作未完成',{variant:'error'});
+        failure.innerHTML=noteHtml(error.message||t('shell:confirmModal.actionFailed'),{variant:'error'});
         setActionBusy(accept,false);
       }finally{busy=false}
     };

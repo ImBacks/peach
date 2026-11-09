@@ -5,6 +5,7 @@ import { LinkButton } from '@/components/base/buttons/link-button';
 
 import { apiGet } from '../api';
 import type { ReleaseState, UpdateJob } from './bundle';
+import { t } from '../i18n';
 
 export interface ClientUpdates {
   runtime: { version: string; build_id: string };
@@ -97,9 +98,9 @@ export function ClientUpdateBanner({ navigate }: { navigate(path: string): void 
   const version = job.state === 'ready' || ACTIVE.has(job.state) ? job.version || release.latest_version : release.latest_version;
   const identity = JSON.stringify(kind === 'refresh' ? [kind, runtime.version, runtime.build_id] : [kind, version]);
   if (identity === dismissed) return null;
-  const message = kind === 'refresh' ? 'Peach 已更新，刷新页面即可使用。'
-    : kind === 'ready' ? '更新已准备好，可重启安装。'
-      : kind === 'preparing' ? '正在准备更新。' : '有可用更新。';
+  const message = kind === 'refresh' ? t('shell:clientUpdate.refreshReady')
+    : kind === 'ready' ? t('shell:clientUpdate.restartReady')
+      : kind === 'preparing' ? t('shell:clientUpdate.preparing') : t('shell:clientUpdate.available');
   const openUpdates = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -113,11 +114,11 @@ export function ClientUpdateBanner({ navigate }: { navigate(path: string): void 
       <div className="flex-wrap">
         {kind === 'refresh'
           ? <LinkButton variant="secondary" size="small" onClick={() => window.location.reload()}
-            data-copy-key="clientUpdates.refresh.action">刷新页面</LinkButton>
+            data-copy-key="clientUpdates.refresh.action">{t('shell:clientUpdate.refreshPage')}</LinkButton>
           : <LinkButton variant="secondary" size="small" href={RELEASE_UPDATES_PATH} onClick={openUpdates}
-            data-copy-key={`clientUpdates.${kind}.action`}>{kind === 'preparing' ? '查看进度' : '查看更新'}</LinkButton>}
+            data-copy-key={`clientUpdates.${kind}.action`}>{kind === 'preparing' ? t('shell:clientUpdate.viewProgress') : t('shell:clientUpdate.viewUpdate')}</LinkButton>}
         <LinkButton variant="secondary" size="small" onClick={() => setDismissed(identity)}
-          data-copy-key={`clientUpdates.${kind}.later`}>稍后</LinkButton>
+          data-copy-key={`clientUpdates.${kind}.later`}>{t('shell:clientUpdate.later')}</LinkButton>
       </div>
     </aside>, host,
   );

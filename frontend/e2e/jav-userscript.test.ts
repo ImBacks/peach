@@ -175,6 +175,8 @@ async function selectCode(page: Page) {
 const AUTOMATIC: Record<string, { path: string; title: string; html: string; source?: string; code?: string }> = {
   dmm: { path: '/av/content/?id=ssis00519&private=secret#player', source: '/av/content/?id=ssis00519', code: 'SSIS-519', title: '作品详情', html: '<h1>作品详情</h1>' },
   mgs: { path: '/product/product_detail/300MIUM-1239/', code: '300MIUM-1239', title: '作品详情', html: '<h1>作品详情</h1>' },
+  'fc2-market': { path: '/article/4900901/', code: 'FC2-PPV-4900901', title: '作品详情', html: '<h1>作品详情</h1>' },
+  'fanza-clip': { path: '/moment?id=img-saba00978-011&i3_ref=fvideo', source: '/moment?id=img-saba00978-011', code: 'SABA-978', title: '作品详情', html: '<h1>作品详情</h1>' },
   missav: { path: '/en/ssis-057', title: 'SSIS-057', html: '<h1>SSIS-057 作品</h1>' },
   jable: { path: '/videos/ssis-057/', title: 'Jable', html: '<div class="video-info"><h4>SSIS-057 作品</h4></div>' },
   'jav-guru': { path: '/12345/ssis-057-detail/', title: 'JAV.guru', html: '<h1 class="entry-title">[SSIS-057] 作品</h1>' },

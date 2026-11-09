@@ -6,7 +6,7 @@ import { buttonNamed, click, linkNamed, mountRoot, pending, settle } from './ren
 
 const current: ClientUpdates = {
   runtime: { version: '0.9.0', build_id: 'build-a' },
-  release: { current_version: '0.9.0', latest_version: '0.9.0', channel: '测试版', installation: '独立测试包',
+  release: { current_version: '0.9.0', latest_version: '0.9.0', channel: '测试版', installation: '独立测试包', installation_code: 'standalone',
     state: 'current', message: '已是最新测试版。', release_url: 'https://example.test/releases' },
   update_job: { state: 'idle', progress: 0 },
   userscript: { version: '0.8.0', minimum_version: '0.7.0', install_url: '/peach.user.js' },

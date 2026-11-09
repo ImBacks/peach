@@ -166,7 +166,10 @@ def same_scene(data: bytes, other: bytes) -> bool:
 
 def _download(transport, candidate: Candidate, *, deadline: float | None) -> tuple[Picture | None, str]:
     """一张候选图：下载得到、宽度够小图门槛的静态图，再报这一张的下落：`fetched` 下载到了，
-    `paused` 来源正在冷却，`failed` 断在连接、5xx 或 404 上。"""
+    `paused` 来源正在冷却，`failed` 断在连接、5xx 或 404 上。
+
+    JavDB 匿名接口的图床可能给 XOR 包装过的字节，先按公开前端的包装解开再比对。"""
+    from .javdb_public import decode_image, public_image_url
     try:
         data = _fetch(transport, candidate.url, referer=candidate.referer, limit=IMAGE_LIMIT, deadline=deadline)
     except SourcePaused:
@@ -174,7 +177,7 @@ def _download(transport, candidate: Candidate, *, deadline: float | None) -> tup
     except (NotFound, Unavailable, httpx.TransportError, OSError):
         return None, "failed"
     try:
-        found = picture(candidate, data)
+        found = picture(candidate, decode_image(data, original=True) if public_image_url(candidate.url) else data)
     except (OSError, ValueError, Image.DecompressionBombError):
         return None, "fetched"
     return (found if found.size[0] >= SMALL_MIN_WIDTH else None), "fetched"

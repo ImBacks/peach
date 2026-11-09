@@ -154,7 +154,7 @@ it('首屏读 prefetch 落进缓存的那一份，两套证据是页签不是并
   expect(tasteGets(fetcher)).toHaveLength(1);
   expect(tasteGets(fetcher)[0]?.[0]).toBe(`${TASTE_URL}?window=all`);
   expect([...host.querySelectorAll('[role=tab]')].map((tab) => tab.textContent).slice(0, 2))
-    .toEqual(['浏览器记录', 'Peach 观看与评价']);
+    .toEqual(['Peach 观看与评价', '浏览器记录']);
   expect(host.textContent).toContain('900');
   expect(host.textContent).not.toContain('个作品有内部行为证据');
 });
@@ -248,7 +248,7 @@ it('浏览器画像的雷达、排行与浏览活跃热力图都按这一份数�
   const { host } = await open();
   const portrait = host.querySelector('section[aria-label="浏览器画像"]')!;
   expect(portrait.querySelector('div[role=img]')?.getAttribute('aria-label'))
-    .toBe('主要口味维度：维度甲，维度乙，维度丙');
+    .toBe('主要口味维度：维度甲、维度乙、维度丙');
   expect(portrait.querySelector('section[aria-label="口味维度排名"]')).not.toBeNull();
   const heats = [...host.querySelectorAll('svg[role=img]')].map((heat) => heat.getAttribute('aria-label'));
   expect(heats).toEqual(expect.arrayContaining(['浏览活跃时间', '每日活跃']));

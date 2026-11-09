@@ -50,6 +50,13 @@ def _cooling_until(contract, url: str) -> datetime | None:
     return datetime.fromtimestamp(until, timezone.utc) if until else None
 
 
+def _same_source(url: str, other: str) -> bool:
+    """两个订阅地址是不是同一个来源的：冷却按来源记，顺延也只顺延同一来源的那几个。"""
+    from .scraping_access import source_for
+
+    return source_for(url) == source_for(other)
+
+
 def _paused_by_source(error: Exception) -> bool:
     """来源冷却挡下的这一次；本趟预算耗尽（`SourceBudgetExhausted`）不算来源冷却。"""
     from .scraping_access import SourceBudgetExhausted, SourcePaused
@@ -101,6 +108,8 @@ def poll_source(contract, transport, source) -> dict:
     # `ok` 数失败、按 `added` 数新增，两个调度对象共用同一段结算。
     report = {"source": source_id, "name": source["name"] or source["url"],
               "ok": True, "seen": 0, "added": 0, "without_code": 0, "error": None}
+    if source["kind"] == feeds.KIND_DMM_ACTRESS:
+        return _poll_dmm(contract, transport, source, report)
     try:
         response = fetch(transport, source["url"], etag=source["etag"],
                          last_modified=source["last_modified"])
@@ -149,6 +158,50 @@ def poll_source(contract, transport, source) -> dict:
     return report
 
 
+def _poll_dmm(contract, transport, source, report: dict) -> dict:
+    """拉一条 DMM 片单源（ADR-0135）：按地址里的女优编号问 GraphQL，不 GET 那个地址。
+
+    请求走同一条 `SourceTransport` 与主机限流，包在 `holding` 里：验证页、封禁、地区限制与
+    限流让 DMM 整站进冷却，刮削链之后的请求在同一关停下。任何失败都按原因写进这一行。
+    """
+    from .sources.base import Session, SourceFailure
+    from .sources.dmm import DmmSource
+
+    source_id = int(source["id"])
+    interval = int(source["interval_minutes"])
+    site = DmmSource()
+    with contract.database.read_connection() as connection:
+        known = feeds.seen_keys(connection, source_id)
+    session = Session(transport)
+    try:
+        with site.holding(session):
+            works = site.actress_works(feeds.dmm_actress_id(source["url"]), session=session,
+                                       known=known, limit=feeds.MAX_ENTRIES)
+    except Exception as error:  # noqa: BLE001 - 原因写到源那一行上给人看
+        message = error.message if isinstance(error, SourceFailure) else str(error)
+        report.update(ok=False, error=message,
+                      reason=str(error.reason) if isinstance(error, SourceFailure) else None)
+        # 和演员页同一条：整站冷却挡回来的，冷却一过就重拉（ADR-0134）。
+        retry_at = _cooling_until(contract, source["url"]) if _paused_by_source(error) else None
+        if retry_at is not None:
+            report["paused"] = True
+        with contract.database.write_transaction() as connection:
+            feeds.settle(connection, source_id, error=message, interval_minutes=interval,
+                         retry_at=retry_at)
+        return report
+    parsed = feeds.parse_dmm_actress(works)
+    hidden = web_settings.hidden_compilations(contract.database)
+    with contract.database.write_transaction() as connection:
+        outcome = feeds.poll(connection, source, parsed, hidden)
+        feeds.settle(connection, source_id, error=None, interval_minutes=interval,
+                     seen=outcome["seen"], new=len(outcome["created"]), page_name=parsed.title)
+    report.update(seen=outcome["seen"], fresh=outcome["fresh"], total=works.total,
+                  pre_order=sum(work.pre_order for work in works.works),
+                  without_code=outcome["without_code"], compilations=outcome["compilations"],
+                  added=len(outcome["created"]), codes=[code for _id, code in outcome["created"]])
+    return report
+
+
 #: 人物页那一行能列出的新作少于这个数，就再拉她的「單體作品」页补一批。隐退的人主页
 #: 最近几十条全是合集，收起合集后那一行是空的；在役的人主页就够，不多花配额。
 BACKFILL_BELOW = 12
@@ -163,9 +216,8 @@ def _backfill_solo_works(contract, transport, source, report: dict) -> None:
     entity_id = source["entity_id"]
     if source["kind"] != feeds.KIND_JAVDB_ACTOR or not entity_id:
         return
-    hidden = web_settings.hidden_compilations(contract.database)
     with contract.database.read_connection() as connection:
-        feeds.register_functions(connection, hidden)
+        register_listed(contract, connection)
         listed = connection.execute(
             "SELECT count(*) FROM feed_discovery d WHERE d.ignored_at IS NULL"
             f" AND {' AND '.join(LISTED)} AND EXISTS (SELECT 1 FROM feed_discovery_entity de"
@@ -207,6 +259,10 @@ def _check_sources(contract, body, previous):
 
 def _execute_check(contract, body, job_id: str) -> dict:
     previous = contract.feed_job.snapshot() or {}
+    if 'source_ids' not in previous:
+        # 订阅中的人后来刮到了 DMM 编号的，这一轮前补上她的 DMM 片单源（ADR-0135）。
+        with contract.database.write_transaction() as connection:
+            feeds.sync_dmm_sources(connection)
     rows = _check_sources(contract, body, previous)
     transport = _transport(contract)
     results = list(previous.get('results') or [])
@@ -214,19 +270,23 @@ def _execute_check(contract, body, job_id: str) -> dict:
     codes = [code for row in results for code in row.get('codes') or []]
     if not contract.feed_job.checkpoint(job_id, source_ids=[int(row['id']) for row in rows]):
         raise InterruptedError('订阅检查已停止')
-    deferred = 0
+    deferred, held = 0, set()
     try:
         for index, source in enumerate(rows):
-            if int(source['id']) in completed:
+            if int(source['id']) in completed | held:
                 continue
             until = _cooling_until(contract, source["url"])
             if until is not None:
-                pending = [row for row in rows[index:] if int(row['id']) not in completed]
-                results, deferred = _defer_round(contract, pending, until, results)
+                # 只顺延同一来源的：JavDB 冷却挡不住 DMM 片单，反过来也一样（ADR-0135）。
+                pending = [row for row in rows[index:] if int(row['id']) not in completed | held
+                           and _same_source(row["url"], source["url"])]
+                results, count = _defer_round(contract, pending, until, results)
+                deferred += count
+                held.update(int(row['id']) for row in pending)
                 if not contract.feed_job.checkpoint(job_id, results=results, checked=len(results),
                                                     total=len(rows), added=len(set(codes))):
                     raise InterruptedError('订阅检查已停止')
-                break
+                continue
             if not contract.feed_job.update(job_id, checked=len(results), total=len(rows),
                                             current=source["name"] or source["url"]):
                 raise InterruptedError('订阅检查已停止')
@@ -253,8 +313,8 @@ def _execute_check(contract, body, job_id: str) -> dict:
 def _plan_followups(contract, codes: list[str], *, automatic: bool) -> tuple[list, bool]:
     """这一轮拉完要派的后继，以及这一轮有没有带上存量。
 
-    取资料：新发现的先排，没取到资料的旧壳留着保底名额，同一批一条后继。只缺封面的另成一批
-    补封面。定时那一轮只带到了重试时间的，手动点的那一轮全带；已在队里的番号都不再带。
+    取资料：新发现的先排，没取到资料的旧壳留着保底名额，同一批一条后继。不在这一批里的缺封面
+    壳另成一批补封面，还没轮到取资料的也在内。定时那一轮只带到了重试时间的，手动点的那一轮全带；已在队里的番号都不再带。
     存量部分（旧壳、封面、头像）定时那几轮隔 `STOCK_INTERVAL` 才派一次，新番号每轮都派。
     """
     stock = _stock_due(contract) if automatic else True
@@ -374,9 +434,8 @@ def w_feed_schedule_run(contract, _body) -> dict:
 
 def q_feeds(contract, args) -> dict:
     """设置页「订阅源」小节的首屏。"""
-    hidden = web_settings.hidden_compilations(contract.database)
     with contract.database.read_connection() as connection:
-        feeds.register_functions(connection, hidden)
+        register_listed(contract, connection)
         rows = feeds.sources(connection)
         # 表里名字前面那个圆框：有图走 `/entity-image`，判据与取景都取自身份引用那一份。
         for row in rows:
@@ -418,18 +477,19 @@ def w_feed_source(contract, body) -> dict:
     raise ValueError(f"unknown feed source action: {action}")
 
 
-def _subscribe(connection, entity_id: int, canonical_name: str) -> list[int]:
-    """这位的每个 JavDB 演员页各订一条，返回源 id。地址按账本里她的编号现拼。"""
+def subscribe_performer(connection, entity_id: int, canonical_name: str) -> list[int]:
+    """这位的每个 JavDB 演员页与 DMM 片单各订一条，返回源 id。地址按账本里她的编号现拼。"""
     refs = [dict(ref) for ref in connection.execute(
-        "SELECT provider,external_kind,external_id FROM entity_external_ref"
+        "SELECT provider,external_kind,external_id,metadata_json FROM entity_external_ref"
         " WHERE entity_id=?", (int(entity_id),))]
-    pages = entry_links.javdb_actor_pages(canonical_name, refs)
+    pages = [*entry_links.javdb_actor_pages(canonical_name, refs),
+             *feeds.dmm_actress_pages(connection, entity_id)]
     if not pages:
-        raise ValueError("这位在 JavDB 上没有演员页编号")
+        raise ValueError("这位在 JavDB 与 DMM 上都没有编号")
     return feeds.follow_entity(connection, entity_id, pages)
 
 
-def _fetch_now(contract, ids: list[int]) -> None:
+def fetch_new_sources(contract, ids: list[int]) -> None:
     """新订的当场在后台拉：订的人要的是马上看到她有哪些新作，不是等下一轮到期扫描。
 
     已有一轮在跑时就交给那一轮之后的到期扫描——新源 `next_fetch_at` 为空，下一轮一定带上它。
@@ -458,8 +518,8 @@ def _follow_entity(contract, body) -> dict:
             feeds.unfollow_entity(connection, entity_id)
             ids: list[int] = []
         else:
-            ids = _subscribe(connection, entity_id, row["canonical_name"])
-    _fetch_now(contract, ids)
+            ids = subscribe_performer(connection, entity_id, row["canonical_name"])
+    fetch_new_sources(contract, ids)
     return {"ok": True, "entity_id": entity_id, "following": enabled, "sources": ids}
 
 
@@ -485,6 +545,32 @@ def q_feed_lookup(contract, args) -> dict:
     if not name:
         raise ValueError("要先给一个女优名")
     url = javdb.SEARCH.format(quote(name))
+    with contract.database.read_connection() as connection:
+        # 账本里按这个名字认得出谁：登记时没人持有所勾的卡就挂到她名下（`_follow_by_name`），
+        # 页面提前把这句话说出来，免得点了才知道挂给了谁。
+        found = entities.resolve_entity(connection, "performer", name)
+        known = _known_performer(connection, found) if found else None
+    try:
+        html = _search_javdb(contract, url)
+    except ValueError as error:
+        # 她已有 JavDB 或 DMM 编号时不必靠这一趟搜索，按库里的她直接订；原因照样告诉页面。
+        if known and known["subscribable"]:
+            return {"ok": True, "q": name, "url": url, "candidates": [], "suggested": [],
+                    "known": known, "unavailable": str(error)}
+        raise
+    cards = javdb.search_cards(html)
+    wanted = alias.match_key(name)
+    with contract.database.read_connection() as connection:
+        candidates = [_describe_card(connection, card) for card in cards]
+    mine = [card for card in cards
+            if any(alias.match_key(written) == wanted for written in card["names"])]
+    suggested = [card["id"] for card in mine] if javdb.one_person(mine) else []
+    return {"ok": True, "q": name, "url": url, "candidates": candidates, "suggested": suggested,
+            "known": known}
+
+
+def _search_javdb(contract, url: str) -> str:
+    """取一页 JavDB 演员搜索结果；冷却、限流、断网、登入页都按原因报 ValueError。"""
     try:
         response = _transport(contract)(HttpRequest("GET", url, {"Accept": "text/html"}),
                                         LOOKUP_TIMEOUT, FETCH_MAX_BYTES)
@@ -495,18 +581,36 @@ def q_feed_lookup(contract, args) -> dict:
     html = response.body.decode("utf-8", "replace")
     if javdb.LOGIN.search(html):
         raise ValueError("JavDB 回的是登入页，这一趟搜不了；稍后再试")
-    cards = javdb.search_cards(html)
-    wanted = alias.match_key(name)
-    with contract.database.read_connection() as connection:
-        candidates = [_describe_card(connection, card) for card in cards]
-        # 账本里按这个名字认得出谁：登记时没人持有所勾的卡就挂到她名下（`_follow_by_name`），
-        # 页面提前把这句话说出来，免得点了才知道挂给了谁。
-        known = entities.resolve_entity(connection, "performer", name)
-    mine = [card for card in cards
-            if any(alias.match_key(written) == wanted for written in card["names"])]
-    suggested = [card["id"] for card in mine] if javdb.one_person(mine) else []
-    return {"ok": True, "q": name, "url": url, "candidates": candidates, "suggested": suggested,
-            "known": {"id": int(known["id"]), "name": str(known["canonical_name"])} if known else None}
+    return html
+
+
+def subscribable(connection, row) -> bool:
+    """这位不经搜索就能订：已有 JavDB 演员页或 DMM 女优编号。"""
+    entity_id = int(row["id"])
+    refs = [dict(ref) for ref in connection.execute(
+        "SELECT provider,external_kind,external_id,metadata_json FROM entity_external_ref"
+        " WHERE entity_id=?",
+        (entity_id,))]
+    return bool(entry_links.javdb_actor_pages(str(row["canonical_name"]), refs)
+                or feeds.dmm_actress_ids(connection, entity_id))
+
+
+def _known_performer(connection, row) -> dict:
+    """库里认出的这位：能不能直接订、订没订着。"""
+    entity_id = int(row["id"])
+    return {"id": entity_id, "name": str(row["canonical_name"]),
+            "subscribable": subscribable(connection, row),
+            "following": feeds.entity_following(connection, entity_id)}
+
+
+def create_followed_performer(connection, name: str) -> int:
+    """为订阅新建一位零作品的女优，来源记 `FOLLOW_SOURCE`。"""
+    stamp = feeds.stamp()
+    return int(connection.execute(
+        "INSERT INTO entity(kind,canonical_name,normalized_name,metadata_json,"
+        "created_at,updated_at) VALUES('performer',?,?,?,?,?)",
+        (name, entities.normalize_entity_name(name),
+         json.dumps({"source": FOLLOW_SOURCE}, ensure_ascii=False), stamp, stamp)).lastrowid)
 
 
 def _describe_card(connection, card: dict) -> dict:
@@ -566,19 +670,13 @@ def _follow_by_name(contract, body) -> dict:
             if found is not None:
                 entity_id, canonical = int(found["id"]), str(found["canonical_name"])
             else:
-                stamp = feeds.stamp()
-                entity_id = int(connection.execute(
-                    "INSERT INTO entity(kind,canonical_name,normalized_name,metadata_json,"
-                    "created_at,updated_at) VALUES('performer',?,?,?,?,?)",
-                    (name, entities.normalize_entity_name(name),
-                     json.dumps({"source": FOLLOW_SOURCE}, ensure_ascii=False), stamp, stamp),
-                ).lastrowid)
+                entity_id = create_followed_performer(connection, name)
                 canonical, created = name, True
         for actor_id in ids:
             performer_profile_followup.bind(connection, entity_id, "javdb", actor_id,
                                             {"source": FOLLOW_SOURCE})
-        sources = _subscribe(connection, entity_id, canonical)
-    _fetch_now(contract, sources)
+        sources = subscribe_performer(connection, entity_id, canonical)
+    fetch_new_sources(contract, sources)
     return {"ok": True, "entity_id": entity_id, "entity_name": canonical, "created": created,
             "sources": sources}
 
@@ -587,8 +685,9 @@ def _follow_by_name(contract, body) -> dict:
 DISCOVERY_LIMIT = 24
 
 #: 哪些壳算「新作」。已经入库的不算——那条新作的使命已经完成了；设置里收起的那几类
-#: 合集不算（`feeds.compilation_kind`）。两条都是读的时候现算。
-#: 用到它的连接要先按设置 `feeds.register_functions`。
+#: 合集不算（`feeds.compilation_kind`）；还没发售、官方只回占位图的不算
+#: （`feed_followup.awaiting_official_cover`）。三条都是读的时候现算。
+#: 用到它的连接要先 `register_listed`。
 #: 已入库那一条写成不相关子查询：库里的番号键只算一遍、建成临时索引，每条壳再去查它。
 #: 相关子查询的写法要给每条壳把整张 `asset` 的番号重算一遍（60 条壳 × 2881 部是 486ms），
 #: 资料页的形状名单和新作列表都等在它上面。判空与 `=` 一致：键算不出来的壳照常列出。
@@ -598,7 +697,15 @@ LISTED = (
     " (SELECT key FROM (SELECT normalise_code_key(a.code) AS key FROM asset a"
     " WHERE a.code IS NOT NULL AND COALESCE(a.disposal,'')<>'vanished') WHERE key IS NOT NULL))",
     "NOT is_feed_hidden(d.title,d.performers,d.studio)",
+    "NOT is_cover_pending(d.code,d.release_date)",
 )
+
+
+def register_listed(contract, connection) -> None:
+    """挂上 `LISTED` 用到的两个函数：合集收起按设置，「官方还没出图」按本机封面与取图记录。"""
+    feeds.register_functions(connection, web_settings.hidden_compilations(contract.database))
+    connection.create_function("is_cover_pending", 2, lambda code, release_date:
+        feed_followup.awaiting_official_cover(contract, code, release_date))
 
 
 def _discovery_performers(connection, contract, rows) -> dict[int, list[dict]]:
@@ -637,6 +744,13 @@ def _discovery_performers(connection, contract, rows) -> dict[int, list[dict]]:
     return performers
 
 
+def cover_state_fields(states: dict, code: str) -> dict:
+    """新作卡封面格的两个字段：`cover_state`（`fetching`／`queued`／`missing`，有封面时为 None）与原因。
+    首页这一行和 JAV 页「新作」「发现」两个分区共用同一份口径。"""
+    state, reason = states.get(normalise_code_key(code), (None, ""))
+    return {"cover_state": state, "cover_reason": reason}
+
+
 def q_feed_discoveries(contract, args) -> dict:
     """未入库的新作。`entity` 限定到某个人，`state` 切换忽略视图。
 
@@ -659,9 +773,8 @@ def q_feed_discoveries(contract, args) -> dict:
                      " WHERE de.discovery_id=d.id AND de.entity_id=?)")
         with contract.database.read_connection() as connection:
             params.append(entities.resolve_entity_id(connection, int(entity_id)) or int(entity_id))
-    hidden = web_settings.hidden_compilations(contract.database)
     with contract.database.read_connection() as connection:
-        feeds.register_functions(connection, hidden)
+        register_listed(contract, connection)
         rows = [dict(row) for row in connection.execute(
             "SELECT d.*, s.name AS source_name, s.kind AS source_kind"
             " FROM feed_discovery d LEFT JOIN feed_source s ON s.id=d.source_id"
@@ -679,7 +792,8 @@ def q_feed_discoveries(contract, args) -> dict:
             for run in contract.task_runs.query(status="succeeded", task_key=task_key, limit=1)]
     latest = max(last, key=lambda run: run.finished_at or "", default=None)
     cover_network = int(latest.result_summary.get("cover_network") or 0) if latest else 0
-    fetching = feed_followup.in_flight(contract.task_runs)
+    # 还没有封面的那几部，封面格说清在等什么、为什么没有（`cover_states`）。
+    states = feed_followup.cover_states(contract, rows[:limit])
     return {"ok": True, "more": more, "cover_network": cover_network, "items": [{
         "id": int(row["id"]),
         "code": row["code"],
@@ -688,7 +802,7 @@ def q_feed_discoveries(contract, args) -> dict:
         "cover_url": row["cover_url"],
         # 本机封面与它的两份边车，形状和资产卡的同名字段一致，页面按同一套取景。
         "has_cover": contract.has_cover(row["code"]),
-        "cover_fetching": normalise_code_key(row["code"]) in fetching,
+        **cover_state_fields(states, row["code"]),
         "cover_frame": contract.cover_frame(row["code"]),
         "cover_version": contract.cover_version(row["code"]),
         "poster_box": contract.poster_box(row["code"]),
@@ -705,8 +819,8 @@ def q_feed_discoveries(contract, args) -> dict:
 
 
 def home_has_feed(contract, connection) -> bool:
-    """首页新作行是否有内容，与新作列表共用未入库、未忽略和合集筛选条件。"""
-    feeds.register_functions(connection, web_settings.hidden_compilations(contract.database))
+    """首页新作行是否有内容，与新作列表共用 `LISTED` 与未忽略。"""
+    register_listed(contract, connection)
     return bool(connection.execute(
         "SELECT EXISTS(SELECT 1 FROM feed_discovery d"
         f" WHERE d.ignored_at IS NULL AND {' AND '.join(LISTED)})").fetchone()[0])
@@ -714,7 +828,7 @@ def home_has_feed(contract, connection) -> bool:
 
 def feed_row_entity_ids(contract, connection) -> set[int]:
     """资料页上会出现新作那一行的实体：判据和按人取新作的那一份同一套（`LISTED`、未忽略）。"""
-    feeds.register_functions(connection, web_settings.hidden_compilations(contract.database))
+    register_listed(contract, connection)
     return {int(row[0]) for row in connection.execute(
         "SELECT DISTINCT de.entity_id FROM feed_discovery_entity de"
         " JOIN feed_discovery d ON d.id=de.discovery_id"

@@ -18,17 +18,21 @@ import { seededRank } from '@peach/legacy/core';
 import { apiGet } from '../../api';
 import { FOLLOW_CREDENTIALS_URL, type CheckResult } from '../follow-manage/follow-manage';
 import { queryClient } from '../query';
+import { t } from '../../i18n';
 
 /* ── 地址栏那一组 ── */
 
 /** 状态那一排。已看那一档不摆：看过就归档，要再翻出来是「全部」的事。 */
-export const FOLLOW_FILTERS = [['', '全部'], ['new', '未看'], ['saved', '已保存'], ['ignored', '已忽略']] as const;
+export const FOLLOW_FILTERS = [['', t('follow:shared.all')], ['new', t('follow:followFeed.unseen')], ['saved', t('follow:shared.saved')], ['ignored', t('follow:shared.ignored')]] as const;
 export type FollowStatus = (typeof FOLLOW_FILTERS)[number][0];
 
 /** 排序键与各自方向的说法；「换一批」按下去是 `rand`，没有自己的键。 */
-export const FOLLOW_FEED_SORTS = [['new', '更新时间'], ['hot', '热度'], ['dur', '时长']] as const;
-export const FOLLOW_FEED_DIR_WORDS: Record<string, readonly [string, string]> = {
-  new: ['从新到旧', '从旧到新'], hot: ['从高到低', '从低到高'], dur: ['从长到短', '从短到长'],
+export const FOLLOW_FEED_SORTS = [['new', t('follow:followFeed.sortUpdated')], ['hot', t('follow:followFeed.sortPopularity')], ['dur', t('follow:followFeed.sortDuration')]] as const;
+/** 能翻方向的列，`[desc, asc]` 两头各一整句无障碍名称：列名和方向词在英文里要改大小写与语序，不能拼。 */
+export const FOLLOW_FEED_SORT_ARIA: Record<string, readonly [desc: string, asc: string]> = {
+  new: [t('follow:followFeed.sortBy.updatedNewest'), t('follow:followFeed.sortBy.updatedOldest')],
+  hot: [t('follow:followFeed.sortBy.popularityHighest'), t('follow:followFeed.sortBy.popularityLowest')],
+  dur: [t('follow:followFeed.sortBy.durationLongest'), t('follow:followFeed.sortBy.durationShortest')],
 };
 export const FOLLOW_RANDOM_SORT = 'rand';
 export type FollowSort = (typeof FOLLOW_FEED_SORTS)[number][0] | typeof FOLLOW_RANDOM_SORT;
@@ -200,27 +204,25 @@ export function followFeedQuery(view: FollowView, revision: number) {
 
 export const FOLLOW_CREDENTIALS_KEY: QueryKey = ['follow-feed', 'credentials'];
 
-/** 凭据取不到时当作一个都没有：它只决定「需要登录会话」那句提示出不出，不该拦住整页。 */
+/** 凭据独立读取；失败保存在查询状态里，不当作未配置。 */
 export const fetchFollowCredentials = (signal?: AbortSignal) =>
-  apiGet<FollowCredentials>(FOLLOW_CREDENTIALS_URL, signal).catch((): FollowCredentials => ({ providers: [] }));
+  apiGet<FollowCredentials>(FOLLOW_CREDENTIALS_URL, signal);
 
-/** 首屏：两趟并行，挂上就是最终样子。同一个键（同一份筛选、同一个代次）缓存里还有，就是离开前
+/** 首屏条目与凭据并行，条目就绪即可显示。同一个键（同一份筛选、同一个代次）缓存里还有，就是离开前
  *  看着的那一份，原样拿来接着看，连同已经加载的几页；要重读由壳推一个新代次换键。凭据每次都重取：
  *  它在管理页上改，回到这里就该是新的。 */
 export async function prefetchFollowFeed(props: { view: FollowView; revision: number }, signal: AbortSignal) {
   const query = followFeedQuery(props.view, props.revision);
   queryClient.removeQueries({ queryKey: FOLLOW_CREDENTIALS_KEY, exact: true });
   const kept = queryClient.getQueryData(query.queryKey) !== undefined;
-  await Promise.all([
-    kept ? null : queryClient.fetchInfiniteQuery({
+  void queryClient.prefetchQuery({ queryKey: FOLLOW_CREDENTIALS_KEY, queryFn: () => fetchFollowCredentials(signal) });
+  if (!kept) await queryClient.fetchInfiniteQuery({
       queryKey: query.queryKey,
       queryFn: ({ pageParam }) => query.queryFn({ pageParam: pageParam as number, signal }),
       initialPageParam: 0,
       getNextPageParam: query.getNextPageParam,
       gcTime: FOLLOW_FEED_GC_MS,
-    }),
-    queryClient.fetchQuery({ queryKey: FOLLOW_CREDENTIALS_KEY, queryFn: () => fetchFollowCredentials(signal) }),
-  ]);
+    });
 }
 
 /** 几页合成一份，形状同壳里 `followData`：组接在后面，其余取最后一页（来源随每页刷新）。 */
@@ -361,7 +363,7 @@ export function videoItems(group: FollowGroup): FollowItem[] {
    去重后只剩一个媒体时，报的就是来源数。量词随媒体类型走：视频论「个」，图片论「张」，与详情里
    「第 1 张，共 11 张」同一套；图和视频混在一起时说「个媒体」，不说「项」——「项」在关注页数的是
    更新条目，读起来像又在数帖子。 */
-const UNITS: Record<string, string> = { video: '个视频', image: '张图片', mixed: '个媒体' };
+const COUNT_KEYS: Record<string, string> = { video: 'follow:followFeed.videoCount', image: 'follow:followFeed.imageCount', mixed: 'follow:followFeed.mediaCount' };
 
 export interface FollowStack {
   isMix: boolean;
@@ -376,8 +378,8 @@ export function followStack({ cover = '', coverFace = null, stack = null, imageV
   const media = stack?.media || 0;
   const copies = stack?.copies || 0;
   const kind = stack?.kind || '';
-  const label = media > 1 ? `${media} ${UNITS[kind] || UNITS.mixed}`
-    : copies > 1 ? `${copies} 个来源` : '';
+  const label = media > 1 ? t(COUNT_KEYS[kind] || COUNT_KEYS.mixed!, { count: media })
+    : copies > 1 ? t('follow:followFeed.sourceCopies', { count: copies }) : '';
   /* 字形说的是点开以后看什么：视频起播是 play，图片是 pics。图和视频混在一起时，点开落在哪一种由
      视图决定，字形跟着视图走。 */
   const glyph = kind === 'image' || (kind !== 'video' && imageView) ? 'pics' : 'play';
@@ -402,8 +404,8 @@ export function backfillState(sources: readonly FollowSource[]): string {
   if (!pages.length) return '';
   const deepest = Math.max(...pages);
   const shallowest = Math.min(...pages);
-  if (deepest <= 1) return '每个来源都只抓了第 1 页';
-  return shallowest === deepest ? `每个来源都抓到第 ${deepest} 页` : `已抓到第 ${shallowest}–${deepest} 页`;
+  if (deepest <= 1) return t('follow:followFeed.fetchedFirstPageOnly');
+  return shallowest === deepest ? t('follow:followFeed.fetchedToPage', { page: deepest }) : t('follow:followFeed.fetchedPageRange', { from: shallowest, to: deepest });
 }
 
 /* ── 排序键 ── */
@@ -411,7 +413,7 @@ export function backfillState(sources: readonly FollowSource[]): string {
 /** 点未选中项换列并用该列的默认方向，点选中项翻方向；同壳里 `nextSortState` 配上这一页的词表。 */
 export function nextSort(key: string, current: string, dir: 'asc' | 'desc') {
   if (key !== current) return { sort: key as FollowSort, dir: 'desc' as const };
-  if (!FOLLOW_FEED_DIR_WORDS[key]) return null;
+  if (!FOLLOW_FEED_SORT_ARIA[key]) return null;
   return { sort: key as FollowSort, dir: dir === 'asc' ? 'desc' as const : 'asc' as const };
 }
 
@@ -419,8 +421,8 @@ export function nextSort(key: string, current: string, dir: 'asc' | 'desc') {
 export function sortAriaLabel(key: string, label: string, current: string, dir: 'asc' | 'desc'): string {
   const next = nextSort(key, current, dir);
   if (!next) return '';
-  const words = FOLLOW_FEED_DIR_WORDS[next.sort];
-  return `按${label}${words ? words[next.dir === 'asc' ? 1 : 0] : ''}排序`;
+  const sentences = FOLLOW_FEED_SORT_ARIA[next.sort];
+  return sentences ? sentences[next.dir === 'asc' ? 1 : 0] : t('follow:followFeed.sortByField', { field: label });
 }
 
 /* ── 壳递进来的那几样 ── */
@@ -433,6 +435,7 @@ export interface FollowContext {
   sources: readonly FollowSource[];
   aliases: readonly unknown[];
   credentials: ReadonlySet<string>;
+  credentialsReady?: boolean;
 }
 
 /** 仍由遗留层给的 HTML 与接线：详情用的是同一份，只有一处实现。署名、头像、来源图标与标题前后
@@ -539,24 +542,25 @@ export interface FollowFeedProps {
 }
 
 /** 当前按下的筛选条件，四个维度收成一张清单，顺序照筛选条从粗到细：创作者、来源、题材、标签。 */
-export interface FollowCondition { kind: '创作者' | '来源' | '题材' | '标签'; key: string; label: string }
+export type FollowConditionKind = 'creator' | 'source' | 'franchise' | 'tag';
+export interface FollowCondition { kind: FollowConditionKind; key: string; label: string }
 
 export function followConditions(view: FollowView, names: {
   authors: ReadonlyMap<string, string>; providers: ReadonlyMap<string, string>; works: ReadonlyMap<string, string>;
 }): FollowCondition[] {
   const rows: FollowCondition[] = [];
-  if (view.author) rows.push({ kind: '创作者', key: view.author, label: names.authors.get(view.author) || view.author });
-  if (view.provider) rows.push({ kind: '来源', key: view.provider, label: names.providers.get(view.provider) || view.provider });
-  if (view.work) rows.push({ kind: '题材', key: view.work, label: names.works.get(view.work) || view.work });
-  view.tags.forEach((tag) => rows.push({ kind: '标签', key: tag, label: tag }));
+  if (view.author) rows.push({ kind: 'creator', key: view.author, label: names.authors.get(view.author) || view.author });
+  if (view.provider) rows.push({ kind: 'source', key: view.provider, label: names.providers.get(view.provider) || view.provider });
+  if (view.work) rows.push({ kind: 'franchise', key: view.work, label: names.works.get(view.work) || view.work });
+  view.tags.forEach((tag) => rows.push({ kind: 'tag', key: tag, label: tag }));
   return rows;
 }
 
 /** 撤掉一条：按维度撤，同一个字符串在两个维度里都可能出现。 */
 export function dropCondition(view: FollowView, row: FollowCondition): FollowView {
-  if (row.kind === '创作者') return { ...view, author: '' };
-  if (row.kind === '来源') return { ...view, provider: '' };
-  if (row.kind === '题材') return { ...view, work: '' };
+  if (row.kind === 'creator') return { ...view, author: '' };
+  if (row.kind === 'source') return { ...view, provider: '' };
+  if (row.kind === 'franchise') return { ...view, work: '' };
   return { ...view, tags: view.tags.filter((tag) => tag !== row.key) };
 }
 

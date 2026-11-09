@@ -15,9 +15,10 @@ import { errorMessage } from '../../api';
 import { entityDisplayName } from '../../core/entity-names';
 import type { DownloadPrefill } from '../activity/cloud-download-dialog';
 import { Note } from '../components/note';
+import { CoverQueue } from '../components/cover-queue';
 import { TaskProgress } from '../components/task-progress';
 import { EmptyState } from '../components/empty-state';
-import { Pagination } from '../components/table-pagination';
+import { DataTableFooter } from '../components/table-controls';
 import { FilterGlassRows, FilterPill, GlassPill } from '../components/filter-glass';
 import { Segments, Shuffle, SortKeys } from '../entity-filter/entity-filter-page';
 import { Chip } from '@/components/base/badges/chip';
@@ -26,11 +27,16 @@ import { addWant, invalidateWants } from '../wants/wants';
 import { useAction } from '../settings/use-action';
 import { useEntityNames } from '../use-entity-names';
 import { DiscoveryCard, resourcePrefill } from './discovery-card';
-import { fetchReleases, releaseFilters, releaseKey, RELEASE_PAGE_SIZE, type Discovery, type ReleaseFacetPerformer, type ReleaseFacetStudio,
-  type ReleaseFilters, writeJavQuery } from './jav';
+import { controlReleaseMetadata, coverArrived, DISCOVERY_METADATA_KEY, DISCOVERY_REFRESH_MS, fetchCoverNow, fetchDiscoveryMetadata, fetchReleases,
+  releaseFilters, releaseKey, RELEASE_PAGE_SIZE, RELEASE_PAGE_SIZES,
+  type Discovery, type DiscoveryMetadataStatus, type ReleaseFacetPerformer, type ReleaseFacetStudio, type ReleaseFilters,
+  writeJavQuery } from './jav';
+import { queryClient } from '../query';
 import { ReleaseTable } from './jav-release-table';
 import { CatalogViewToggle } from '../catalog-grid/catalog-view-toggle';
 import { useCatalogView } from '../catalog-grid/catalog-view';
+import { useVisibleJavWorks } from './jav-selection';
+import { t } from '../../i18n';
 
 type Facet = 'performer' | 'studio' | 'tag';
 /** 等数据时两排头像的占位，与路由骨架（`releasesFilterSkeleton`）同一份。 */
@@ -44,7 +50,7 @@ const performerRing = (person: ReleaseFacetPerformer) =>
 /** 按口味排时卡上那枚推荐档，与「发现」同一套分档。 */
 function TasteChip({ value }: { value?: number | null }) {
   const recommendation = recommendationScore(value);
-  return <span data-jav-taste-score="" title={`口味 ${recommendation.score}`}><Chip color={recommendation.color}>{recommendation.label}</Chip></span>;
+  return <span data-jav-taste-score="" title={t('catalog:javScore.taste', { score: recommendation.score })}><Chip color={recommendation.color}>{recommendation.label}</Chip></span>;
 }
 
 function StudioMark({ studio }: { studio: ReleaseFacetStudio }) {
@@ -54,6 +60,12 @@ function StudioMark({ studio }: { studio: ReleaseFacetStudio }) {
       loading="lazy" decoding="async" onError={() => setBroken(true)} /> : leadingGraphemes(studio.name, 2)}
   </span>;
 }
+
+/** 本页一键插队当场取一部：取到就补进已取回的数据（`coverArrived`），卡片换成本机那张。 */
+const fetchReleaseCover = (code: string) => fetchCoverNow(code).then(result => {
+  if (result.has_cover) coverArrived(code, result);
+  return result.has_cover;
+});
 
 export function Releases({ readOnly, receipt, resource, query, navigate, clearText }: {
   readOnly: boolean; receipt(message: string): void; resource(work: DownloadPrefill): void; query: string;
@@ -73,9 +85,10 @@ export function Releases({ readOnly, receipt, resource, query, navigate, clearTe
     writeJavQuery({ [facet]: next, page: '' });
   };
   const section = useRef<HTMLElement>(null);
-  const goPage = (page: number) => {
-    setFilters(current => ({ ...current, page }));
-    writeJavQuery({ page: page > 1 ? String(page) : '' });
+  const changePage = ({ pageIndex, pageSize }: { pageIndex: number; pageSize: number }) => {
+    const page = pageIndex + 1;
+    setFilters(current => ({ ...current, page, size: pageSize }));
+    writeJavQuery({ page: page > 1 ? String(page) : '', size: pageSize === RELEASE_PAGE_SIZE ? '' : String(pageSize) });
     section.current?.scrollIntoView({ block: 'start' });
   };
   const clear = () => {
@@ -108,47 +121,79 @@ export function Releases({ readOnly, receipt, resource, query, navigate, clearTe
   /* 卡片／列表与馆藏同一个开关（`peach.catalog-view.v1`）：JAV 页的馆藏与新作一起切。 */
   const view = useCatalogView();
   const ratio = cardRatio(gridLayout({ active: true, home: false, portrait: false }));
-  /* 还没读过来源资料的那几部由服务端起一轮读取：跑着就按它给的间隔轮询，跑完再取一次，标签与筛选项补全。 */
-  const metadataJob = useRef('');
-  const releases = useQuery({ queryKey: releaseKey(filters), queryFn: ({ signal }) => fetchReleases(filters, signal, metadataJob.current),
+  /* 新作列表只读：每问一次都把全部候选重算一遍，不拿它当进度轮询。还没读过来源资料的那几部由
+     「读取资料」起一轮（与「发现」共用一个任务），进度单独轮询；读的期间列表隔 `DISCOVERY_REFRESH_MS`
+     才重取一次，跑完再取一次，标签与筛选项补全。 */
+  const readingNow = useRef(false);
+  const releases = useQuery({ queryKey: releaseKey(filters), queryFn: ({ signal }) => fetchReleases(filters, signal),
     placeholderData: keepPreviousData, retry: false, refetchOnWindowFocus: false,
-    refetchInterval: current => current.state.data?.metadata_job?.status === 'running'
-      ? Math.max(1000, current.state.data.poll_after_ms || 3000) : false });
-  const metadata = releases.data?.metadata_job;
+    refetchInterval: () => (readingNow.current ? DISCOVERY_REFRESH_MS : false) });
+  const listedJob = releases.data?.metadata_job;
+  const listedRunning = useRef(false);
+  listedRunning.current = listedJob?.status === 'running';
+  const polled = queryClient.getQueryData<DiscoveryMetadataStatus>(DISCOVERY_METADATA_KEY)?.metadata_job;
+  /* 进度只在有一轮在跑时轮询：列表带回来的、或起读回执写进来的那一轮。 */
+  const progress = useQuery({ queryKey: DISCOVERY_METADATA_KEY, retry: false, refetchOnWindowFocus: false,
+    enabled: listedJob?.status === 'running' || polled?.status === 'running',
+    queryFn: ({ signal }) => fetchDiscoveryMetadata(signal),
+    refetchInterval: current => current.state.data?.metadata_job?.status === 'running' || listedRunning.current
+      ? Math.max(1000, current.state.data?.poll_after_ms || 3000) : false });
+  // 两处谁新用谁：进度轮询与起读的回执写在进度那份里，列表重取时也带回当前任务。
+  const metadata = progress.data && progress.dataUpdatedAt >= releases.dataUpdatedAt
+    ? progress.data.metadata_job : listedJob;
   const reading = metadata?.status === 'running';
+  readingNow.current = reading;
   const wasReading = useRef(false);
-  useEffect(() => { if (metadata?.job_id) metadataJob.current = metadata.job_id }, [metadata?.job_id]);
   useEffect(() => {
     if (wasReading.current && !reading) void releases.refetch();
     wasReading.current = reading;
   }, [reading, releases]);
+  /* 筛选结果里有从没读过的就起一轮；同一组筛选每次挂载只起一次，停下、失败的那一轮不在这里重启。 */
+  const started = useRef('');
+  const scope = JSON.stringify([filters.performer, filters.studio, filters.tag, filters.q, filters.sort, filters.dir, filters.seed]);
+  const unread = !releases.isPlaceholderData && (releases.data?.metadata_unread || 0) > 0 && !reading;
+  useEffect(() => {
+    if (!unread || started.current === scope) return;
+    started.current = scope;
+    void controlReleaseMetadata('start', filters).then(async (result) => {
+      // 起读之前发出的进度请求晚回来会盖掉这份回执，先取消。
+      await queryClient.cancelQueries({ queryKey: DISCOVERY_METADATA_KEY });
+      queryClient.setQueryData(DISCOVERY_METADATA_KEY, result);
+    }).catch(() => {});
+  }, [unread, scope]); // eslint-disable-line react-hooks/exhaustive-deps
   const action = useAction();
   const want = (item: Discovery) => { void action.run(String(item.id), signal => addWant({ code: item.code }, signal), () => {
-    receipt('已加入想要'); void invalidateWants(); void releases.refetch();
+    receipt(t('catalog:javWant.added')); void invalidateWants(); void releases.refetch();
   }) };
   const data = releases.data;
+  useVisibleJavWorks(data?.items || []);
   const waiting = releases.isPending;
   const filtered = !!(filters.performer || filters.studio || filters.tag || filters.q);
-  const pages = Math.max(1, Math.ceil((data?.total || 0) / RELEASE_PAGE_SIZE));
-  return <section ref={section} aria-label="订阅新作" aria-busy={waiting || releases.isFetching} className="flex min-w-0 scroll-mt-24 flex-col gap-4">
+  const pages = Math.max(1, Math.ceil((data?.total || 0) / filters.size));
+  useEffect(() => {
+    if (!data || releases.isPlaceholderData || filters.page <= pages) return;
+    setFilters(current => ({ ...current, page: pages }));
+    writeJavQuery({ page: pages > 1 ? String(pages) : '' });
+  }, [data, releases.isPlaceholderData, filters.page, pages]);
+  return <section ref={section} aria-label={t('catalog:entityHero.subscribeNewReleases')} aria-busy={waiting || releases.isFetching} className="flex min-w-0 scroll-mt-24 flex-col gap-4">
     {waiting ? <div data-catalog-tiers="" aria-busy="true" dangerouslySetInnerHTML={{ __html: TIER_PLACEHOLDERS }} /> : null}
     {data && (data.facets.performers.length || data.facets.studios.length) ? <div data-catalog-tiers="" data-release-tiers="">
-      {data.facets.performers.length ? <div data-catalog-tier="performers" role="group" aria-label="按女优筛选">
+      {data.facets.performers.length ? <div data-catalog-tier="performers" role="group" aria-label={t('catalog:javReleases.filterByActress')}>
         {data.facets.performers.map(person => <button key={person.name} type="button" data-tier-performer=""
-          aria-pressed={filters.performer === person.name} title={`${entityDisplayName('performer', person.name, person.id)} · ${person.count} 部`}
+          aria-pressed={filters.performer === person.name} title={t('catalog:javReleases.facetCount', { name: entityDisplayName('performer', person.name, person.id), count: person.count })}
           onClick={() => choose('performer', person.name)}>
           <span data-tier-ring="" dangerouslySetInnerHTML={{ __html: performerRing(person) }} />
           <span data-tier-name="">{entityDisplayName('performer', person.name, person.id)}</span>
         </button>)}
       </div> : null}
-      {data.facets.studios.length ? <div data-catalog-tier="studios" role="group" aria-label="按厂牌筛选">
+      {data.facets.studios.length ? <div data-catalog-tier="studios" role="group" aria-label={t('catalog:javReleases.filterByLabel')}>
         {data.facets.studios.map(studio => <button key={studio.name} type="button" data-tier-studio=""
-          aria-pressed={filters.studio === studio.name} title={`${studio.name} · ${studio.count} 部`} onClick={() => choose('studio', studio.name)}>
+          aria-pressed={filters.studio === studio.name} title={t('catalog:javReleases.facetCount', { name: studio.name, count: studio.count })} onClick={() => choose('studio', studio.name)}>
           <StudioMark studio={studio} />{studio.name}<span data-count-badge="">{studio.count}</span>
         </button>)}
       </div> : null}
     </div> : null}
-    <FilterGlassRows label="新作筛选" topLabel="新作标签" attrs={{ 'data-filter-frame': '', 'data-jav-filter': '', 'data-catalog-frame': '' }}
+    <FilterGlassRows label={t('catalog:javReleases.filtersLabel')} topLabel={t('catalog:javReleases.tagsLabel')} attrs={{ 'data-filter-frame': '', 'data-jav-filter': '', 'data-catalog-frame': '' }}
       busy={waiting} topClassName="gap-1.5 overflow-visible" bottomClassName="min-h-12" top={<div data-catalog-scroll="">
         <div data-catalog-tags="" dangerouslySetInnerHTML={waiting ? { __html: javTagSkeleton() } : undefined}>
           {waiting ? null : data?.facets.tags.map(row => <FilterPill key={row.name} data-catalog-tag={row.name} data-entity-press=""
@@ -157,24 +202,30 @@ export function Releases({ readOnly, receipt, resource, query, navigate, clearTe
           </FilterPill>)}
         </div></div>} bottom={<>
         <span data-catalog-readout="">{waiting ? <span data-skeleton="count" aria-hidden className="relative inline-block h-3.5 w-37.5 rounded-md align-middle skeleton-sheen" />
-          : filtered ? `${data?.total || 0} / ${data?.candidate_total || 0} 部` : `${data?.total || 0} 部`}</span>
-        {filtered ? <GlassPill onPress={clear}>清除筛选</GlassPill> : null}
+          : filtered ? t('catalog:javReleases.matchedCount', { matched: data?.total || 0, count: data?.candidate_total || 0 }) : t('catalog:countLabel.works', { count: data?.total || 0 })}</span>
+        {filtered ? <GlassPill onPress={clear}>{t('catalog:shared.clearFilters')}</GlassPill> : null}
         <span data-entity-sorts="">
           <Shuffle onPress={reshuffle} busy={filters.sort === 'random' && releases.isFetching} />
-          {view === 'cards' ? <Segments label="JAV 卡片版式" value={layout} options={JAV_LAYOUTS} onChange={storeJavLayout} /> : null}
+          {view === 'cards' ? <Segments label={t('catalog:entityFilter.javCardLayout')} value={layout} options={JAV_LAYOUTS} onChange={storeJavLayout} /> : null}
           <CatalogViewToggle />
           <SortKeys sorts={RELEASE_SORTS.map(([key, label, ariaLabel]) => ({ key, label, ariaLabel, pressed: key === filters.sort, dir: filters.dir }))}
             onSort={key => sortBy(key as ReleaseSort)} />
         </span>
       </>} />
-    {waiting && view === 'cards' ? <div role="status" aria-label="正在读取新作" dangerouslySetInnerHTML={{ __html: javContentSkeleton('discover', layout) }} /> : null}
-    {releases.error ? <Note tone="error" title="新作未取得">{errorMessage(releases.error)}</Note> : null}
+    {waiting && view === 'cards' ? <div role="status" aria-label={t('catalog:javReleases.loading')} dangerouslySetInnerHTML={{ __html: javContentSkeleton('discover', layout) }} /> : null}
+    {releases.error ? <Note tone="error" title={t('catalog:javReleases.failed')}>{errorMessage(releases.error)}</Note> : null}
     {reading && metadata ? <div data-jav-metadata="" className="min-w-0"><TaskProgress
-      label={`正在读取作品资料 · ${metadata.completed} / ${metadata.total} 部`} value={metadata.completed} total={metadata.total} /></div> : null}
-    {!waiting && !releases.error && !data?.items.length ? <EmptyState icon={RiRssLine} title={filtered ? '没有符合条件的新作' : '暂无未入库的新作'}
-      actions={filtered ? <Button size="small" onClick={clear}>清除筛选</Button>
-        : <ButtonLink size="small" href="/subscriptions?tab=add">添加订阅</ButtonLink>}>
-      {filtered ? '清除筛选后查看全部新作。' : '订阅女优或厂牌后，还没入库的新作会出现在这里。'}
+      label={t('catalog:javMetadata.loadingProgress', { completed: metadata.completed, count: metadata.total })} value={metadata.completed} total={metadata.total} /></div> : null}
+    {readOnly ? null : <CoverQueue scope={t('catalog:javReleases.coverQueueScope')} fetchOne={fetchReleaseCover}
+      codes={(data?.items || []).filter(item => item.cover_state === 'queued' && !item.cover_url).map(item => item.code)}
+      settled={(got, total) => {
+        receipt(got === total ? t('catalog:javReleases.coversFetched', { count: total }) : t('catalog:javReleases.coversPartial', { got, count: total }));
+        void releases.refetch();
+      }} />}
+    {!waiting && !releases.error && !data?.items.length ? <EmptyState icon={RiRssLine} title={filtered ? t('catalog:javReleases.noMatches') : t('catalog:javReleases.emptyTitle')}
+      actions={filtered ? <Button size="small" onClick={clear}>{t('catalog:shared.clearFilters')}</Button>
+        : <ButtonLink size="small" href="/subscriptions?tab=add">{t('catalog:javReleases.addSubscription')}</ButtonLink>}>
+      {filtered ? t('catalog:javReleases.clearFiltersHint') : t('catalog:javReleases.emptyHint')}
     </EmptyState> : null}
     {action.error ? <Note tone="error">{action.error}</Note> : null}
     {view === 'list' ? waiting || data?.items.length ? <ReleaseTable items={data?.items || []} waiting={waiting} filters={filters}
@@ -187,6 +238,8 @@ export function Releases({ readOnly, receipt, resource, query, navigate, clearTe
         wanting={action.busy === String(item.id)} onWant={() => want(item)}
         onResource={() => resource(resourcePrefill(item))} badge={filters.sort === 'taste' ? <TasteChip value={item.taste_score} /> : undefined} />)}
     </div>}
-    <div className="flex justify-center"><Pagination page={filters.page} pages={pages} onPage={goPage} label="新作分页" /></div>
+    {data ? <DataTableFooter label={t('catalog:javTabs.newReleases')} total={data.total}
+      pagination={{ pageIndex: filters.page - 1, pageSize: filters.size }} onChange={changePage}
+      unit={t('catalog:catalogList.footerUnit')} pageUnit={t('catalog:catalogList.footerPageUnit')} pageSizes={RELEASE_PAGE_SIZES} /> : null}
   </section>;
 }

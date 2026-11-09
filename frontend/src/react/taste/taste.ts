@@ -17,6 +17,7 @@ import type { BarRow } from '../charts/bar-card';
 import type { ActivityCounts } from '../charts/heat';
 import { queryClient } from '../query';
 import { playedFor } from '../stats/stats';
+import { interfaceLanguage, t } from '../../i18n';
 
 export const TASTE_URL = '/api/taste';
 export const TASTE_REFRESH_URL = '/api/taste/refresh';
@@ -30,8 +31,8 @@ export const TASTE_REFRESH_KEY = ['taste', 'refresh'] as const;
 
 /** 分析范围。值就是 `/api/taste?window=` 收的那几个。 */
 export const TASTE_WINDOWS = [
-  ['7d', '最近 7 天'], ['30d', '最近 30 天'], ['90d', '最近 90 天'],
-  ['365d', '最近一年'], ['all', '全部时间'],
+  ['7d', t('manage:taste.last7Days')], ['30d', t('manage:taste.last30Days')], ['90d', t('manage:taste.last90Days')],
+  ['365d', t('manage:taste.lastYear')], ['all', t('manage:taste.allTime')],
 ] as const;
 
 export const DEFAULT_WINDOW = 'all';
@@ -131,7 +132,7 @@ export const tasteRefetchInterval = (data: TasteData | undefined): number | fals
 
 /** 快照时刻，精确到分钟：重算通常几秒内完成，只写日期看不出是哪一份。 */
 export const tasteTime = (value: string | null | undefined): string =>
-  (value ? new Date(value).toLocaleString('zh-CN', {
+  (value ? new Date(value).toLocaleString(interfaceLanguage, {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }) : '—');
 
@@ -203,7 +204,7 @@ export async function importTasteExport(file: File): Promise<{ dashboard: TasteD
   } catch { /* 失败响应不一定是 JSON，下面按状态码兜底 */ }
   if (!response.ok) {
     const reason = (payload as { error?: string } | null)?.error;
-    throw new ApiError(reason || `导入失败（${response.status}）`, response.status, payload);
+    throw new ApiError(reason || t('manage:taste.importFailedStatus', { status: response.status }), response.status, payload);
   }
   return payload as { dashboard: TasteData };
 }
@@ -212,15 +213,15 @@ export async function importTasteExport(file: File): Promise<{ dashboard: TasteD
 export const IDLE_POLL_MS = 10_000;
 
 export const tasteDate = (value: string | null | undefined): string =>
-  (value ? new Date(value).toLocaleDateString('zh-CN') : '—');
+  (value ? new Date(value).toLocaleDateString(interfaceLanguage) : '—');
 
 /** 浏览记录那张读数卡的脚注：几个数据源，加上记录覆盖的日期范围；两头都没有日期时不写范围。 */
 export function historySpan(summary: TasteSummary): string {
-  const sources = `${Number(summary.history_sources || 0).toLocaleString()} 个数据源`;
+  const sources = t('manage:taste.sourceCount', { count: Number(summary.history_sources || 0) });
   if (!summary.range_start && !summary.range_end) return sources;
   const sameYear = summary.range_start?.slice(0, 4) === summary.range_end?.slice(0, 4);
   const date = (value: string | null | undefined) => value && sameYear
-    ? new Date(value).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : tasteDate(value);
+    ? new Date(value).toLocaleDateString(interfaceLanguage, { month: 'numeric', day: 'numeric' }) : tasteDate(value);
   return `${sources} · ${date(summary.range_start)}–${date(summary.range_end)}`;
 }
 
@@ -242,8 +243,8 @@ export function rankDetail(row: RankRow): string {
   const parts: string[] = [];
   const bookmarks = Number(row.web_bookmarks || 0);
   const visits = Number(row.web_visits ?? row.visits ?? 0) - bookmarks;
-  if (visits > 0) parts.push(`浏览 ${visits.toLocaleString()}`);
-  if (bookmarks) parts.push(`书签 ${bookmarks.toLocaleString()}`);
+  if (visits > 0) parts.push(t('manage:taste.visitCount', { count: visits }));
+  if (bookmarks) parts.push(t('manage:taste.bookmarkCount', { count: bookmarks }));
   if (row.peach_items) parts.push(`Peach ${Number(row.peach_items).toLocaleString()}`);
   return parts.join(' · ');
 }
@@ -317,8 +318,8 @@ export function flowGraph(rows: CreatorFlow[] = []): FlowGraph | null {
   const valid = rows.filter((row) =>
     row.source && row.target && Number.isFinite(row.value) && row.value > 0);
   if (!valid.length) return null;
-  const sourceOf = foldSide(valid, 'source', (count) => `其余 ${count.toLocaleString()} 个网站`);
-  const targetOf = foldSide(valid, 'target', (count) => `其余 ${count.toLocaleString()} 位创作者`);
+  const sourceOf = foldSide(valid, 'source', (count) => t('manage:taste.otherSites', { count: count }));
+  const targetOf = foldSide(valid, 'target', (count) => t('manage:taste.otherCreators', { count: count }));
   const folded = new Map<string, CreatorFlow>();
   for (const row of valid) {
     const source = sourceOf(row.source);

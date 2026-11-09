@@ -13,6 +13,7 @@ import { cx } from '@/utils/cx';
 
 import { ApiError, apiSend } from '../../api';
 import { busyProps } from '../settings/use-action';
+import { t } from '../../i18n';
 
 /** 全站「打开位置」那一枚。雪碧图里的 `folder-open`，Remix Icon 没有对应的一枚。 */
 function FolderOpenIcon({ className }: { className?: string }) {
@@ -25,7 +26,7 @@ function FolderOpenIcon({ className }: { className?: string }) {
 }
 
 /** 请求没发出去（断网、页面换了口令）时的说法。服务端答得上来的原因由它自己写成中文。 */
-const UNREACHED = '打开文件管理器失败，请重试';
+const UNREACHED = t('shell:sourceTools.revealFailed');
 
 export function PathLine(
   { path, prefix, className, action, onRevealed }:
@@ -52,7 +53,7 @@ export function PathLine(
     setProblem('');
     try {
       await apiSend('/api/reveal', { path });
-      onRevealed?.('已在资源管理器中显示');
+      onRevealed?.(t('shell:sourceTools.revealed'));
     } catch (error) {
       if (alive.current) setProblem(error instanceof ApiError ? error.message : UNREACHED);
     } finally {
@@ -67,7 +68,7 @@ export function PathLine(
           {prefix}{path}
         </p>
         <div className="flex shrink-0 items-center gap-2">
-          <IconButton icon={FolderOpenIcon} size="small" aria-label="在资源管理器中显示"
+          <IconButton icon={FolderOpenIcon} size="small" aria-label={t('shell:pathLine.reveal')}
             onClick={() => void reveal()} {...busyProps(busy)} />
           {action}
         </div>

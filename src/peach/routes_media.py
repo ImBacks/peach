@@ -146,10 +146,10 @@ def _attachment_disposition(title: str, url: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
-def _repaired_header(state, asset_id: int, source: Path):
+def _repaired_header(state, asset_id: int, source: Path, stat=None):
     """已经修好的 MP4 头；没有就是 None。只查不算，算是 `_needs_conversion` 的事。"""
     store = getattr(state, "header_repairs", None)
-    return None if store is None else store.lookup(asset_id, source)
+    return None if store is None else store.lookup(asset_id, source, stat=stat)
 
 
 def _needs_conversion(state, asset_id: int, source: Path, session: str) -> bool:
@@ -199,6 +199,20 @@ def _hls_plan(state, asset_id: int, session: str = "", conversion: bool | None =
         return None
     plan = state.hls_service.plan(source, duration)
     return None if not plan else (asset, source, plan, False)
+
+
+def _session_plan(state, asset_id: int, session: str):
+    """这次播放的分片计划：播放列表算出来记在会话上，分片端点直接取（`SessionPlans`）。
+
+    重启后续播的分片没有记录，当场再算一次并记下。
+    """
+    plans = getattr(state, "hls_session_plans", None)
+    if plans is not None and (known := plans.get(session, asset_id)) is not None:
+        return known
+    resolved = _hls_plan(state, asset_id, session)
+    if plans is not None and resolved is not None:
+        plans.put(session, asset_id, resolved)
+    return resolved
 
 
 @router.post("/api/external-playback")
@@ -256,7 +270,7 @@ def local_playback(request: Request, id: int, player: str = 'default', args=Depe
     asset = request.app.state.media_engine.asset(id)
     path = request.app.state.media_engine.filesystem.file_for(asset, thumbnail=False)
     try:
-        launcher.open_media(path, player)
+        launcher.open_media(path, player, track=_playback_tracker(request.app.state, id))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     except (OSError, subprocess.SubprocessError) as exc:
@@ -264,6 +278,22 @@ def local_playback(request: Request, id: int, player: str = 'default', args=Depe
                        player, type(exc).__name__, getattr(exc, 'errno', None), getattr(exc, 'winerror', None))
         raise HTTPException(503, '无法打开播放器，请检查系统文件关联或选择其他播放器') from None
     return {'opened': True}
+
+
+def _playback_tracker(state, asset_id: int):
+    """外部播放器回报的进度按网页播放器同一口径写：首次前进计一次播放，其余进活动记录。"""
+    from .playback_tracking import Session
+    from .web_activity import w_activity, w_play
+    trackers, contract = state.playback_trackers, state.web_contract
+    if not trackers.has_room():
+        return None
+
+    def report(body: dict, first: bool) -> None:
+        if first:
+            w_play(contract, {'id': asset_id})
+        w_activity(contract, body)
+
+    return lambda connect, alive: trackers.start(Session(asset_id, connect, alive, report))
 
 
 def _external_asset(request: Request, asset_id: int, ticket: str, origin: str):
@@ -305,13 +335,15 @@ def stream(request: Request, id: int, session: str = "", args: dict[str, str] = 
     local_event('playback-request', asset_id=id, method=request.method,
                 range=request.headers.get('range', '')[:80], user_agent=request.headers.get('user-agent', '')[:512])
     asset = state.media_engine.asset(id)
-    path = state.media_engine.filesystem.file_for(asset, thumbnail=False)
+    # 拖一次进度条就是一串 Range 请求，片源在网盘上时每次 stat 都是一趟网络往返：确认存在时
+    # 取到的那一次 stat 一路传给头修复查询、画像缓存和文件响应，一个请求只问一次。
+    path, source_stat = state.media_engine.filesystem.located(asset)
     from . import strm, strm_stream
     if strm.is_pointer(path):
         return strm_stream.proxy(request, id, path, session)
     if path.suffix.lower() in strm.DISC_SUFFIXES:
         return JSONResponse({'error': 'ISO 原盘请使用作品详情中的外部播放器打开'}, status_code=415)
-    header = _repaired_header(state, id, path)
+    header = _repaired_header(state, id, path, source_stat)
     if header is not None:
         return SplicedMp4Response(
             path, header, session=session, registry=state.stream_sessions,
@@ -320,6 +352,7 @@ def stream(request: Request, id: int, session: str = "", args: dict[str, str] = 
         # 不带会话的只有卡片悬停预览：取消不了，也看不到浏览器断开，不能为它起整片转码。
         path, transcoded = state.transcode_service.browser_path(
             id, path, session=session, registry=state.stream_sessions, convert=bool(session),
+            stat=source_stat,
         )
     except TranscodeCancelled:
         return Response(status_code=410, headers={"Cache-Control": "no-store"})
@@ -334,11 +367,13 @@ def stream(request: Request, id: int, session: str = "", args: dict[str, str] = 
     if isinstance(path, SmbResource):
         from .smb_response import SmbResponse
         return SmbResponse(path, session=session, registry=state.stream_sessions, media_type=media_type)
+    known = None if transcoded else source_stat
     response = (
         CancellableFileResponse(
             path, session=session, registry=state.stream_sessions, media_type=media_type,
+            stat_result=known,
         )
-        if session else BufferedFileResponse(path, media_type=media_type)
+        if session else BufferedFileResponse(path, media_type=media_type, stat_result=known)
     )
     if transcoded:
         response.headers["X-Peach-Transcoded"] = "1"
@@ -434,7 +469,7 @@ def hls_playlist(request: Request, id: int, session: str = "", args: dict[str, s
     if state.stream_sessions.is_cancelled(session):
         return PlainTextResponse("stream cancelled", status_code=410)
     try:
-        resolved = _hls_plan(state, id, session)
+        resolved = _session_plan(state, id, session)
     except (MediaUnavailable, TranscodeUnavailable):
         return PlainTextResponse("hls unavailable", status_code=404)
     if resolved is None:
@@ -464,10 +499,12 @@ async def hls_segment(request: Request, id: int, index: int, session: str = "", 
 async def _hls_segment(request: Request, id: int, index: int, session: str):
     state = request.app.state
     try:
-        loop = asyncio.get_running_loop()
-        resolved = await loop.run_in_executor(
-            state.hls_plan_executor, partial(_hls_plan, state, id, session),
-        )
+        plans = getattr(state, "hls_session_plans", None)
+        resolved = plans.get(session, id) if plans is not None else None
+        if resolved is None:
+            resolved = await asyncio.get_running_loop().run_in_executor(
+                state.hls_plan_executor, partial(_session_plan, state, id, session),
+            )
         if resolved is None:
             return JSONResponse({"error": "hls unavailable"}, status_code=404)
         _, source, plan, conversion = resolved
@@ -515,6 +552,9 @@ async def stream_cancel(request: Request, session: str, args: dict[str, str] = D
     if not session or len(session) > 128:
         return JSONResponse({"error": "invalid session"}, status_code=400)
     cancelled = request.app.state.stream_sessions.cancel(session)
+    plans = getattr(request.app.state, "hls_session_plans", None)
+    if plans is not None:
+        plans.forget(session)
     return JSONResponse({"ok": True, "cancelled": cancelled})
 
 
@@ -532,8 +572,11 @@ def _subtitle_rows(state, asset_id: int):
         video = normalized_path(asset.path)
         if any(within_root(video, root) for root in state.media_engine.filesystem.allowed_roots):
             known = {str(normalized_path(row["path"])).casefold() for row in rows}
-            rows.extend(row for row in subtitles.discover_sidecars(video, VIDEO)
-                        if row["path"].casefold() not in known)
+            # 列表一次、每条轨各一次都走这里；目录列举按视频路径缓存，网盘目录不每次列一遍。
+            listings = getattr(state, "sidecar_listings", None)
+            found = (listings.discover(video, VIDEO) if listings is not None
+                     else subtitles.discover_sidecars(video, VIDEO))
+            rows.extend(row for row in found if row["path"].casefold() not in known)
     return asset, rows
 
 
@@ -706,10 +749,11 @@ def sample_image(request: Request, code: str = "", n: int = 0,
 
 @router.api_route("/poster", methods=["GET", "HEAD"])
 def poster(request: Request, id: int, c: int = 4, args: dict[str, str] = Depends(require_auth)):
+    """作品卡的预览格。取不到时 `reason` 交出卡在哪一步，卡片据此写原因、决定给哪颗按钮。"""
     try:
         path = request.app.state.preview_service.poster(id, c)
-    except PreviewUnavailable:
-        return JSONResponse({"error": "unavailable"}, status_code=404)
+    except PreviewUnavailable as exc:
+        return JSONResponse({"error": "unavailable", "reason": str(exc)}, status_code=404)
     return _image_response(request, path, media_type="image/jpeg")
 
 
@@ -774,10 +818,14 @@ async def cover_crop(request: Request, args: dict[str, str] = Depends(require_au
     手工框就是删掉这份 sidecar，下一次取景重新按折痕判据算。
 
     `box` 是源图像素的 `{x0,y0,x1,y1}`，右下开区间；`box` 为 null 表示恢复默认。
+    读图、算折痕与写 sidecar 都在线程里做：这是异步端点，同步读写会停住整个服务的送流。
     """
-    state = request.app.state.web_contract
     sent = await request.json()
     payload = sent if isinstance(sent, dict) else {}
+    return await asyncio.to_thread(_apply_cover_crop, request.app.state.web_contract, payload)
+
+
+def _apply_cover_crop(state, payload: dict):
     code = str(payload.get("code") or "")
     path = state.cover_path(code)
     if path is None:
@@ -852,6 +900,7 @@ def follow_avatar(request: Request, service: str = "", id: str = "",
     state = request.app.state
     transport = state.http_transport
     client = transport.client
+    failures: list[str] = []
     if provider:
         target = follow_assets.mirror_avatar_url(provider, ref)
         if target is None:
@@ -872,7 +921,11 @@ def follow_avatar(request: Request, service: str = "", id: str = "",
             for name, handle in identities:
                 try:
                     tier_lists.append(profile_avatar_tiers(name, handle, transport=transport))
-                except (OSError, FollowSourceError):
+                except FollowSourceError as error:
+                    failures.append(str(error))
+                    continue
+                except OSError:
+                    failures.append("头像来源暂不可用")
                     continue
             return follow_assets.largest_image(client, tier_lists)
     else:
@@ -891,6 +944,10 @@ def follow_avatar(request: Request, service: str = "", id: str = "",
             return follow_assets.fetch_image(client, resolved)
     path = follow_assets.cached_image(_asset_root(state), "avatars", key,
                                       AVATAR_REFRESH_SECONDS, fetch)
+    if path is None and service == "profile":
+        reason = "；".join(failures) or "社媒头像未取得，来源暂不可用或仍在重试等待中"
+        return JSONResponse({"error": reason}, status_code=404,
+                            headers={"cache-control": "no-store"})
     return _asset_response(request, path, placeholder=False)
 
 
@@ -909,7 +966,7 @@ def source_icon(request: Request, provider: str = "", args: dict[str, str] = Dep
         client = state.http_transport.client
         path = follow_assets.cached_image(
             _asset_root(state), "icons", provider, FAVICON_REFRESH_SECONDS,
-            lambda: follow_assets.fetch_image(client, target))
+            lambda: follow_assets.legible_icon(follow_assets.fetch_image(client, target)))
     if path is None:
         return Response((PROJECT_ROOT / 'resources' / 'site-marks' / 'globe.svg').read_bytes(),
                         status_code=404, media_type='image/svg+xml', headers={'cache-control': 'no-store'})
@@ -1220,8 +1277,9 @@ def cover_image(request: Request, code: str, args: dict[str, str] = Depends(requ
     """库外作品的官方封面：按番号在服务端查地址，经 Peach 的出网设置取图并落盘缓存。
 
     取不到一律回 404 且不缓存：卡片按 `data-drop` 换成占位，网络恢复后下一次加载重取。
+    DMM 缺图时 302 到同一主机族上的「NOW PRINTING」占位图，跟到那一跳也算取不到。
     """
-    from .jav_cover_fetch import COVER_PROXY_HOSTS, candidate_for
+    from .jav_cover_fetch import COVER_PROXY_HOSTS, PLACEHOLDER, candidate_for
     from .web_jav_detail import detail_code, stored_cover_url
     state = request.app.state
     try:
@@ -1234,8 +1292,13 @@ def cover_image(request: Request, code: str, args: dict[str, str] = Depends(requ
         if hit is not None:
             return hit
         target = ResolvedFollowMedia(url, candidate_for(url).referer, allowed_hosts=COVER_PROXY_HOSTS)
-        return cache.stream(key, request, lambda: open_upstream(
-            state.http_transport.client, request.method, target, incoming=request.headers))
+        def fetch():
+            upstream = open_upstream(state.http_transport.client, request.method, target, incoming=request.headers)
+            if PLACEHOLDER.search(str(upstream.url)):
+                upstream.close()
+                raise FollowProxyError("上游给的是「准备中」占位图")
+            return upstream
+        return cache.stream(key, request, fetch)
     except (ValueError, FollowProxyError, OSError, httpx.HTTPError):
         return Response(status_code=404, headers={"cache-control": "no-store"})
 
@@ -1271,7 +1334,8 @@ def jav_image(request: Request, code: str, image: str = "cover", args: dict[str,
 
 def _jav_preview_target(url: str) -> ResolvedFollowMedia:
     """已验证的预览来源使用固定主机范围，其他 CDN 逐跳核对公网解析。"""
-    return ResolvedFollowMedia(url, allowed_hosts=("www.prestige-av.com", "jdforrepam.com", "cc3001.dmm.co.jp"), public_hosts=True)
+    return ResolvedFollowMedia(url, allowed_hosts=("www.prestige-av.com", "jdforrepam.com", "cc3001.dmm.co.jp",
+                                                  "ygp.blxr5es.com"), public_hosts=True)
 
 
 @router.api_route("/jav-preview/{code}/{ref}", methods=["GET", "HEAD"])
@@ -1570,6 +1634,7 @@ def _picker_online(request: Request, connection, entity_id: int):
     state = request.app.state
     providers_root, _ = _picker_roots(state.web_contract)
     cache = avatar_provider.AvatarCandidateCache(providers_root / "follow-content")
+    avatar_origin: dict = {}
 
     def media(item, index):
         target = state.follow_media_resolver.resolve(item, index)
@@ -1597,11 +1662,26 @@ def _picker_online(request: Request, connection, entity_id: int):
             raise avatar_picker.PickerError("封面地址不可用")
         return avatar_picker.fetch_image(state.http_transport, url)
 
-    def avatar(params):
+    def avatar(params, ref):
+        cached = avatar_online.cached_profile_avatar(providers_root, entity_id, params)
+        if cached is not None:
+            body, record = cached
+            avatar_origin.update({key: record[key] for key in (
+                "provider", "source_kind", "external_id", "upstream_url", "cached_at",
+                "matched_name", "name_source") if key in record})
+            return body
+        remembered = cache.lookup(f"peach:online/{entity_id}/{ref}")
+        if remembered is not None:
+            return remembered
         response = follow_avatar(request, args={}, **params)
-        return Path(response.path).read_bytes() if isinstance(response, FileResponse) else None
+        if isinstance(response, FileResponse):
+            return Path(response.path).read_bytes()
+        if isinstance(response, JSONResponse):
+            raise avatar_picker.PickerError(json.loads(response.body)["error"])
+        return None
 
     def resolve(ref):
+        avatar_origin.clear()
         def remembered(fetch):
             def wrapped(*args):
                 found = cache.lookup(f"peach:online/{entity_id}/{ref}")
@@ -1610,10 +1690,11 @@ def _picker_online(request: Request, connection, entity_id: int):
         try:
             body, origin = avatar_online.resolve(ref, connection, entity_id,
                 project=_picker_online_projection,
-                image=remembered(image), avatar=remembered(avatar), media=remembered(media))
+                image=remembered(image), avatar=lambda params: avatar(params, ref), media=remembered(media))
         except (OSError, httpx.HTTPError, FollowMediaUnavailable, FollowProxyError, FollowCoverUnavailable) as error:
             raise avatar_picker.PickerError("在线图片未取得") from error
         cache.store(f"peach:online/{entity_id}/{ref}", body, avatar_picker.accept_image(body))
+        origin.update(avatar_origin)
         return body, origin
     return resolve
 
@@ -1629,12 +1710,12 @@ def avatar_choices(request: Request, kind: str = "performer", id: int = 0,
     providers_root, avatar_root = _picker_roots(state)
     id = current_entity_id(state, id)
     with state.read_connection() as connection:
+        online = [choice for choice in avatar_online.choices(
+            connection, id, project=_picker_online_projection, providers_root=providers_root)
+            if kind == "creator" or choice.source == "social"]
         listing = avatar_picker.choices(
             connection, providers_root, avatar_root, _picker_kind(kind), id,
-            cover_root=state.cover_root)
-        if kind == "creator":
-            listing["choices"] += [choice.as_dict() for choice in avatar_online.choices(
-                connection, id, project=_picker_online_projection)]
+            cover_root=state.cover_root, online=online)
     refresher = _index_refresher(request.app)
     queued = refresher.request()
     listing["index_refreshing"] = bool(queued or refresher.refreshing or (

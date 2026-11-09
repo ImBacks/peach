@@ -13,6 +13,7 @@ import { ReleaseUpdates } from './release-updates';
 import { UpgradeRepairs } from './upgrade-repairs';
 import { ErrorText, Footer, Help, Rows, Section, Stack } from './section';
 import { busyProps, useAction } from './use-action';
+import { t } from '../../i18n';
 
 export function GeneralSettings({ data, receipt, panel }: ConfigurationGroupProps) {
   return (
@@ -38,20 +39,20 @@ export function StartupSettings({ startup, receipt }: { startup: StartupState; r
     event.preventDefault();
     if (!startup.available) return;
     void action.run('save', (signal) => apiSend('/api/configuration/startup', { enabled, silent, desktop }, 'POST', signal),
-      () => receipt('已保存配置'));
+      () => receipt(t('settings:shared.settingsSaved')));
   };
 
   return (
-    <Section guide="startup" title="开机自启" onSubmit={submit}>
+    <Section guide="startup" title={t('settings:startup.title')} onSubmit={submit}>
       <Rows>
-        <SettingsRow label="开机后启动 Peach">
-          <Switch aria-label="开机后启动 Peach" isSelected={enabled} isDisabled={!startup.available} onChange={setEnabled} />
+        <SettingsRow label={t('settings:startup.launchAtStartup')}>
+          <Switch aria-label={t('settings:startup.launchAtStartup')} isSelected={enabled} isDisabled={!startup.available} onChange={setEnabled} />
         </SettingsRow>
-        <SettingsRow label="只启动托盘，不打开网页" description="开机后在后台运行，需要时从托盘打开页面。">
-          <Switch aria-label="只启动托盘，不打开网页" isSelected={silent} isDisabled={!startup.available || !enabled} onChange={setSilent} />
+        <SettingsRow label={t('settings:startup.trayOnly')} description={t('settings:startup.trayOnlyHelp')}>
+          <Switch aria-label={t('settings:startup.trayOnly')} isSelected={silent} isDisabled={!startup.available || !enabled} onChange={setSilent} />
         </SettingsRow>
-        <SettingsRow label="在桌面创建快捷方式" description={startup.desktop_message || undefined}>
-          <Switch aria-label="在桌面创建快捷方式" isSelected={desktop} isDisabled={!desktopReady} onChange={setDesktop} />
+        <SettingsRow label={t('settings:startup.desktopShortcut')} description={startup.desktop_message || undefined}>
+          <Switch aria-label={t('settings:startup.desktopShortcut')} isSelected={desktop} isDisabled={!desktopReady} onChange={setDesktop} />
         </SettingsRow>
       </Rows>
       {startup.message || action.error ? (
@@ -61,7 +62,7 @@ export function StartupSettings({ startup, receipt }: { startup: StartupState; r
         </Stack>
       ) : null}
       <Footer>
-        <Button type="submit" disabled={!startup.available} {...busyProps(action.busy === 'save')}>保存配置</Button>
+        <Button type="submit" disabled={!startup.available} {...busyProps(action.busy === 'save')}>{t('settings:shared.saveSettings')}</Button>
       </Footer>
     </Section>
   );

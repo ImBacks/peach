@@ -1,4 +1,5 @@
 """改字工具保存源文案与动态模板，冲突与代码路径不能误写。"""
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,11 +12,11 @@ from peach import dev_copy
 
 
 class DevCopyTests(unittest.TestCase):
-    def test_setup_copy_sources_can_be_saved_with_digest_protection(self):
+    def test_python_copy_sources_can_be_saved_with_digest_protection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             (root / 'src/peach').mkdir(parents=True)
-            for name in ('routes_pages.py', 'onboarding.py', 'media_sources.py'):
+            for name in ('routes_pages.py', 'onboarding.py', 'media_sources.py', 'release_updates.py'):
                 with self.subTest(name=name):
                     path = root / 'src/peach' / name
                     path.write_text("LABEL = '设置说明'", encoding='utf-8')
@@ -24,6 +25,35 @@ class DevCopyTests(unittest.TestCase):
                     self.assertEqual(path.read_text(encoding='utf-8'), "LABEL = '媒体设置说明'")
                     with self.assertRaises(ValueError):
                         dev_copy.save(root, {'original': '设置说明', 'replacement': '无效修改', 'candidate': candidate})
+
+    def test_extracted_copy_is_saved_into_the_source_language_file_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for language, text in (('zh-CN', '首页'), ('en', 'Home')):
+                (root / 'frontend/src/locales' / language).mkdir(parents=True)
+                (root / 'frontend/src/locales' / language / 'navigation.json').write_text(
+                    '{\n  "sidebar": { "home": "%s" }\n}\n' % text, encoding='utf-8')
+            candidate, = dev_copy.candidates(root, '首页')
+            self.assertEqual(candidate['file'], 'frontend/src/locales/zh-CN/navigation.json')
+            self.assertEqual(dev_copy.candidates(root, 'Home'), [])
+            dev_copy.save(root, {'original': '首页', 'replacement': '主页 "精选"', 'candidate': candidate})
+            saved = json.loads((root / candidate['file']).read_text(encoding='utf-8'))
+            self.assertEqual(saved, {'sidebar': {'home': '主页 "精选"'}})
+
+    def test_interpolated_locale_copy_is_found_by_its_rendered_text_and_keeps_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / 'frontend/src/locales/zh-CN').mkdir(parents=True)
+            path = root / 'frontend/src/locales/zh-CN/cleanup.json'
+            path.write_text('{\n  "trash": { "count": "{{count}} 项在回收站" }\n}\n', encoding='utf-8')
+            candidate, = dev_copy.candidates(root, '12 项在回收站')
+            self.assertEqual(candidate['template'], '{count} 项在回收站')
+            self.assertEqual(candidate['values'], {'count': '12'})
+            with self.assertRaises(ValueError):
+                dev_copy.save(root, {'original': '12 项在回收站', 'replacement': '回收站里有若干项', 'candidate': candidate})
+            result = dev_copy.save(root, {'original': '12 项在回收站', 'replacement': '回收站里有 {count} 项', 'candidate': candidate})
+            self.assertEqual(result['text'], '回收站里有 12 项')
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8')), {'trash': {'count': '回收站里有 {{count}} 项'}})
 
     def test_status_recovers_from_a_short_read_lock_and_preserves_persistent_denial(self):
         from peach import dev_copy_runtime as runtime
@@ -98,10 +128,20 @@ class DevCopyTests(unittest.TestCase):
                 tray = SimpleNamespace(_action_lock=threading.Lock(), manager=Mock(),
                                        _readiness=lambda: Step('readiness', 'current', '服务已就绪'))
                 gate = TaskGate(blocking=(ActiveRun(1, 'test', 'manual', 'running', os.getpid(), None),)) if blocked else TaskGate()
-                with patch('peach.runtime_prepare.task_gate', return_value=gate):
+                locked_at_terminal = []
+                def recording_write(target, data, write=runtime._write, lock=tray._action_lock, seen=locked_at_terminal):
+                    if data.get('state') in ('ready', 'error'):
+                        seen.append(lock.locked())
+                    return write(target, data)
+                with patch('peach.runtime_prepare.task_gate', return_value=gate), \
+                        patch.object(runtime, '_write', side_effect=recording_write):
                     runtime.poll(tray, root)
                     self._wait_for_state(runtime, root, 'error' if blocked else 'ready')
                 self.assertEqual(tray.manager.restart.call_count, 0 if blocked else 1)
+                if not blocked:
+                    tray.manager.restart.assert_called_once_with(reason='源码改字构建完成，重载服务')
+                # 终态写盘时托盘动作锁已经释放，看到终态的调用方不会抢在释放之前。
+                self.assertEqual(locked_at_terminal, [False])
                 self.assertFalse(tray._action_lock.locked())
 
     @staticmethod

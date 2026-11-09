@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import threading
@@ -358,8 +359,24 @@ _STORAGE_LABELS = {
 }
 
 
+def _volume_key(root) -> tuple[object, ...]:
+    """根目录所在的那块卷：同一块卷上的几个根读到的是同一份容量，汇总时只算一次。
+
+    `st_dev` 在 Windows 上是卷序列号，网盘挂载没有卷 GUID 也有它；POSIX 上是设备号。
+    读不到或为 0（有的挂载不报序列号）就认不出是哪块卷，按根各算一卷。
+    """
+    try:
+        device = os.stat(root).st_dev
+    except OSError:
+        device = 0
+    return ("device", device) if device else ("root", os.path.normcase(str(root)))
+
+
 def _storage_volumes() -> list[dict[str, object]]:
-    """返回当前主机可验证的系统卷、资源盘和网盘容量。"""
+    """返回当前主机可验证的系统卷、资源盘和网盘容量。
+
+    一个根一行；取得容量的行带私有的 `_volume`，供 `_storage_stats` 按卷汇总，输出前去掉。
+    """
     declarations = [("system", _STORAGE_LABELS["system"], system_volume(), True)] + [
         # 一个来源有几个根就几行；同名来源用序号区分，单根不加。
         (location,
@@ -387,6 +404,7 @@ def _storage_volumes() -> list[dict[str, object]]:
                     free=usage.free,
                     used=max(usage.total - usage.free, 0),
                     total=usage.total,
+                    _volume=_volume_key(root),
                 )
             except OSError:
                 pass
@@ -602,11 +620,18 @@ def _ledger_stats(contract: WebContract, libraries) -> dict:
 
 
 def _storage_stats() -> dict:
-    out = {"storage_volumes": _storage_volumes()}
-    measured = [row for row in out["storage_volumes"] if row["total"] is not None]
+    """存储卷列表一个根一行；汇总按卷算，同一块盘上配了几个根也只计一次容量和一个卷。"""
+    rows = _storage_volumes()
+    # 没取得容量的行认不出卷，各算一个。
+    keys = [row.pop("_volume", None) or ("row", index) for index, row in enumerate(rows)]
+    volumes: dict[object, dict[str, object]] = {}
+    for key, row in zip(keys, rows):
+        volumes.setdefault(key, row)
+    measured = [row for row in volumes.values() if row["total"] is not None]
+    out = {"storage_volumes": rows}
     out["storage_summary"] = {
-        "volumes": len(out["storage_volumes"]),
-        "online": sum(1 for row in out["storage_volumes"] if row["online"]),
+        "volumes": len(volumes),
+        "online": len({key for key, row in zip(keys, rows) if row["online"]}),
         "measured": len(measured),
         "free": sum(int(row["free"]) for row in measured),
         "used": sum(int(row["used"]) for row in measured),

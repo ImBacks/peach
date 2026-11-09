@@ -36,6 +36,8 @@ import {
   photosOptions, tagList, tagPressed, type EntityPageData, type EntityPageProps, type PhotoPage,
 } from './entity-page';
 import { useEntityOnline } from './use-entity-online';
+import { PENDING_REFETCH_MS } from '../components/pending-work';
+import { t } from '../../i18n';
 
 export function EntityPage(props: EntityPageProps) {
   const { kind, name } = props;
@@ -73,10 +75,12 @@ const newSeed = () => String(((Date.now() ^ (Math.random() * 1e9 | 0)) >>> 0) % 
 
 /** 照片一屏的读数：本地图片与样张各数各的；只有样张时不写「0 张」。 */
 function photoReadout(page: PhotoPage, codeSets: number) {
-  return `照片 · ${[
-    page.total || !codeSets ? `${(page.total || 0).toLocaleString()} 张` : '',
-    codeSets ? `样张 ${(page.sample_total || 0).toLocaleString()} 张 · ${codeSets.toLocaleString()} 部作品` : '',
-  ].filter(Boolean).join(' · ')}`;
+  return [
+    t('catalog:entityFilter.photos'),
+    page.total || !codeSets ? t('catalog:entityPhotos.imageCount', { count: page.total || 0 }) : '',
+    codeSets ? t('catalog:entityPage.sampleCount', { count: page.sample_total || 0 }) : '',
+    codeSets ? t('catalog:entityPage.sampleWorks', { count: codeSets }) : '',
+  ].filter(Boolean).join(' · ');
 }
 
 function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
@@ -97,7 +101,7 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
      视频键不出，进页就落在在线。 */
   const followKey = kind === 'creator' ? entity.follow?.key || '' : '';
   const onlineOnly = !!followKey && !entity.asset_count;
-  const mediaNow = media.media === 'photos' && photosAvailable ? media
+  const mediaNow = media.media === 'photos' && (base.isPending || base.isError || basePage?.error || photosAvailable) ? media
     : (media.media === 'online' || onlineOnly) && followKey ? { media: 'online' as const, set: 0 } : EMPTY_MEDIA;
 
   /* 名册与媒体不共用地址栏：地址栏只认 `media`，名册是事务所页与片商页的默认视图，进页就在那里。
@@ -122,14 +126,36 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
      重建），重取到新数据还不够，得换键重建，新图地址里的版本才落得到页面上。 */
   const [avatarEpoch, setAvatarEpoch] = useState(0);
 
+  /* 资料还在补全时资料卡每隔几秒重取一次（`entityOptions` 的 `refetchInterval`）。每补完一项，头像、
+     作品署名与照片都可能换了：同换头像那样作废作品、照片与新作，换键重建，不用刷新页面。 */
+  const pendingCount = entity.pending_work?.length || 0;
+  const lastPending = useRef(pendingCount);
+  useEffect(() => {
+    const finished = pendingCount < lastPending.current;
+    lastPending.current = pendingCount;
+    if (!finished) return;
+    actions.avatarChanged();
+    setAvatarEpoch((epoch) => epoch + 1);
+    void queryClient.invalidateQueries({ queryKey: ['entity-items', kind, name] });
+    void queryClient.invalidateQueries({ queryKey: ['entity-photos', kind, name] });
+    if (entityId) void queryClient.invalidateQueries({ queryKey: feedNewKey(entityId) });
+    if (pendingCount) return;
+    /* 全部补完、轮询停下之后再取一次：最后一项结算与它顺手写进的别名、外链可能差一两秒才落地。 */
+    const settle = window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: entityKey(kind, name) });
+    }, PENDING_REFETCH_MS);
+    return () => window.clearTimeout(settle);
+  }, [actions, entityId, kind, name, pendingCount]);
+
   /* ── 作品 ── */
   const itemsQuery = itemsOptions(props);
   const items = useQuery(itemsQuery);
   const itemsRevision = useRevision(JSON.stringify([itemsQuery.queryKey, avatarEpoch]));
   /* 直达或刷新资料页时 URL 没有 `jav=1`：以第一页作品的真实 `is_jav` 恢复女优／厂牌语境，版式开关
      不是只在从 JAV 首页点进来时才偶然存在。只看进页那一份，页内换筛选不改语境。 */
-  const [javPage] = useState(() => (kind === 'performer' || kind === 'studio')
-    && (props.jav || (items.data?.items || []).some((item) => item.is_jav)));
+  const [initialJav, setInitialJav] = useState<boolean | null>(() => props.jav || props.layout.active ? true : null);
+  if (initialJav === null && items.data) setInitialJav((items.data.items || []).some((item) => item.is_jav));
+  const javPage = (kind === 'performer' || kind === 'studio') && !!(initialJav ?? props.jav);
   useLayoutEffect(() => { actions.javContext(javPage) }, [actions, javPage]);
   const layout = useMemo<MediaCardLayout>(() => (props.layout.active === javPage ? props.layout
     : { ...props.layout, active: javPage }), [props.layout, javPage]);
@@ -222,14 +248,14 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
       const current = entity.canonical_name;
       if (chosen === current) return;
       void confirmModal({
-        title: '更改统一名称',
-        body: `「${chosen}」将成为这份档案显示的名称，「${current}」留作别名。作品上的署名、搜索和标签都会跟着改写。`,
-        confirmLabel: '更改统一名称',
+        title: t('catalog:entityPage.changePrimaryName'),
+        body: t('catalog:entityPage.changePrimaryNameBody', { chosen, current }),
+        confirmLabel: t('catalog:entityPage.changePrimaryName'),
         onConfirm: () => rename.mutateAsync({ from: current, to: chosen }),
       }).then(({ confirmed, result }) => {
         const done = result as { changed?: boolean; canonical_name?: string; previous_name?: string } | undefined;
         if (!confirmed || !done?.changed) return;
-        helpers.receipt(`已把统一名称更改为 ${done.canonical_name}`, { undo: async () => {
+        helpers.receipt(t('catalog:entityPage.primaryNameChanged', { name: done.canonical_name }), { undo: async () => {
           await rename.mutateAsync({ from: done.canonical_name || '', to: done.previous_name || '' });
           actions.openEntity(kind, done.previous_name || '');
         } });
@@ -241,7 +267,7 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
       try {
         await follow.mutateAsync(on);
       } catch (error) {
-        helpers.failure(on ? '订阅新作' : '取消订阅新作', error);
+        helpers.failure(on ? t('catalog:entityHero.subscribeNewReleases') : t('catalog:entityPage.unsubscribeNewReleases'), error);
         throw error;
       }
     },
@@ -265,6 +291,7 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
       void refreshEntity().then(() => {
         if (alive.current) setAvatarEpoch((epoch) => epoch + 1);
       });
+      void queryClient.invalidateQueries({ queryKey: feedNewKey(entityId) });
     },
     /* 资料卡那句「N 项更新」：这位名下的就在这一页的在线视图里，不离开；别的作者键才去关注页。 */
     openFollowAuthor: (key) => {
@@ -276,10 +303,10 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
       try {
         await bindFollow.mutateAsync(key);
       } catch (error) {
-        helpers.failure('关联关注中的创作者', error);
+        helpers.failure(t('catalog:entityPage.linkFollowedCreator'), error);
         throw error;
       }
-      helpers.receipt(`已把关注里的 ${author} 记到 ${entity.canonical_name} 名下`);
+      helpers.receipt(t('catalog:entityPage.followedCreatorLinked', { author, name: entity.canonical_name }));
       await refreshEntity();
     },
   }), [actions, alias, bindFollow, entity, entityId, filters, follow, followKey, helpers, kind, name, refreshEntity, rename]);
@@ -337,8 +364,8 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
   /* 艺人名册、视频、照片与在线是这一页的互斥视图，共用一组圆键；只有一类东西时不出这一组。 */
   const viewKinds = [roster.length, !onlineOnly, photoCount, followKey].filter(Boolean).length;
   const views: EntityViewKeys | null = viewKinds > 1 ? {
-    label: roster.length ? '页面视图' : '媒体类型',
-    people: roster.length ? { label: kind === 'studio' ? '厂牌' : '艺人', count: roster.length,
+    label: roster.length ? t('catalog:entityPage.pageView') : t('catalog:entityPage.mediaType'),
+    people: roster.length ? { label: kind === 'studio' ? t('catalog:shared.labels') : t('catalog:shared.performers'), count: roster.length,
       icon: kind === 'studio' ? 'clapperboard' : 'user-round' } : null,
     videos: onlineOnly ? null : { count: entity.asset_count || 0 },
     photos: photoCount ? { count: photoCount } : null,
@@ -363,19 +390,22 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
     { ...filters, state: '', tag: '', creator: '', studio: '', owner: '' }, EMPTY_MEDIA);
   let readout = '';
   let busy = false;
-  if (view === 'people') readout = `${kind === 'studio' ? '厂牌' : '艺人'} · ${roster.length.toLocaleString()}`;
+  if (view === 'people') readout = `${kind === 'studio' ? t('catalog:shared.labels') : t('catalog:shared.performers')} · ${roster.length.toLocaleString()}`;
   else if (view === 'online') {
     busy = online.busy;
-    readout = `在线 · ${(online.total ?? entity.follow?.n ?? 0).toLocaleString()} 项更新`;
+    readout = t('catalog:entityPage.onlineUpdates', { count: online.total ?? entity.follow?.n ?? 0 });
   }
   else if (view === 'videos') {
-    busy = !items.data;
+    busy = items.isPending;
     /* 选了哪几枚标签由上面那条交集条一枚一枚列着，读数只报个数：标签名再列一遍，几枚长标签
        就能把这一行撑出页面。 */
     const picked = tagList(filters.tag).length;
-    readout = `视频 · ${(items.data?.work_total ?? items.data?.total ?? 0).toLocaleString()}${picked ? ` · 已选 ${picked.toLocaleString()} 个标签` : ''}`;
+    readout = items.data ? [
+      `${t('catalog:shared.videos')} · ${(items.data.work_total ?? items.data.total ?? 0).toLocaleString()}`,
+      picked ? t('catalog:tagFilters.selectedCount', { count: picked }) : '',
+    ].filter(Boolean).join(' · ') : '';
   } else if (wallPage && !wallPage.error) {
-    readout = inSet ? `${wallPage.title} · ${(wallPage.total || 0).toLocaleString()} 张`
+    readout = inSet ? t('catalog:entityPage.setImageCount', { title: wallPage.title, count: wallPage.total || 0 })
       : photoReadout(wallPage, codeSetsOf(wallPage).length);
   } else busy = wall.isPending;
 
@@ -395,6 +425,7 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
   return (
     <>
       <EntityHeroPage key={avatarEpoch} kind={kind} name={name} entity={entity} feedNew={feed.data ?? null}
+        feedError={!feed.data && feed.isError ? errorMessage(feed.error) : undefined} retryFeed={() => { void feed.refetch() }}
         feedHost={entityId ? hosts.feed : null} jav={javPage} actions={heroActions} helpers={heroHelpers} />
       {createPortal(
         <EntityFilterPage kind={kind} name={name} view={view} views={views} state={filters.state || ''}
@@ -410,6 +441,12 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
             actions={props.follow.actions} canLoadMore={props.canLoadMore} clearFilters={online.clearFilters} />
           : view === 'videos' && items.isError
           ? <RetryNote message={errorMessage(items.error)} onRetry={() => { void items.refetch() }} />
+          : view === 'photos' && (wall.isError || wallPage?.error)
+          ? <RetryNote message={wallPage?.error || errorMessage(wall.error)} onRetry={() => { void wall.refetch() }} />
+          : view === 'photos' && !photos
+          ? <div data-photo-wall="" data-size={props.photoSize} data-layout={props.photoLayout} role="status" aria-busy="true" aria-label={t('catalog:entityPage.loadingPhotos')}>
+              {Array.from({ length: 8 }, (_, index) => <button key={index} data-photo-cell="" disabled aria-hidden className="skeleton-sheen" />)}
+            </div>
           : worksEmpty ? <WorksEmpty filtered={filtered} onShowAll={showAll}
             onOnline={followKey ? () => filterActions.setView('online') : undefined} />
           : (
@@ -431,15 +468,15 @@ function EntityLoaded(props: EntityPageProps & { entity: EntityPageData }) {
 /** 作品区一部也没有。筛完一部不剩时给一条回到全部视频的路：观看状态与交集条上的筛选一起撤掉。 */
 function WorksEmpty({ filtered, onShowAll, onOnline }: { filtered: boolean; onShowAll(): void; onOnline?: () => void }) {
   return filtered ? (
-    <EmptyState icon={spriteGlyph('search')} title="没有符合条件的视频"
-      actions={<Button size="small" onClick={onShowAll}>清除筛选</Button>}>
-      清除筛选后查看名下全部视频。
+    <EmptyState icon={spriteGlyph('search')} title={t('catalog:entityPage.noMatchingVideos')}
+      actions={<Button size="small" onClick={onShowAll}>{t('catalog:shared.clearFilters')}</Button>}>
+      {t('catalog:entityPage.noMatchingVideosHint')}
     </EmptyState>
   ) : (
-    <EmptyState icon={spriteGlyph('film')} title="还没有视频"
-      actions={onOnline ? <Button size="small" onClick={onOnline}>查看在线作品</Button>
-        : <ButtonLink size="small" href="/">浏览馆藏</ButtonLink>}>
-      署上这个名字的视频入库后会显示在这里。
+    <EmptyState icon={spriteGlyph('film')} title={t('catalog:entityPage.noVideos')}
+      actions={onOnline ? <Button size="small" onClick={onOnline}>{t('catalog:entityPage.viewOnline')}</Button>
+        : <ButtonLink size="small" href="/">{t('catalog:entityPage.browseCollection')}</ButtonLink>}>
+      {t('catalog:entityPage.noVideosHint')}
     </EmptyState>
   );
 }

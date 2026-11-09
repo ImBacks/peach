@@ -15,21 +15,31 @@ import os
 import shutil
 import threading
 import json
+import secrets
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
+import qrcode
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from filelock import FileLock, Timeout
+from itsdangerous import BadData, URLSafeTimedSerializer
 
-from . import (access, data_storage, distribution, entry_links, error_reporting, folder_picker, media_libraries, onboarding,
-               push_discovery, settings_file, media_configuration, tunnel, web_downloads)
-from .routes_auth import require_auth, require_authenticated_client, same_origin
+from . import (access, auth, certs, data_storage, distribution, entry_links, error_reporting, folder_picker,
+               ledger_backups, media_libraries, onboarding, push_discovery, settings_file, media_configuration, tunnel,
+               web_downloads)
+from .config import REPLICATION_ENABLED
+from .jobs import JobAlreadyRunning
+from .routes_auth import (FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, login_mode, origin_allowed, require_auth, require_authenticated_client, safe_next, same_origin,
+                          set_auth_cookie, sessions as access_sessions)
 from .web_entry import runtime_fact_entries
+from .user_messages import message_fields
 from .web_local_access import local_client, managed_configuration
-from . import release_updates, standalone_update, peach_proxy, desktop_startup, desktop_uninstall
+from . import (release_updates, standalone_update, peach_proxy, desktop_startup, desktop_uninstall, docker_update,
+               media_tools)
 
 router = APIRouter()
 _SAVE_LOCK = threading.Lock()
@@ -231,8 +241,12 @@ def _read_section(result: dict, key: str, title: str, reader) -> None:
                               message=f"配置区域 {key} 读取失败", section=key, error_id=error_id)
 
 
-def snapshot(config) -> dict[str, Any]:
-    """配置页首屏要的一切：当前值、修订号、可写与否，以及这台机器的运行信息。"""
+def snapshot(config, reachability=None) -> dict[str, Any]:
+    """配置页首屏要的一切：当前值、修订号、可写与否，以及这台机器的运行信息。
+
+    所有设置页都等这一份。媒体目录的在线状态读 `reachability`（`MountReachability`）的快照，
+    不在请求里同步列举网盘根：网盘一卡住，整个设置区就停在加载。
+    """
     editable = managed_configuration()
     from . import remote_reporting, library_sharing
     media = config.mounts.get("local") or config.locations.get("local", ())
@@ -259,7 +273,9 @@ def snapshot(config) -> dict[str, Any]:
         ("updates", "版本更新", release_updates.snapshot),
         ("update_job", "更新任务", standalone_update.public),
         ("access", "访问设置", lambda: access.public(access.load(config.directory("secrets") / "access.json"))),
-        ("media_sources", "媒体目录", lambda: media_configuration.rows(config, windows=os.name == "nt", probe=True)),
+        ("media_sources", "媒体目录", lambda: media_configuration.rows(
+            config, windows=os.name == "nt", probe=True,
+            known=media_configuration.reachability_states(reachability))),
         ("library_count", "媒体库状态", lambda: len(media_libraries.libraries(config))),
         ("mount_dependencies", "挂载依赖", media_configuration.mount_dependencies),
         ("facts", "运行信息", lambda: runtime_fact_entries(config)),
@@ -351,10 +367,12 @@ def read_configuration(request: Request, _args=Depends(require_auth)):
     config = settings_file.load_config()
     if not config.present:
         raise HTTPException(409, "请先完成首次设置")
-    result = snapshot(config)
+    result = snapshot(config, getattr(request.app.state, "mount_reachability", None))
     _read_section(result, 'network', '访问地址', lambda: network_payload(request, config))
     sync = getattr(request.app.state, "sync", None)
     result["ledger_read_only"] = bool(sync is not None and sync.read_only)
+    _read_section(result, "api_token", "访问口令", lambda: api_token_payload(request))
+    _read_section(result, "certificate", "HTTPS 证书", lambda: certificate_payload(request))
     _read_section(result, "tunnel", "公网入口", lambda: tunnel_payload(
         config, request.app.state.tunnel.snapshot(), config.tunnel.enabled))
     _read_section(result, "automatic_updates", "自动更新", lambda: request.app.state.automatic_updates.snapshot())
@@ -411,6 +429,22 @@ def save_automatic_updates(request: Request, body: dict = Body(...), _args=Depen
         return request.app.state.automatic_updates.save(body)
     except (ValueError, OSError, Timeout) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/api/configuration/media-tools")
+def install_media_tool(request: Request, body: dict = Body(...), _args=Depends(require_auth)):
+    """把 FFmpeg 或 untrunc 装进数据目录（Windows x64，见 `media_tools`），回最新的运行信息。
+
+    下载在请求里同步做完：工具包几十 MB，按钮转着等，比后台任务加轮询少一整套状态。
+    """
+    local_only(request)
+    same_origin(request)
+    config = settings_file.load_config()
+    try:
+        message = media_tools.install(config.directory("tools"), str(body.get("tool", "")))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"message": message, "facts": runtime_fact_entries(config)}
 
 
 @router.post("/api/configuration/peach-proxy")
@@ -688,6 +722,33 @@ def measure_storage(request: Request, _args=Depends(require_auth)):
     return data_storage.snapshot(config)
 
 
+@router.post("/api/configuration/storage/policy")
+def save_storage_policy(request: Request, body: dict[str, Any] = Body(default_factory=dict),
+                        _args=Depends(require_auth)):
+    from . import storage_budget
+    local_only(request)
+    same_origin(request)
+    config = _storage_config()
+    try:
+        storage_budget.save_policy(config, body)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except OSError as error:
+        raise HTTPException(500, f'容量设置保存失败：{error}') from error
+    return data_storage.snapshot(config)
+
+
+@router.get("/api/configuration/storage/external-cache")
+def read_external_cache(request: Request, _args=Depends(require_auth)):
+    from . import storage_external_cache
+    from .downloads import DownloadError
+    local_only(request)
+    try:
+        return storage_external_cache.read(_storage_config())
+    except (ValueError, OSError, DownloadError) as error:
+        raise HTTPException(400, str(error)) from error
+
+
 @router.post("/api/configuration/storage/clean")
 def clean_storage(request: Request, body: dict[str, Any] = Body(default_factory=dict),
                   _args=Depends(require_auth)):
@@ -721,6 +782,42 @@ def relocate_storage(request: Request, body: dict[str, Any] = Body(default_facto
         raise HTTPException(409, "迁移请求正在处理") from exc
 
 
+def _ledger_backups(request: Request):
+    _storage_config()
+    return ledger_backups.manager(request)
+
+
+@router.get("/api/configuration/ledger-backups")
+def read_ledger_backups(request: Request, _args=Depends(require_auth)):
+    """「账本备份」：可恢复的备份列表、立即备份与恢复两个任务的状态、上次恢复的结果。"""
+    local_only(request)
+    return _ledger_backups(request).snapshot()
+
+
+@router.post("/api/configuration/ledger-backups/backup")
+def backup_ledger(request: Request, _args=Depends(require_auth)):
+    local_only(request)
+    same_origin(request)
+    try:
+        return _ledger_backups(request).start_backup()
+    except (ValueError, JobAlreadyRunning) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/api/configuration/ledger-backups/restore")
+def restore_ledger(request: Request, body: dict[str, Any] = Body(default_factory=dict),
+                   _args=Depends(require_auth)):
+    """用选中的备份替换当前账本；页面二次确认后才发，`confirm` 必须为真。"""
+    local_only(request)
+    same_origin(request)
+    if body.get("confirm") is not True:
+        raise HTTPException(400, "恢复会替换当前账本，请先确认")
+    try:
+        return _ledger_backups(request).start_restore(body.get("id"))
+    except (ValueError, JobAlreadyRunning) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/api/configuration/updates")
 def check_updates(request: Request, _args=Depends(require_auth)):
     local_only(request)
@@ -736,6 +833,59 @@ def client_updates(request: Request, _args=Depends(require_auth)):
     result['update_job'] = standalone_update.public()
     result['repairs'] = request.app.state.upgrade_repairs.snapshot()
     return result
+
+
+def _release_notice_facts(request: Request, connection) -> dict:
+    """公告条目的显示条件：只看本机回执，不发外部请求。读不到的一项按不显示处理。"""
+    from . import system_file_repair
+    from .display_dimensions_repair import progress
+    facts: dict[str, Any] = {}
+    service = request.app.state.upgrade_repairs
+    done, total = progress(connection) if service.available else (0, 0)
+    if total:
+        facts['display_reprobe'] = {'done': done, 'total': total}
+    row = connection.execute(
+        'SELECT result_json FROM ledger_upgrade_repair WHERE json_type(result_json,?) IS NOT NULL '
+        'ORDER BY applied_at DESC LIMIT 1', (f'$."{system_file_repair.RULE}"',)).fetchone()
+    isolated = json.loads(row[0])[system_file_repair.RULE].get('isolated') if row else None
+    if isolated:
+        facts['system_files'] = {'count': len(isolated) if isinstance(isolated, list) else int(isolated)}
+    # 乱码人物补修（`metadata_text_repair.RECEIPT_KEY`）把解除的关联逐行记在升级回执顶层。
+    row = connection.execute(
+        "SELECT result_json FROM ledger_upgrade_repair WHERE json_type(result_json,'$.garbled_people') IS NOT NULL "
+        'ORDER BY applied_at DESC LIMIT 1').fetchone()
+    unlinked = json.loads(row[0])['garbled_people'].get('links') if row else None
+    if unlinked:
+        facts['garbled_performers'] = {'count': len(unlinked)}
+    # JavDB 入口补修（`upgrade_repairs.JAVDB_RECORDS_KEY`）的回执行 id 带规则号，结果里逐项记下收起的入口与停用的订阅。
+    row = connection.execute(
+        "SELECT result_json FROM ledger_upgrade_repair WHERE id GLOB 'javdb-actor-records-*' "
+        'ORDER BY applied_at DESC LIMIT 1').fetchone()
+    javdb = json.loads(row[0]) if row else {}
+    if hidden := len(javdb.get('hidden') or ()) + len(javdb.get('disabled_feeds') or ()):
+        facts['javdb_entries'] = {'count': hidden}
+    if service.available and (cloud := service.cloud_display_videos()):
+        facts['display_cloud_pending'] = {'count': cloud}
+    return facts
+
+
+@router.get('/api/release-notice')
+def read_release_notice(request: Request, _args=Depends(require_auth)):
+    from . import release_notice
+    with request.app.state.web_contract.read_connection() as connection:
+        return release_notice.snapshot(connection, facts=_release_notice_facts(request, connection))
+
+
+@router.post('/api/release-notice')
+def acknowledge_release_notice(request: Request, body: dict[str, Any] = Body(default_factory=dict),
+                               _args=Depends(require_auth)):
+    from . import __version__, release_notice
+    same_origin(request)
+    if body.get('version') != __version__:
+        raise HTTPException(409, '已更新到新版本，请刷新页面')
+    with request.app.state.web_contract.write_transaction() as connection:
+        release_notice.acknowledge(connection, __version__)
+    return {'ok': True, 'seen': __version__}
 
 
 @router.post('/api/configuration/upgrade-repairs/retry')
@@ -758,6 +908,64 @@ async def retry_upgrade_repairs(request: Request, _args=Depends(require_auth)):
         raise HTTPException(409, str(exc)) from exc
 
 
+def _repair_center(request: Request) -> dict:
+    from . import ledger_backups, repair_center
+    from .upgrade_repairs import _read
+    service = request.app.state.upgrade_repairs
+    try:
+        receipt = _read(service.receipt) if service.available else {}
+    except (OSError, ValueError, TypeError):
+        receipt = {}
+    directories = [Path(service.contract.db_path).parent]
+    try:
+        directories.append(ledger_backups.organize_dir(settings_file.active().directory('generated')))
+    except (OSError, ValueError):
+        pass
+    reclaim = getattr(request.app.state, 'follow_evidence', None)
+    with request.app.state.web_contract.read_connection() as connection:
+        result = repair_center.snapshot(connection, receipt, backup_directories=directories,
+                                        cloud_pending=service.cloud_display_videos() if service.available else 0,
+                                        follow_evidence_status=reclaim.status() if reclaim and service.available else None)
+    return {**result, 'available': service.available}
+
+
+@router.get('/api/configuration/repairs')
+def read_repair_center(request: Request, _args=Depends(require_auth)):
+    """「修复与迁移」：各项修复的结果、修复前的备份，以及等用户确认的项。"""
+    local_only(request)
+    return _repair_center(request)
+
+
+@router.post('/api/configuration/repairs/display-cloud')
+async def include_cloud_display_dimensions(request: Request, _args=Depends(require_auth)):
+    """网盘视频的显示尺寸不在升级时自动补测，由用户在「修复与迁移」里确认后开始。"""
+    import asyncio
+    from .api import _installation_in_progress
+    local_only(request)
+    same_origin(request)
+    try:
+        if await asyncio.to_thread(_installation_in_progress, request.app.state.settings.db_path):
+            raise ValueError('正在安装更新，请稍后重试')
+        await asyncio.to_thread(request.app.state.upgrade_repairs.include_cloud_display_dimensions)
+        return _repair_center(request)
+    except (ValueError, OSError, Timeout) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post('/api/configuration/repairs/follow-evidence')
+def reclaim_follow_evidence(request: Request, _args=Depends(require_auth)):
+    """关注抓取的旧快照不在升级时自动删，由用户在「修复与迁移」里看过数量与体积、确认后在后台删。"""
+    local_only(request)
+    same_origin(request)
+    try:
+        if not request.app.state.upgrade_repairs.available:
+            raise ValueError('只在本机写入端可用')
+        request.app.state.follow_evidence.start()
+        return _repair_center(request)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get('/api/configuration/upgrade-repairs/review')
 def upgrade_repairs_review(request: Request, _args=Depends(require_auth)):
     local_only(request)
@@ -767,6 +975,19 @@ def upgrade_repairs_review(request: Request, _args=Depends(require_auth)):
         raise HTTPException(404, '暂无升级复核记录')
     return Response(path.read_bytes(), media_type='application/json',
                     headers={'Content-Disposition': 'attachment; filename="upgrade-review.json"'})
+
+
+@router.post("/api/configuration/docker-update")
+def run_docker_update(request: Request, _args=Depends(require_auth)):
+    """请同一 compose 里的 Watchtower 拉取新镜像并重建容器（ADR-0140）。"""
+    local_only(request)
+    same_origin(request)
+    if not distribution.docker():
+        raise HTTPException(404, "只有 Docker 镜像有一键更新")
+    try:
+        return docker_update.trigger()
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/api/configuration/update-status")
@@ -994,9 +1215,231 @@ def save_access(request: Request, body: dict[str, Any] = Body(default_factory=di
     response.delete_cookie("tok", path="/")
     response.delete_cookie(access.COOKIE, path="/")
     if policy["mode"] == "password":
-        from .routes_auth import set_auth_cookie
         set_auth_cookie(response, request, login=True)
     return response
+
+
+@router.post("/api/configuration/access/first")
+def first_access(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """Docker 访问设置：已经配置过、还没有访问策略的部署设访问密码或明确选择免登录（ADR-0149）。
+
+    这时没有登录可言，边界只剩来源：`login_mode` 判 `setup` 才收，即本机或私有网络、
+    不带代理转发头；提交再按 `origin_allowed` 看是不是 Peach 自己的页面发的，首次设置时隧道
+    地址不算本机。文件锁里再看一次策略，局域网里两台设备同时提交，后到的收 409。
+    设了密码就给这个浏览器签发会话，提交的人直接进入。
+    """
+    path = request.app.state.settings.access_path
+    if not distribution.docker() or path is None:
+        raise HTTPException(404, "not found")
+    mode = login_mode(request)
+    if mode == "password":
+        raise HTTPException(409, "访问设置已完成，请刷新页面")
+    if mode != "setup":
+        raise HTTPException(403, message_fields(FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE))
+    if not origin_allowed(request, guard="first-access", tunnels=False):
+        raise HTTPException(403, "请从 Peach 访问设置页提交")
+    if any(not isinstance(body.get(key, ""), str) for key in ("password", "confirmation", "next")):
+        raise HTTPException(400, "密码需要是文字")
+    choice, password = body.get("mode"), body.get("password", "")
+    if choice not in {"password", "open"}:
+        raise HTTPException(400, "请选择设置访问密码或免登录")
+    if choice == "password":
+        if not password:
+            raise HTTPException(400, {"message": "请输入访问密码", "errors": {"password": "请输入访问密码"}})
+        try:
+            access.validate_password(password, body.get("confirmation", ""))
+        except ValueError as exc:
+            field = "confirmation" if password != body.get("confirmation", "") else "password"
+            raise HTTPException(400, {"message": str(exc), "errors": {field: str(exc)}}) from exc
+    try:
+        with FileLock(str(path.with_suffix(".lock")), timeout=0):
+            if access.load(path)["mode"] != "legacy":
+                raise HTTPException(409, "访问设置已完成，请刷新页面")
+            policy = access.save(path, password if choice == "password" else "")
+    except Timeout:
+        raise HTTPException(409, "访问设置正在保存，请稍后重试") from None
+    if policy["mode"] != "password":
+        _close_tunnel_without_password(request)
+    response = JSONResponse({"url": safe_next(body.get("next", "/"))}, headers={"Cache-Control": "no-store"})
+    response.delete_cookie("tok", path="/")
+    if policy["mode"] == "password":
+        try:
+            set_auth_cookie(response, request, login=True)
+        except OSError:
+            pass  # 密码已经写下；设备记录写不进去时这个浏览器转到登录页，用刚设的密码登录即可。
+    return response
+
+
+def _access_sessions(request: Request) -> dict[str, Any]:
+    """登录过的设备，本机这一行排第一。撤销与改密码同一条边界：只在运行 Peach 的电脑上做。"""
+    path = request.app.state.settings.access_path
+    policy = access.load(path)
+    store = access_sessions(request)
+    rows = (store.rows(policy["revision"], access.digest(request.cookies.get(access.COOKIE, "")))
+            if store is not None and policy["mode"] in {"password", "legacy"} else [])
+    return {"revision": policy["revision"], "sessions": rows, "manageable": local_client(request)}
+
+
+@router.get("/api/configuration/access/sessions")
+def access_session_list(request: Request, _args=Depends(require_auth)):
+    return JSONResponse(_access_sessions(request), headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/configuration/access/sessions/revoke")
+def revoke_access_sessions(request: Request, body: dict[str, Any] = Body(default_factory=dict),
+                           _args=Depends(require_auth)):
+    """撤销一台（`id`）或除本机以外的全部（`scope: "others"`）。本机这一行不在这里撤。"""
+    local_only(request)
+    same_origin(request)
+    store = access_sessions(request)
+    session_id, others = body.get("id"), body.get("scope") == "others"
+    if store is None or (not others and not isinstance(session_id, str)) or (others and session_id is not None):
+        raise HTTPException(400, "请选择要撤销的设备")
+    policy = access.load(request.app.state.settings.access_path)
+    if body.get("revision") != policy["revision"]:
+        raise HTTPException(409, "访问设置已变更，请刷新后再操作")
+    current = access.digest(request.cookies.get(access.COOKIE, ""))
+    if not others and any(row["id"] == session_id and row["current"] for row in store.rows(policy["revision"], current)):
+        raise HTTPException(400, "不能在这里撤销本机")
+    try:
+        removed = store.revoke(policy["revision"], session_id="" if others else session_id, keep=current)
+    except Timeout:
+        raise HTTPException(409, "设备记录正在写入，请稍后重试") from None
+    if not others and not removed:
+        raise HTTPException(404, "这台设备已经不在列表里了")
+    return JSONResponse({**_access_sessions(request), "removed": removed}, headers={"Cache-Control": "no-store"})
+
+
+_TOKEN_LOCK = threading.Lock()
+
+
+def api_token_payload(request: Request) -> dict[str, Any]:
+    """访问口令能不能在这里换。口令本身不回给页面，只在换的那一次响应里给新值（ADR-0142）。"""
+    settings = request.app.state.settings
+    if not settings.token:
+        reason = "这次启动没有使用访问口令。"
+    elif settings.token_file is None:
+        reason = "口令由启动参数 --token 或环境变量 PEACH_TOKEN 指定，请在那里更换。"
+    else:
+        reason = ""
+    # 两台机器互取复核结果时发的是自己的口令，换了这边，另一台要换成同一份文件。
+    paired = REPLICATION_ENABLED or bool(settings.review_writer_origin)
+    return {"rotatable": not reason, "reason": reason, "paired": paired}
+
+
+@router.post("/api/configuration/access/token/rotate")
+def rotate_api_token(request: Request, _args=Depends(require_auth)):
+    """换访问口令，运行中的服务当场改用新口令，不用重启。
+
+    用访问密码登录的浏览器签名用的是 `access.json` 里的密钥，与口令无关，一台也不登出。
+    还没设访问密码的老部署拿口令当会话签名密钥：换口令等于全部浏览器退出，本机这台当场补签。
+    """
+    local_only(request)
+    same_origin(request)
+    state = api_token_payload(request)
+    if not state["rotatable"]:
+        raise HTTPException(409, state["reason"])
+    settings = request.app.state.settings
+    policy = access.load(settings.access_path)
+    if policy["mode"] == "locked":
+        raise HTTPException(409, "访问设置无法读取，请在本机检查配置文件")
+    store = access_sessions(request)
+    current = access.digest(request.cookies.get(access.COOKIE, ""))
+    signed_out = (sum(not row["current"] for row in store.rows(policy["revision"], current))
+                  if policy["mode"] == "legacy" and store is not None else 0)
+    with _TOKEN_LOCK:
+        token = auth.write_token(settings.token_file.parent)
+        request.app.state.settings = replace(request.app.state.settings, token=token)
+        mirror = getattr(request.app.state, "review_mirror", None)
+        if mirror is not None:
+            mirror.token = token
+    payload = {**state, "token": token, "mode": policy["mode"], "signed_out": signed_out}
+    response = JSONResponse(payload, headers={"Cache-Control": "no-store"})
+    response.delete_cookie("tok", path="/")
+    if policy["mode"] == "legacy":
+        try:
+            if store is not None:
+                store.reset("legacy")
+            set_auth_cookie(response, request, login=True)
+        except OSError:
+            # 口令已经换了，这时报错会让新口令丢在半路；本机重新登录一次即可。
+            payload["relogin"] = True
+            response = JSONResponse(payload, headers={"Cache-Control": "no-store"})
+            response.delete_cookie("tok", path="/")
+    return response
+
+
+#: 证书下载链接只在这个进程里有效：服务一重启，已经发出去的二维码就作废。
+_LINK_KEY = secrets.token_urlsafe(32)
+_LINK_AGE = 600
+CA_DOWNLOAD = "/api/configuration/certificate/peach-local-ca.crt"
+
+
+def _link_signer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(_LINK_KEY, salt="peach-ca-download")
+
+
+def _phone_origin(request: Request) -> str:
+    """手机要打开的地址：配置页本身从局域网名字打开时就用它，从回环打开时换成 mDNS 名字。"""
+    host = (request.url.hostname or "").rstrip(".").lower()
+    try:
+        loopback = ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if host and not loopback:
+        return str(request.base_url).rstrip("/")
+    settings = request.app.state.settings
+    port = settings.mdns_port
+    return f"https://{settings.mdns_name.removesuffix('.local')}.local" + ("" if port == 443 else f":{port}")
+
+
+def certificate_payload(request: Request) -> dict[str, Any] | None:
+    """本机 CA 的指纹、到期日与手机扫码下载的地址。没有 HTTPS 服务或没有 CA 时返回 None。"""
+    settings = request.app.state.settings
+    if not settings.tls_enabled:
+        return None
+    ca = certs.public_ca(certs.CertificateFiles.under(settings.secrets_root / "tls").ca_cert)
+    if ca is None:
+        return None
+    link = f"{_phone_origin(request)}{CA_DOWNLOAD}?k={_link_signer().dumps('ca')}"
+    code = qrcode.QRCode(border=0, error_correction=qrcode.constants.ERROR_CORRECT_M)
+    code.add_data(link)
+    code.make(fit=True)
+    return {"fingerprint": ca.fingerprint, "not_after": ca.not_after.date().isoformat(),
+            "download": CA_DOWNLOAD, "phone_url": link, "expires_in": _LINK_AGE,
+            "qr": ["".join("1" if cell else "0" for cell in row) for row in code.get_matrix()]}
+
+
+@router.get("/api/configuration/certificate")
+def read_certificate(request: Request, _args=Depends(require_auth)):
+    local_only(request)
+    payload = certificate_payload(request)
+    if payload is None:
+        raise HTTPException(404, "这台电脑没有提供 HTTPS 的本机证书")
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.get(CA_DOWNLOAD)
+def download_ca_certificate(request: Request, k: str = ""):
+    """下载本机 CA 的公开证书，任何私钥都不经过这里。
+
+    手机扫码时还没登录，也还没信任这张证书：要它先输密码，密码就落在信任要防的那段
+    不可信连接上。所以二维码带一个十分钟有效、只换得到这张公开证书的签名；不带签名的
+    请求照常要登录。
+    """
+    if k:
+        try:
+            _link_signer().loads(k, max_age=_LINK_AGE)
+        except BadData:
+            raise HTTPException(403, "二维码已过期，请在配置页重新扫码") from None
+    else:
+        require_auth(request)
+    settings = request.app.state.settings
+    ca = certs.public_ca(certs.CertificateFiles.under(settings.secrets_root / "tls").ca_cert)
+    if ca is None or not settings.tls_enabled:
+        raise HTTPException(404, "这台电脑没有提供 HTTPS 的本机证书")
+    return Response(ca.pem, media_type="application/x-x509-ca-cert", headers={
+        "Content-Disposition": 'attachment; filename="peach-local-ca.crt"', "Cache-Control": "no-store"})
 
 
 def tunnel_changes(config, body: dict[str, Any]) -> dict[str, Any]:

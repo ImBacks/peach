@@ -19,6 +19,8 @@ import { currentBarsContext, entityState, openEntity, revealForIsland, syncForIs
 import { openAddToPlaylist, rereadPlaylists, saveMixAsPlaylist } from './playlists.js';
 import { releaseHoverPreviews } from './../card-art/hover';
 import { applicationEffects } from './effects';
+import { loadingState } from './loading.js';
+import { t } from '../i18n';
 export const mediaState = { total: undefined, facets: undefined, stageHost: undefined, stageOpen: undefined, itemDetailHelpers: undefined, itemDetailActions: undefined, immerseHost: undefined, immerseOpen: undefined, requestedImmerseId: undefined };
 
 export function urlResume(){
@@ -158,6 +160,7 @@ export async function openJavMovie(code,push=true){
         if(peachHistory.navigation.seq!==seq||!canonical||canonical===code)return;
         shellNavigate('/works/'+encodeURIComponent(canonical)+location.search+location.hash,
           {replace:true,state:peachHistory.navigation.location.state});
+        loadingState.syncPageTitle(location.href);
       },
       openTag:tag=>commitContextFilter(filters=>{filters.tag=tag}),
       receipt:message=>receiptsState.toast({text:message})}});
@@ -198,7 +201,7 @@ mediaState.itemDetailHelpers = {
   tagCandidates:()=>(mediaState.facets&&mediaState.facets.tags)||[],
   sourceOffline:key=>preferencesState.sourceOffline(key),
   offlineReason:key=>preferencesState.offlineReason(key),
-  relatedSkeletonHtml:()=>pageSkeletonHtml('正在读取推荐',{cards:true,className:'related-skeleton'}),
+  relatedSkeletonHtml:()=>pageSkeletonHtml(t('shell:skeleton.loadingRecommendations'),{cards:true,className:'related-skeleton'}),
   mixRelated:seedId=>mixRelated(seedId),
   wireDrag:el=>wireDrag(el),
   wireDragReorder:(root,options)=>wireDragReorder(root,options),
@@ -212,6 +215,7 @@ mediaState.itemDetailActions = {
     writeShell({barsContext:{type:'item',id:item.id,filters:returnBars?.type==='entity'
       ? {...returnBars.filters}:entityState.emptyEntityFilters()}});
     if(pendingQueueRoute){navigationState.queueOpenRequest=null;navigationState.route(`/assets/${item.id}?${pendingQueueRoute}`,false,overlayState('item'));writeShell({pendingQueueRoute:null})}
+    loadingState.syncPageTitle(location.href);
     buildBars();
   },
   /* 取数时发现要换去别处：保存过的在线作品转关注详情，队列取不到退回普通详情，播放列表空了

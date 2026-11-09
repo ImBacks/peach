@@ -1,6 +1,7 @@
 /* search 域控制器：本域状态与动作，启动由 Application 的生命周期统一安装。 */
 import { javImageKind } from './../jav-artwork';
-import { preferencesState } from './preferences.js';
+import { censorOn, preferencesState, setCensored, sfwShortcut } from './preferences.js';
+import { matchesShortcut } from '../keyboard-shortcut';
 import { coverImage } from './../card-art/markup';
 import { catalogState, goHome, homePath } from './catalog.js';
 import { disposeStage, mediaState, openItem } from './media.js';
@@ -20,6 +21,7 @@ import { immerseApi, settingsPanelApi, stageApi } from '../react/application-res
 import { openDrawer } from './layout.js';
 import { setSelectMode } from './selection.js';
 import { clickPlayerControl, seekVideoBy, toggleVideoPlayback } from './../player/index';
+import { t } from '../i18n';
 export const searchState = { searchControl: undefined, searchActions: undefined, searchHelpers: undefined, searchMorph: undefined, searchMorphViewport: undefined };
 
 export function hideSearchMenu(){searchState.searchControl?.close()}
@@ -28,7 +30,7 @@ export function searchCoverImage(card){
   const kind=card?javImageKind({...card,is_jav:!!card.code},preferencesState.appSettings.javImage):'';
   return kind==='cover'?coverImage(card,'big')
     :kind?`<img class="poster still" src="/poster?id=${card.id}&c=4" width="640" height="360" alt="" loading="lazy" data-drop="self">`
-    :'<span class="nopic">无预览</span>';
+    :`<span class="nopic">${esc(t('shell:artworkGap.noPreview'))}</span>`;
 }
 
 export function finishSearchMorph(){
@@ -150,12 +152,18 @@ applicationEffects.listen(document, 'keydown', e=>{
     /* 详情开着：Escape 归舞台。焦点在浮窗里时舞台自己已经收了这一下；里层弹层（标签搜索框、右键
        菜单）先收掉的会 `preventDefault`，那一下只关弹层。焦点落在浮窗外（body）时在这里转给舞台。 */
     if(mediaState.stageOpen()){if(!e.defaultPrevented){e.preventDefault();stageApi().requestEscape()}return}
+    /* 这一下已经被浮窗或弹层用掉了：舞台可能在冒泡到这里之前就关完，不能再顺手收侧栏或退出多选。 */
+    if(e.defaultPrevented)return;
     if($('#drawer').classList.contains('open')){openDrawer(false);return}
     if(selectMode||selected.size||followSelected.size){setSelectMode(false,true);return}
     return;
   }
   // 输入态不抢键：搜索框、标签弹窗和任何可编辑区域里的按键归它们自己处理。
-  if(isTypingTarget(e.target)||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(isTypingTarget(e.target))return;
+  // SFW 开关键（默认 Shift+S，可在设置里改）：有人走近时不必先打开设置（同 javm 的老板键
+  // `2304ab2`）。绑定必带修饰键，所以要在下一行放过修饰键组合之前比对。
+  if(!e.defaultPrevented&&matchesShortcut(e,sfwShortcut())){e.preventDefault();setCensored(!censorOn());return}
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
   if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
     const imageStep=document.querySelector(`#stage[open] [data-media-carousel]:not([data-carousel-video-active]) [data-follow-image-step="${e.key==='ArrowRight'?1:-1}"]`);
     if(imageStep){e.preventDefault();imageStep.click();return}

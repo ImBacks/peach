@@ -9,6 +9,9 @@
 
 /** `[键, 名称, 字形]`，同壳的 `MANAGE_SECTIONS`。 */
 import { CLEANUP_CRUMB_PAGES } from './cleanup-tools';
+import { REPAIR_CENTER_PATH } from './history/settings-route';
+import { MANAGE_MENU_SECTIONS, normalizeManageOrder } from './application/navigation-items';
+import { t } from './i18n';
 
 export type ManageEntry = readonly [key: string, label: string, glyph: string];
 
@@ -36,22 +39,31 @@ export interface ManageHeaderProps {
    子页标题取这里的名字，「数据管理」显示在面包屑的上一级。 */
 export const MANAGE_CRUMB_PAGES: Readonly<Record<string, string>> = {
   ...CLEANUP_CRUMB_PAGES,
-  '/junk-files': '垃圾文件',
-  '/duplicates': '重复文件',
-  '/review': '人工复核',
-  '/trash': '回收站',
-  '/quality-goals': '高清版',
-  '/sources': '来源和凭证',
+  '/junk-files': t('manage:managePages.junkFiles'),
+  '/duplicates': t('manage:managePages.duplicates'),
+  '/review': t('manage:managePages.review'),
+  '/trash': t('manage:managePages.trash'),
+  '/quality-goals': t('manage:managePages.qualityGoals'),
+  '/sources': t('manage:managePages.sources'),
+  [REPAIR_CENTER_PATH]: t('manage:managePages.repairs'),
 };
+
+/** 面包屑的上一级：`key` 是管理条上按下的那一项。没写的子页都从数据管理进。 */
+export interface CrumbParent { key: string; label: string; href: string }
+const CLEANUP_PARENT: CrumbParent = { key: 'cleanup', label: t('manage:managePages.libraryTools'), href: '/data-cleanup' };
+const CRUMB_PARENTS: Readonly<Record<string, CrumbParent>> = {
+  [REPAIR_CENTER_PATH]: { key: 'configuration', label: t('manage:managePages.maintenance'), href: '/settings/maintenance' },
+};
+export const crumbParent = (path: string): CrumbParent => CRUMB_PARENTS[path] ?? CLEANUP_PARENT;
 
 /* 窄屏（≤760px）上标题收一档到 22px 的页面：正文是 812px 窄列的数据管理 hub、来源和凭证与配置页。
    其余管理页跟全站页面标题走 24px。 */
 const COMPACT_TITLE_PATHS = new Set(['/data-cleanup', '/sources']);
 
-/** 管理条上按下哪一项。数据管理那几张卡通往的子页从数据管理进，按下的是「数据管理」；
+/** 管理条上按下哪一项。子页按上一级（多数是数据管理）；
  *  别的页按自己的管理区，管理条上没有这一项时就没有按下项。 */
 export function pressedManageKey(props: Pick<ManageHeaderProps, 'section' | 'path' | 'menu'>): string {
-  const key = MANAGE_CRUMB_PAGES[props.path] ? 'cleanup' : props.section;
+  const key = MANAGE_CRUMB_PAGES[props.path] ? crumbParent(props.path).key : props.section;
   return props.menu.some(([entry]) => entry === key) ? key : '';
 }
 
@@ -61,13 +73,14 @@ export interface ManageHeaderView {
   pressed: string;
   /** 面包屑当前那一项的名字；空串时不画面包屑。 */
   crumb: string;
+  parent: CrumbParent;
   compact: boolean;
   /** 只有回收站有说明行。 */
   lede: { kind: 'none' } | { kind: 'skeleton' } | { kind: 'count'; text: string; total: number };
 }
 
 export const trashLedeText = ({ total, shown }: TrashCount) =>
-  `${total.toLocaleString()} 个符合 · 显示 ${shown.toLocaleString()}`;
+  t('manage:managePages.trashCount', { count: total, shown: shown.toLocaleString() });
 
 /** 页头这一刻画什么；不在管理区时是 null。 */
 export function manageHeaderView(props: ManageHeaderProps): ManageHeaderView | null {
@@ -75,9 +88,10 @@ export function manageHeaderView(props: ManageHeaderProps): ManageHeaderView | n
   if (!entry) return null;
   const crumb = MANAGE_CRUMB_PAGES[props.path] ?? '';
   return {
-    title: (props.section === 'cleanup' && crumb) || entry[1],
+    title: (props.section === crumbParent(props.path).key && crumb) || entry[1],
     pressed: pressedManageKey(props),
     crumb,
+    parent: crumbParent(props.path),
     compact: COMPACT_TITLE_PATHS.has(props.path) || props.section === 'configuration',
     lede: props.section !== 'trash' ? { kind: 'none' }
       : props.trash ? { kind: 'count', text: trashLedeText(props.trash), total: props.trash.total }
@@ -100,20 +114,23 @@ export function manageHeaderSkeletonHtml(props: ManageHeaderProps): string {
   if (!view) return '';
   const menu = props.menu.map(([key, label, mark]) => {
     const on = key === view.pressed;
-    return `<button type="button" data-manage="${escape(key)}" data-pill-variant="gray" aria-pressed="${on}"${on ? ' aria-current="page" data-pill-selected=""' : ''}>`
+    return `<button type="button" data-manage="${escape(key)}" aria-label="${escape(label)}" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" data-pill-variant="gray" aria-pressed="${on}"${on ? ' aria-current="page" data-pill-selected=""' : ''}>`
       + `${glyph(mark)}<span>${escape(label)}</span></button>`;
   }).join('');
   const crumb = view.crumb
-    ? `<nav data-manage-crumb="" aria-label="Breadcrumb"><ol><li><a href="/data-cleanup">数据管理</a>${glyph('chevron-right')}</li>`
+    ? `<nav data-manage-crumb="" aria-label="Breadcrumb"><ol><li><a href="${escape(view.parent.href)}">${escape(view.parent.label)}</a>${glyph('chevron-right')}</li>`
       + `<li aria-current="true"><span>${escape(view.crumb)}</span></li></ol></nav>`
     : '';
   const lede = view.lede.kind === 'none' ? ''
     : `<p class="mono" data-manage-lede="">${view.lede.kind === 'skeleton' ? TRASH_LEDE_SKELETON_HTML
       : `<span data-lede-text="">${escape(view.lede.text)}</span>${view.lede.total ? EMPTY_TRASH_HTML : ''}`}</p>`;
-  return `<nav data-manage-bar="" aria-label="管理"><div data-manage-menu="" data-pill-nav="" role="group">${menu}</div></nav>`
+  const keys = props.menu.map(([key]) => key);
+  const reset = normalizeManageOrder(keys).join(',') === MANAGE_MENU_SECTIONS.join(',') ? ''
+    : `<button type="button" disabled data-navigation-menu="" aria-label="${escape(t('shell:navigationOrder.menuLabel', { group: t('manage:manageHeader.menuOrderLabel') }))}" aria-haspopup="dialog" aria-expanded="false">${glyph('ellipsis')}</button>`;
+  return `<nav data-manage-bar="" aria-label="${escape(t('manage:manageHeader.barLabel'))}"><div data-manage-menu="" data-pill-nav="" role="group">${menu}</div>${reset}<span data-manage-order-status="" role="status" aria-live="polite"></span></nav>`
     + crumb
     + `<h2 data-manage-title=""${view.compact ? ' data-compact=""' : ''}>${escape(view.title)}</h2>`
     + lede;
 }
 
-const EMPTY_TRASH_HTML = '<button type="button" data-empty-trash="" title="永久删除回收站内容">清空回收站</button>';
+const EMPTY_TRASH_HTML = `<button type="button" data-empty-trash="" title="${escape(t('manage:manageHeader.emptyTrashTitle'))}">${escape(t('manage:shared.emptyTrash'))}</button>`;

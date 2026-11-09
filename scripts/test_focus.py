@@ -66,7 +66,10 @@ def run(runner, args) -> int:
     with runner.test_history.running():
         result = unittest.TextTestRunner(verbosity=2,
             resultclass=partial(runner.TimedResult, selection=plan)).run(suite)
+    rows = result.results + runner.test_history.take_external()
     runner.test_history.append(runner.ROOT, scope="focus:" + " ".join(args.focus),
-                               rows=result.results + runner.test_history.take_external(),
-                               files=sorted(result.files))
-    return 0 if result.wasSuccessful() and result.testsRun > 0 else 1
+                               rows=rows, files=sorted(result.files))
+    passed = result.wasSuccessful() and result.testsRun > 0
+    if not passed and rows and getattr(args, "rerun_failures", False):
+        passed = runner.rerun_failures(rows)
+    return 0 if passed else 1

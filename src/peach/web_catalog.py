@@ -12,8 +12,10 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+import sqlite3
 import time
 from collections.abc import Callable
+from functools import lru_cache
 
 from . import entities, media_libraries, sample_images, settings_file
 
@@ -44,6 +46,43 @@ from .western_artwork import artwork_key
 
 
 GROUP_TABLES = ('asset', 'asset_entity', 'entity')
+
+
+def _download_source_names(contract: WebContract) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    """入库资产对应的云下载种子名与网盘任务名，给版次判据当来源证据。
+
+    一个资产绑过几次下载时取最后一次，文件是那一次落地的。整表读一次只要几毫秒，
+    按 `download_task` 的代次缓存；下载在跑时每次轮询都会改这张表，所以结果做成可比较的
+    元组，由分组快照当输入核对内容——只有绑定或名字真的变了，2 秒多的全库快照才重算。
+    """
+    def read():
+        names: dict[int, tuple[str, ...]] = {}
+        with contract.read_connection() as connection:
+            for row in connection.execute(
+                    "SELECT asset_id,display_name,remote_name FROM download_task "
+                    "WHERE asset_id IS NOT NULL ORDER BY id DESC"):
+                values = tuple(dict.fromkeys(
+                    str(value).strip() for value in (row['display_name'], row['remote_name'])
+                    if str(value or '').strip()))
+                if values:
+                    names.setdefault(int(row['asset_id']), values)
+        return tuple(sorted(names.items()))
+    return contract.cached_until_changed('catalog-download-source-names', read,
+                                        tables=('download_task',))
+
+
+def group_inputs(contract: WebContract) -> tuple:
+    """分组快照在 `GROUP_TABLES` 之外的输入：版次还看种子名。
+
+    缓存里用到 `video_work_key` 的计算也要带上它，否则下载绑定改了版次分组，
+    按作品计的数不会跟着变。
+    """
+    return (_download_source_names(contract),)
+
+
+def _group_cached(contract: WebContract, key: str, fn):
+    """分组快照及其派生缓存。"""
+    return contract.cached_until_changed(key, fn, *group_inputs(contract), tables=GROUP_TABLES)
 
 #: 卡片随每条记录返回的女优上限。共演作品必须带上全部出镜者，而不是只留第一位；
 #: 但 BEST 合集实测有 41 位，全量下发会把列表响应撑大，所以截断并同时给出总数，
@@ -87,7 +126,7 @@ SORT_COLUMNS = {
 #: `a.id DESC`——那不报错，只是给出一屏顺序看起来合理、其实没按要求排的结果。
 
 
-def attach_jav_display_fields(row: dict, tags=(), entity_kinds=()) -> None:
+def attach_jav_display_fields(row: dict, tags=(), entity_kinds=(), source_names=()) -> None:
     """Add one canonical display projection while retaining raw file identity fields."""
     # 产地取查询算好的那一列。取不到时退到番号推断——比直接读 `a.region` 强：那一列
     # 绝大多数行是空的，读它等于说「全都没判过」，韩国片又会原样回到 JAV 版式上。
@@ -106,10 +145,12 @@ def attach_jav_display_fields(row: dict, tags=(), entity_kinds=()) -> None:
         region,
     )
     if row["is_jav"]:
-        row.update(jav_display_metadata(row.get("name"), code, tags))
+        row.update(jav_display_metadata(row.get("name"), code, tags, source_names))
 
 
+@lru_cache(maxsize=65536)
 def _filename_fc2_code(name) -> str:
+    # 分组快照每次重算都要对全部文件名解析一遍；只看文件名，按它记住。
     code = release_code_from_filename(name) or ''
     return code if code.startswith('FC2-PPV-') else ''
 
@@ -384,8 +425,32 @@ def seeded_order(seed) -> str:
     return f"((a.id * {sd}) % 99991), a.id"
 
 
-def q_items(contract: WebContract, args):
-    where, par = catalog_filter(contract, args)
+CATALOG_TOTAL_TABLES = GROUP_TABLES + (
+    'asset_tag', 'asset_tag_preference', 'asset_preference', 'watch_queue',
+    'entity_classification', 'entity_external_ref', 'entity_identity_link', 'profile',
+)
+
+
+def _catalog_totals(contract: WebContract, where, parameters, args):
+    """同一集合的总数、体积与作品数不随排序、种子和分页改变。"""
+    def read():
+        with contract.read_connection() as connection:
+            return tuple(connection.execute(
+                "SELECT count(*),COALESCE(sum(a.size),0),count(DISTINCT "
+                + video_work_key(contract, connection) + ") FROM asset a WHERE "
+                + " AND ".join(where), parameters).fetchone())
+    common = {'sort', 'seed', 'dir', 'limit', 'offset', 'count', 'state', 'jav',
+              'loc', 'len', 'orient', 'region', 'exclude_vertical', 'thumb', 'library', 'year', 'summary_only'}
+    if any(value and key not in common for key, value in args.items()):
+        return read()
+    return contract.cached_until_changed(
+        repr(('catalog-totals', tuple(where), tuple(parameters))), read,
+        tuple(contract.database.media_roots), *group_inputs(contract),
+        tables=CATALOG_TOTAL_TABLES, allow_stale=False)
+
+
+def _catalog_order(args):
+    """排序列、固定种子与每日轮换共用确定的目录顺序。"""
     sort_key = str(args.get("sort") or "")
     direction = "ASC" if str(args.get("dir") or "").lower() == "asc" else "DESC"
     column = SORT_COLUMNS.get(sort_key)
@@ -400,6 +465,15 @@ def q_items(contract: WebContract, args):
             order = f"((a.id * {seed}) % 99991), a.id"
         else:
             order = "a.id DESC"
+    return order
+
+
+def q_items(contract: WebContract, args):
+    where, par = catalog_filter(contract, args)
+    if args.get('summary_only') == '1':
+        count, size, works = _catalog_totals(contract, where, par, args)
+        return {'total': count, 'bytes': size, 'work_total': works}
+    order = _catalog_order(args)
     lim = max(1, min(int(args.get("limit", 60)), 200))
     off = max(0, int(args.get("offset", 0)))
     include_total = args.get("count", "1") != "0"
@@ -420,10 +494,7 @@ def q_items(contract: WebContract, args):
         # 条数和体积同一次聚合出来：回收站卡片要说的是「清空能腾出多少」，
         # 为它单独再发一次请求只是把同一条 WHERE 又跑一遍。
         cnt, total_bytes, work_total = (
-            c.execute("SELECT count(*),COALESCE(sum(a.size),0),count(DISTINCT "
-                      + video_work_key(contract, c) + ") FROM asset a WHERE "
-                      + " AND ".join(where), par).fetchone()
-            if include_total else (None, None, None))
+            _catalog_totals(contract, where, par, args) if include_total else (None, None, None))
     # 卡片要显示出镜者和高权重标签，不能只有番号 —— 一次批量取，别 N+1
     if rows:
         ids = [r["id"] for r in rows]
@@ -468,13 +539,15 @@ def q_items(contract: WebContract, args):
                 r["creator"] = r["creator_entity"]["name"]
             r["performer_total"] = len(refs) or len(all_performers)
             r["_entity_kinds"] = tuple(canonical)
+    sources = dict(_download_source_names(contract))
     for r in rows:
         r["cost"] = cost_for(r['location'], r.get('path'))
         r["has_thumb"] = contract.has_snapshot(r["snapshot_path"])
         r['has_local_poster'] = (contract.poster_root / f"{r['id']}_4.jpg").is_file()
         attach_artwork_fields(contract, r)
         # 卡片上的出镜者称谓、规范番号、版本徽章与详情页使用同一份投影。
-        attach_jav_display_fields(r, r.get("tags", ()), r.pop("_entity_kinds", ()))
+        attach_jav_display_fields(r, r.get("tags", ()), r.pop("_entity_kinds", ()),
+                                  sources.get(r["id"], ()))
         r.pop("snapshot_path", None)
         r.pop("path", None)                     # 路径不外发，串流走 id
     attach_saved_follow_cards(contract, rows)
@@ -667,16 +740,22 @@ def attach_saved_follow_cards(contract: WebContract, rows):
 
 #: 版次的展示次序：正片在前，处理过的在后。这不是偏好排序，只是要一个稳定的
 #: 锚点——卡片标题取第一个，次序一变卡片就换名字。
-EDITION_ORDER = ("有码", "中字", "无码", "无码破解")
+EDITION_ORDER = ("有码", "中字", "无码", "无码流出", "无码破解")
 
 
-def _edition_label(row: dict, tags: tuple[str, ...] = ()) -> str:
+def _edition_label(row: dict, tags: tuple[str, ...] = (), source_names: tuple[str, ...] = ()) -> str:
     """这一份是哪个版次。
 
     判据只有 `jav_edition_badges` 一份。自己按文件名再写一套「像不像无码」的判断，
     会和卡片上已经显示的徽章各说各话——同一个文件，角标写着无码、分组却当它是正片。
     """
-    badges = jav_edition_badges(row.get('name'), row.get('code'), tags)
+    return _edition_badge(row.get('name'), row.get('code'), tuple(tags), tuple(source_names))
+
+
+@lru_cache(maxsize=16384)
+def _edition_badge(name, code, tags: tuple[str, ...], source_names: tuple[str, ...]) -> str:
+    # 分组快照每次重算都要判一遍；判据只看这四样，按它们记住。
+    badges = jav_edition_badges(name, code, tags, source_names)
     return str(badges[0]) if badges else "有码"
 
 
@@ -688,8 +767,7 @@ def _edition_rows(contract: WebContract, codes) -> list[dict]:
 
 def _catalog_group_rows(contract: WebContract) -> list[dict]:
     """规范番号、版次、探测规格共用一次全库只读快照。"""
-    return contract.cached_until_changed('catalog-group-rows', lambda: _read_group_rows(contract),
-                                        tables=GROUP_TABLES)
+    return _group_cached(contract, 'catalog-group-rows', lambda: _read_group_rows(contract))
 
 
 def _read_group_rows(contract: WebContract) -> list[dict]:
@@ -709,13 +787,15 @@ def _read_group_rows(contract: WebContract) -> list[dict]:
                 "JOIN entity e ON e.id=ae.entity_id "
                 "WHERE e.kind='tag'"):
             tags.setdefault(int(row["aid"]), []).append(str(row["name"]))
+    sources = dict(_download_source_names(contract))
     coded = []
     for row in rows:
         row['raw_code'] = row['code']
         row['code'] = row['code'] or _filename_fc2_code(row['name'])
         if not row['code']:
             continue
-        row["edition"] = _edition_label(row, tuple(tags.get(int(row["id"]), ())))
+        row["edition"] = _edition_label(row, tuple(tags.get(int(row["id"]), ())),
+                                        sources.get(int(row["id"]), ()))
         coded.append(row)
     return coded
 
@@ -723,9 +803,9 @@ def _read_group_rows(contract: WebContract) -> list[dict]:
 def _edition_groups(contract: WebContract, codes) -> dict[str, list[dict]]:
     """播放版本按规范番号归组，分卷属于各自的版本。"""
     keys = {normalise_code_key(code) for code in codes}
-    return {code: group for code, group in contract.cached_until_changed(
-        'catalog-edition-groups', lambda: _derive_edition_groups(contract),
-        tables=GROUP_TABLES).items() if code in keys}
+    return {code: group for code, group in _group_cached(
+        contract, 'catalog-edition-groups', lambda: _derive_edition_groups(contract),
+    ).items() if code in keys}
 
 
 def _derive_edition_groups(contract: WebContract) -> dict[str, list[dict]]:
@@ -831,7 +911,7 @@ def multipart_groups(contract: WebContract) -> dict[str, list[dict]]:
                     key = code if len(versions) == 1 else f"{code}:{version['id']}"
                     groups[key] = version['items']
         return groups
-    return contract.cached_until_changed("catalog-multipart-groups", derive, tables=GROUP_TABLES)
+    return _group_cached(contract, "catalog-multipart-groups", derive)
 
 
 def _live_parts(group) -> list[dict]:
@@ -850,7 +930,7 @@ def video_work_key(contract: WebContract, connection) -> str:
             for item in group:
                 keys.setdefault(int(item['id']), f"multipart:{int(group[0]['id'])}")
         return keys
-    keys = contract.cached_until_changed('catalog-video-work-key', derive, tables=GROUP_TABLES)
+    keys = _group_cached(contract, 'catalog-video-work-key', derive)
     connection.create_function('peach_video_work_key', 1,
                                lambda asset_id: keys.get(asset_id, f'asset:{asset_id}'),
                                deterministic=True)
@@ -916,9 +996,8 @@ def q_parts(contract: WebContract, args):
 
 
 def _parts_by_asset(contract: WebContract) -> dict[int, tuple[str, list[dict]]]:
-    return contract.cached_until_changed('catalog-parts-by-asset', lambda: {
-        int(row['id']): (key, group) for key, group in multipart_groups(contract).items() for row in group},
-        tables=GROUP_TABLES)
+    return _group_cached(contract, 'catalog-parts-by-asset', lambda: {
+        int(row['id']): (key, group) for key, group in multipart_groups(contract).items() for row in group})
 
 
 def _part_labels(group: list[dict]) -> dict[int, str]:
@@ -957,6 +1036,51 @@ def label_makers(contract: WebContract, c, aid) -> dict[int, dict]:
             makers.append({"id": maker_id, "name": name, "has_logo": contract.has_logo(name),
                            "logo_version": contract.logo_version(name)})
     return chains
+
+
+#: 云下载落地后还没处理完的那几档：识别正片、采集资料与整理都在这一段里。
+DOWNLOAD_POSTPROCESS_ACTIVE = ("pending", "queued", "running")
+
+
+def processing_assets(contract: WebContract, connection) -> dict[int, str]:
+    """此刻还在补资料的作品，值是在补它的那类任务（`task_key`）。
+
+    三处来源：在跑的定向扫描与采集那一批（整库处理不算，它说明不了某一部缺什么，只算它此刻
+    正在处理的那一部）、云下载落地后还没处理完的正片。只读内存状态与任务表，不按缺哪些字段猜。
+    """
+    found: dict[int, str] = {}
+    job = getattr(contract, "library_processing_job", None)
+    state = job.snapshot() if job is not None else None
+    if state and state.get("status") in ("running", "pausing", "paused"):
+        scope = state.get("asset_ids")
+        current = state.get("current_asset_id")
+        for value in [*(scope if isinstance(scope, list) else []), current]:
+            if isinstance(value, int):
+                found[value] = "library-processing"
+    try:
+        rows = connection.execute(
+            "SELECT asset_id FROM download_task WHERE asset_id IS NOT NULL AND postprocess_state IN "
+            f"({','.join('?' for _ in DOWNLOAD_POSTPROCESS_ACTIVE)})", DOWNLOAD_POSTPROCESS_ACTIVE).fetchall()
+    except sqlite3.OperationalError:
+        # 迁移前的只读副本还没有下载任务表。
+        rows = []
+    for row in rows:
+        found.setdefault(int(row[0]), "download-postprocess")
+    return found
+
+
+def processing_work(task_keys) -> list[dict]:
+    """把在补资料的任务种类写成页面读的那一种形状，同一类只报一次。"""
+    from .task_runs import task_label
+    return [{"task_key": key, "label": task_label(key), "status": "running"}
+            for key in dict.fromkeys(task_keys)]
+
+
+def item_pending_work(contract: WebContract, asset_id: int) -> list[dict]:
+    """刚入库还在补资料的那一部：详情据此显示「补全中」并定时重取，补完就是空列表。"""
+    with contract.read_connection() as c:
+        busy = processing_assets(contract, c).get(asset_id)
+    return processing_work([busy] if busy else [])
 
 
 def q_item(contract: WebContract, aid):
@@ -1077,10 +1201,12 @@ def q_item(contract: WebContract, aid):
     attach_jav_display_fields(
         d, [tag["k"] for tag in d["tags"]],
         [kind for kind, values in d["entities"].items() if values],
+        dict(_download_source_names(contract)).get(d["id"], ()),
     )
     d.pop("snapshot_path", None); d.pop("path", None)
     attach_multipart_groups(contract, [d])
     attach_edition_groups(contract, [d])
+    d["pending_work"] = item_pending_work(contract, d["id"])
     return d
 
 def _one_card_per_release(contract: WebContract, source_code, rows: list[dict]) -> list[dict]:
@@ -1204,6 +1330,7 @@ def q_related(contract: WebContract, aid, limit=24):
         for asset_id, tag in con_tags(contract, related_ids, marks):
             related_tags.setdefault(asset_id, []).append(tag)
         _name_shared_tags(contract, aid, picked, related_tags)
+    sources = dict(_download_source_names(contract))
     for d in picked:
         d["cost"] = cost_for(d['location'], d.get('path'))
         d["has_thumb"] = contract.has_snapshot(d["snapshot_path"])
@@ -1211,6 +1338,7 @@ def q_related(contract: WebContract, aid, limit=24):
         attach_artwork_fields(contract, d)
         attach_jav_display_fields(
             d, related_tags.get(d["id"], ()), d.pop("_entity_kinds", ()),
+            sources.get(d["id"], ()),
         )
         d.pop("release_date", None)
         d.pop("snapshot_path", None)

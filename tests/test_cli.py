@@ -716,3 +716,13 @@ class PackagedEntryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SourceChecksCliTests(unittest.TestCase):
+    def test_source_check_selection_json_and_failed_exit_status(self):
+        result = {'ok': False, 'sources': [], 'elapsed_s': 0}
+        with mock.patch('peach.source_preflight.check_sources', return_value=result) as check, \
+                mock.patch('peach.cli.settings_file.active') as active, redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['check-sources', '--source', 'dmm', '--source', 'javdb', '--json']), 1)
+        check.assert_called_once_with(active.return_value.directory.return_value, ['dmm', 'javdb'])
+        self.assertEqual(__import__('json').loads(output.getvalue()), result)

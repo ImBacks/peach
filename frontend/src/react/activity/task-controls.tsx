@@ -9,12 +9,15 @@ import { Button } from '@/components/base/buttons/button';
 import { errorMessage } from '../../api';
 import { Note } from '../components/note';
 import { busyProps } from '../settings/use-action';
-import { controlTask, isActive, TASKS_KEY, type TaskControlAction, type TaskRunPayload } from './tasks';
+import { ProcessingMode } from '../library-processing/processing-effort';
+import type { ProcessingSpeed } from '../library-processing/library-processing';
+import { controlTask, setTaskSpeed, isActive, TASKS_KEY, type TaskControlAction, type TaskRunPayload } from './tasks';
+import { t } from '../../i18n';
 
 const CONTROL_KEY = ['task-control'] as const;
 const ICONS = { pause: RiPauseLine, resume: RiPlayLine, cancel: RiStopLine };
-const LABELS = { pause: '暂停', resume: '继续', cancel: '取消' };
-const FOLLOWUP_LABELS = { pause: '暂停后续任务', resume: '继续后续任务', cancel: '取消后续任务' };
+const LABELS = { pause: t('manage:shared.pause'), resume: t('manage:shared.resume'), cancel: t('manage:taskControls.cancelTask') };
+const FOLLOWUP_LABELS = { pause: t('manage:taskControls.pauseFollowups'), resume: t('manage:taskControls.resumeFollowups'), cancel: t('manage:taskControls.cancelFollowups') };
 
 interface ControlCommand { id: number; label: string; action: TaskControlAction; followups: boolean }
 
@@ -40,17 +43,29 @@ export function TaskControlFeedback() {
   if (!failed.length) return null;
   return <div data-task-control-feedback="" className="flex min-w-0 flex-col gap-2">
     {failed.map(({ command, error }) => <Note key={command.id} tone="error"
-      title={`${command.label}：${(command.followups ? FOLLOWUP_LABELS : LABELS)[command.action]}未完成`}>
+      title={t('manage:taskControls.actionFailed', { task: command.label, action: (command.followups ? FOLLOWUP_LABELS : LABELS)[command.action] })}>
       {errorMessage(error)}
     </Note>)}
   </div>;
 }
 
-export function TaskControls({ run }: { run: TaskRunPayload }) {
+/** `runs` 是并在同一张卡里的几批，按钮对每一批各发一次；不给就只管 `run` 这一轮。 */
+export function TaskControls({ run, runs = [run] }: { run: TaskRunPayload; runs?: TaskRunPayload[] }) {
   const client = useQueryClient();
   const pending = useRef({ change: false, cancel: false, confirmation: false });
   const refresh = () => { void client.invalidateQueries({ queryKey: TASKS_KEY }) };
-  const send = (command: ControlCommand) => controlTask(command.id, command.action);
+  // 一批被拒不拦后面几批：并卡期间较早那批可能刚好跑完，其余几批照样要停；有被拒的照常报出来。
+  const send = async (command: ControlCommand) => {
+    let failure: unknown = null;
+    for (const row of runs) {
+      try {
+        await controlTask(row.id, command.action);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (failure !== null) throw failure;
+  };
   const change = useMutation({
     mutationKey: [...CONTROL_KEY, run.id, 'change'],
     mutationFn: send,
@@ -61,10 +76,19 @@ export function TaskControls({ run }: { run: TaskRunPayload }) {
     mutationFn: send,
     onSettled: () => { pending.current.cancel = false; refresh() },
   });
-  const actions = run.control?.actions || [];
+  const speed = useMutation({
+    mutationFn: async (mode: ProcessingSpeed) => {
+      const results = await Promise.allSettled(runs.map((row) => setTaskSpeed(row.id, mode)));
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    },
+    onSettled: refresh,
+  });
+  const actions = (run.control?.actions || []).filter((action): action is TaskControlAction => action !== 'set_speed');
+  const canSetSpeed = Boolean(run.control?.actions.includes('set_speed') && run.control.speed_mode);
   const followups = !isActive(run);
   const cancelling = cancellation.isPending || cancellation.isSuccess;
-  if (!actions.length) return null;
+  if (!actions.length && !canSetSpeed) return null;
 
   const submit = (action: TaskControlAction) => {
     const command = { id: run.id, label: run.task_label, action, followups };
@@ -72,13 +96,11 @@ export function TaskControls({ run }: { run: TaskRunPayload }) {
       if (pending.current.cancel || pending.current.confirmation || cancellation.isSuccess) return;
       pending.current.confirmation = true;
       void confirmModal({
-        title: followups ? `取消「${run.task_label}」的全部后续任务` : `取消任务「${run.task_label}」`,
-        body: followups
-          ? '将停止这轮已派出的全部后续任务，包括正在处理和排队的项目。已保存的资料和结果会保留。'
-            + '这批后续任务取消后不能继续，需要时重新发起。'
-          : '将停止这轮剩余的处理及其后续任务。已保存的资料和结果会保留。'
-            + '这轮任务取消后不能继续，需要时重新发起。',
-        confirmLabel: followups ? '取消后续任务' : '取消任务',
+        title: followups ? t('manage:taskControls.cancelFollowupsTitle', { task: run.task_label }) : t('manage:taskControls.cancelTaskTitle', { task: run.task_label }),
+        body: !followups ? t('manage:taskControls.cancelTaskBody')
+          : runs.length > 1 ? t('manage:taskControls.cancelBatchFollowupsBody', { count: runs.length })
+          : t('manage:taskControls.cancelFollowupsBody'),
+        confirmLabel: followups ? t('manage:taskControls.cancelFollowups') : t('manage:shared.cancelTask'),
         danger: true,
         onConfirm: async () => {
           pending.current.cancel = true;
@@ -93,9 +115,12 @@ export function TaskControls({ run }: { run: TaskRunPayload }) {
   };
 
   return (
-    <div className="ml-auto shrink-0" data-task-controls={run.id}>
-      <div role="group" aria-label={`${run.task_label}${followups ? '后续任务' : '任务'}控制`}
-        className="flex items-center justify-end gap-2">
+    <div className="ml-auto min-w-0" data-task-controls={run.id}>
+      <div role="group" aria-label={t(followups ? 'manage:taskControls.followupsGroupLabel' : 'manage:taskControls.groupLabel', { task: run.task_label })}
+        className="flex flex-wrap items-center justify-end gap-2">
+        {canSetSpeed ? <ProcessingMode value={run.control!.speed_mode!}
+          busy={speed.isPending || cancelling} animate={run.control?.state === 'running'}
+          onChange={(mode) => speed.mutate(mode)} /> : null}
         {actions.map((action) => {
           const label = (followups ? FOLLOWUP_LABELS : LABELS)[action];
           const busy = action === 'cancel' ? cancellation.isPending : change.isPending && change.variables?.action === action;
@@ -107,6 +132,7 @@ export function TaskControls({ run }: { run: TaskRunPayload }) {
             data-tooltip-copy-key={`tasks.control.action.${followups ? 'followups.' : ''}${action}`} />;
         })}
       </div>
+      {speed.error ? <Note tone="error">{errorMessage(speed.error)}</Note> : null}
     </div>
   );
 }

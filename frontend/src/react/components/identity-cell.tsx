@@ -2,8 +2,9 @@ import type { ReactNode } from 'react';
 import { esc, firstGrapheme, icon, leadingGraphemes, registerEntityLink } from '@peach/legacy/core';
 import { entityFaceImg, logoUrl } from '@peach/card-art';
 import type { DetailEntityRef } from '../item-detail/item-detail';
-import { entityDisplayName, nameFallback } from '../../core/entity-names';
+import { entityDisplayName } from '../../core/entity-names';
 import { useEntityNames } from '../use-entity-names';
+import { t } from '../../i18n';
 
 /** 详情署名共用实体头像、厂牌标识与首字回退。 */
 export function IdentityCell({ kind, person, onOpen, hidden, overflow, face }: {
@@ -19,7 +20,7 @@ export function IdentityCell({ kind, person, onOpen, hidden, overflow, face }: {
     : <span data-id-face=""><span>{kind === 'studio' ? leadingGraphemes(person.name, 2) : firstGrapheme(person.name)}</span>
       {kind === 'studio' && person.has_logo ? <img src={logoUrl(person.name, 'icon', person.logo_version)} alt="" width={128} height={128} loading="lazy" decoding="async" data-drop="self" /> : null}</span>;
   const content = <>{face ?? image}<span data-id-name="">{displayName}</span></>;
-  const attrs = { 'data-id-cell': kind, title: nameFallback(kind, person.name, person.id) || displayName, hidden, 'data-castoverflow': overflow ? '' : undefined };
+  const attrs = { 'data-id-cell': kind, title: displayName, hidden, 'data-castoverflow': overflow ? '' : undefined };
   return person.id ? <button type="button" {...attrs} data-entity-kind={kind} data-entity-name={person.name}
     onClick={() => { registerEntityLink(kind, person.name, person.id); onOpen(kind, person.name) }}>{content}</button> : <span {...attrs}>{content}</span>;
 }
@@ -29,7 +30,7 @@ export function IdentitySeries({ people, onOpen }: {
 }) {
   if (!people.length) return null;
   const content = (person: DetailEntityRef) => <><span className="contents" aria-hidden="true" dangerouslySetInnerHTML={{ __html: icon('tags') }} /><span>{person.name}</span></>;
-  return <section data-id-group="series"><h5 data-id-label="">系列</h5><div data-series-rows="">
+  return <section data-id-group="series"><h5 data-id-label="">{t('shell:shared.series')}</h5><div data-series-rows="">
     {people.map(person => person.id ? <button key={person.name} type="button" data-series-link="" data-entity-kind="series"
       data-entity-name={person.name} title={person.name} onClick={() => { registerEntityLink('series', person.name, person.id); onOpen('series', person.name) }}>{content(person)}</button>
       : <span key={person.name} data-series-link="" title={person.name}>{content(person)}</span>)}

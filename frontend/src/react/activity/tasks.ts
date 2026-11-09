@@ -6,6 +6,8 @@ import { apiGet, apiSend } from '../../api';
 import { fmtSize } from '@peach/legacy/core';
 import { requestErrorMessage } from '../../core/request-error';
 import { queryClient } from '../query';
+import type { ProcessingSpeed } from '../library-processing/library-processing';
+import { t } from '../../i18n';
 
 export const TASKS_URL = '/api/tasks';
 /** 整页共用这一个键：三段是同一次响应的三个字段。 */
@@ -22,7 +24,6 @@ export interface TaskResourcesPayload {
   gpu: TaskPercentMetric;
   network: TaskResourceMetric & { bytes_per_second: number | null };
   sampled_at: string;
-  detail?: string;
 }
 
 export interface TaskRunPayload {
@@ -47,12 +48,14 @@ export interface TaskRunPayload {
   followup_key: string;
   followup_depth: number;
   /** 服务端给出当前控制状态与可用动作，界面不按任务种类推断。 */
-  control?: { state: TaskControlState; actions: TaskControlAction[] };
+  control?: { state: TaskControlState; actions: (TaskControlAction | 'set_speed')[]; speed_mode?: ProcessingSpeed };
   /** 只投影可归属的实测读数；缺失字段代表该快照未提供资源采样。 */
   resources?: TaskResourcesPayload;
 }
 
 export interface ActivityData {
+  finished_total?: number;
+  finished_page?: number;
   available: boolean;
   result_versions?: Record<string, string>;
   message?: string;
@@ -65,16 +68,13 @@ export interface ActivityData {
   working_parents?: TaskRunPayload[];
   /** 父任务 id → 它直接派出的后继按状态各几条。下发的后继只是一部分，进度与「还在不在跑」看这份。 */
   followup_counts?: FollowupCounts;
+  /** 逐部到来的入库通知：云下载整理完成、推送发现登记的新影片。`epoch` 换了表示服务重启过。 */
+  ingest_notices?: { epoch: string; items: IngestNotice[] };
 }
+
+export interface IngestNotice { id: number; kind: 'download' | 'discovered'; asset_id: number; label: string; at: number }
 
 export type FollowupCounts = Record<string, Record<string, number>>;
-
-/** 往前翻的一页：只有「最近完成」，在跑与被挡下的由轮询那一份负责。 */
-export interface FinishedPage {
-  finished: TaskRunPayload[];
-  finished_has_more: boolean;
-  followup_counts?: FollowupCounts;
-}
 
 /** 几轮派出的后继合在一起数：共几条、结束了几条、还有几条在排或在跑。 */
 export function followupTally(counts: FollowupCounts | undefined, runs: TaskRunPayload[]) {
@@ -91,34 +91,16 @@ export function followupTally(counts: FollowupCounts | undefined, runs: TaskRunP
 }
 
 /** 同一种任务连着派出的几轮合成一件事：自动修复每分钟派一批，一屏十几张「已完成」卡说的是同一件事。
- *  每组按最新那一轮排在前面，`runs[0]` 是最新那一轮。 */
-export function foldByKind(rows: TaskRunPayload[]): RunFold[] {
+ *  每组按最新那一轮排在前面，`runs[0]` 是最新那一轮。`split` 再按它的值分组，同一种任务值不同的分开。 */
+export function foldByKind(rows: TaskRunPayload[], split: (run: TaskRunPayload) => string = () => ''): RunFold[] {
   const folds = new Map<string, RunFold>();
   for (const run of rows) {
-    const fold = folds.get(run.task_key);
+    const key = `${run.task_key}\u0000${split(run)}`;
+    const fold = folds.get(key);
     if (fold) fold.runs.push(run);
-    else folds.set(run.task_key, { run, runs: [run] });
+    else folds.set(key, { run, runs: [run] });
   }
   return [...folds.values()];
-}
-
-/** 以 `oldest` 为游标取它之前的一页。游标是它的结束时刻加 id，与服务端的排序键一致。 */
-export const fetchEarlier = (oldest: TaskRunPayload, signal?: AbortSignal) => {
-  const query = new URLSearchParams({
-    before_finished_at: oldest.finished_at || '', before_id: String(oldest.id) });
-  return apiGet<FinishedPage>(`${TASKS_URL}?${query}`, signal);
-};
-
-/** 几批终态行并成一列：同一轮只留一条，按结束时刻从新到旧、同一时刻按 id 从大到小，
- *  和服务端翻页的排序键同一个，拼接处才不会乱序。终态落地后不再变，重复的哪一份都一样。 */
-export function mergeFinished(...batches: TaskRunPayload[][]): TaskRunPayload[] {
-  const byId = new Map<number, TaskRunPayload>();
-  for (const batch of batches) for (const row of batch) if (!byId.has(row.id)) byId.set(row.id, row);
-  return [...byId.values()].sort((a, b) => {
-    const left = a.finished_at || '', right = b.finished_at || '';
-    if (left !== right) return left < right ? 1 : -1;
-    return b.id - a.id;
-  });
 }
 
 /** 有东西在跑就两秒一次（和进度写库的节流同一个数），全是终态时十秒一次。 */
@@ -127,10 +109,20 @@ export const SETTLED_POLL_MS = 10000;
 export const pollInterval = (data: ActivityData | undefined): number =>
   data?.running?.length ? RUNNING_POLL_MS : SETTLED_POLL_MS;
 
-export const fetchTasks = (signal?: AbortSignal) => apiGet<ActivityData>(TASKS_URL, signal);
+export const fetchTasks = (signal?: AbortSignal, page = 1, limit = 20) =>
+  apiGet<ActivityData>(page === 1 && limit === 20 ? TASKS_URL : `${TASKS_URL}?page=${page}&limit=${limit}`, signal);
+
+/** 每个页面常驻轮询的那一小份：结果版本、入库通知与有没有任务在排或在跑。完整任务列表只给任务中心。 */
+export const RESULT_UPDATES_KEY = ['result-updates'] as const;
+export type ResultUpdatesData = Pick<ActivityData, 'result_versions' | 'ingest_notices'> & { busy?: boolean };
+export const fetchResultUpdates = (signal?: AbortSignal) =>
+  apiGet<ResultUpdatesData>('/api/result-updates', signal);
 
 export const controlTask = (id: number, action: TaskControlAction, signal?: AbortSignal) =>
   apiSend(`${TASKS_URL}/${id}/control`, { action }, 'POST', signal);
+
+export const setTaskSpeed = (id: number, speed: ProcessingSpeed) =>
+  apiSend(`${TASKS_URL}/${id}/control`, { action: 'set_speed', speed_mode: speed }, 'POST');
 
 /** 首屏：取完数才画。中止时 `fetchQuery` 把 `AbortError` 抛回给挂载方，它据此放弃这一次。 */
 export async function prefetchTasks(signal: AbortSignal): Promise<void> {
@@ -138,12 +130,12 @@ export async function prefetchTasks(signal: AbortSignal): Promise<void> {
 }
 
 export const TRIGGER_LABELS: Record<string, string> = {
-  manual: '手动', scheduled: '定时', startup: '启动', cli: '命令行',
+  manual: t('manage:taskTrigger.manual'), scheduled: t('manage:taskTrigger.scheduled'), startup: t('manage:taskTrigger.startup'), cli: t('manage:taskTrigger.cli'),
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: '排队中', running: '进行中', succeeded: '已完成',
-  failed: '失败', cancelled: '已取消', interrupted: '意外中断',
+  pending: t('manage:taskStatus.queued'), running: t('manage:taskStatus.running'), succeeded: t('manage:taskStatus.completed'),
+  failed: t('manage:shared.failed'), cancelled: t('manage:shared.canceled'), interrupted: t('manage:taskStatus.interrupted'),
 };
 
 /** 状态的中文名。表里的状态集是封闭的，认不出来只可能是表先改了，那就原样显示。 */
@@ -151,33 +143,33 @@ export const statusLabel = (status: string): string => STATUS_LABELS[status] || 
 
 /* 主摘要使用已定义的中文字段；原始状态字典由技术详情保留。 */
 const SUMMARY_LABELS: Record<string, string> = {
-  checked: '已检查', total: '总数', scanned: '已扫描', identified: '已识别',
-  candidates: '作品资料', covers: '封面', changed: '已改动', operation: '操作',
-  ok: '取得', miss: '未取得', kept: '保留', planned: '计划', done: '已处理', added: '新增',
-  written: '已保存', removed: '已移除', issue_count: '需要处理',
-  followups_duplicate: '补充任务已在排队', followups_truncated: '补充任务超出数量上限',
-  followups_depth_exceeded: '补充任务超出层级上限', name: '名称',
-  matched: '匹配项', size: '尺寸', source: '来源', cover_network: '封面图片连接失败',
-  probed: '已读取媒体信息', previews: '预览图', paused_count: '等待来源恢复',
-  auto_applied: '已自动保存', auto_rejected: '未采用', performer_avatars: '女优头像',
-  performer_profile_failed: '女优资料采集失败', performer_aliases: '女优别名',
-  performer_profile_conflicts: '女优资料待复核', conflicts: '待复核冲突',
-  gone_count: '链接已失效', unclear_count: '链接访问失败',
-  source_failed: '来源检查失败', source_warning: '来源补查失败',
-  resolve_failed: '查找失败', sources_found: '找到来源',
-  warning_count: '需要留意', profiles_checked: '已读取浏览器资料',
-  missing: '文件已丢失', purge: '可删除记录', vanish: '需保留个人记录',
-  empty: '空目录', unreadable: '无法读取', cache_files: '可清理缓存文件',
-  cache_bytes: '可清理缓存大小', bytes_reclaimed: '已释放空间',
-  cache_removed: '已清理缓存文件', cache_blocked_count: '缓存清理失败',
-  purged: '已删除记录', vanished: '已标记文件丢失', reattached: '已转移记录',
-  blocked_count: '未能删除记录', dirs_removed: '已删除空目录', dir_errors: '目录清理失败',
-  marked: '已标记失效', recovered: '复查后可访问', entities: '涉及资料',
-  found: '发现待修复文件', repaired: '已修复', failed: '失败', missing_tool: '缺少修复工具',
-  moved: '已整理文件', restored: '已还原', skipped: '已跳过', made: '已生成预览图',
-  fetched: '已取得资料', updated: '已更新', discovered: '发现作品', without_code: '未识别番号',
-  incomplete: '资料或封面未取得',
-  result: '结果',
+  checked: t('manage:taskSummary.checked'), total: t('manage:taskSummary.total'), scanned: t('manage:taskSummary.scanned'), identified: t('manage:taskSummary.recognized'),
+  candidates: t('manage:taskSummary.metadata'), covers: t('manage:taskSummary.covers'), changed: t('manage:taskSummary.changed'), operation: t('manage:taskSummary.operation'),
+  ok: t('manage:taskSummary.found'), miss: t('manage:shared.notFound'), kept: t('manage:taskSummary.kept'), planned: t('manage:taskSummary.planned'), done: t('manage:taskSummary.processed'), added: t('manage:taskSummary.added'),
+  written: t('manage:taskSummary.saved'), removed: t('manage:taskSummary.removed'), issue_count: t('manage:backgroundIssues.title'),
+  followups_duplicate: t('manage:taskSummary.followupsDuplicate'), followups_truncated: t('manage:taskSummary.followupsTruncated'),
+  followups_depth_exceeded: t('manage:taskSummary.followupsTooDeep'), name: t('manage:shared.name'),
+  matched: t('manage:taskSummary.matched'), size: t('manage:taskSummary.size'), source: t('manage:taskSummary.source'), cover_network: t('manage:taskSummary.coverNetwork'),
+  probed: t('manage:taskSummary.probed'), previews: t('manage:taskSummary.previews'), paused_count: t('manage:taskSummary.pausedCount'),
+  auto_applied: t('manage:taskSummary.autoApplied'), auto_rejected: t('manage:taskSummary.autoRejected'), performer_avatars: t('manage:taskSummary.actressAvatars'),
+  performer_profile_failed: t('manage:taskSummary.actressFetchFailed'), performer_aliases: t('manage:taskSummary.actressAliases'),
+  performer_profile_conflicts: t('manage:taskSummary.actressToReview'), conflicts: t('manage:taskSummary.conflictsToReview'),
+  gone_count: t('manage:taskSummary.deadLinks'), unclear_count: t('manage:taskSummary.unreachableLinks'),
+  source_failed: t('manage:taskSummary.sourceCheckFailed'), source_warning: t('manage:taskSummary.sourceRecheckFailed'),
+  resolve_failed: t('manage:taskSummary.lookupFailed'), sources_found: t('manage:taskSummary.sourcesFound'),
+  warning_count: t('manage:taskSummary.warnings'), profiles_checked: t('manage:taskSummary.browserProfilesRead'),
+  missing: t('manage:taskSummary.missingFiles'), purge: t('manage:taskSummary.recordsToDelete'), vanish: t('manage:taskSummary.recordsToKeep'),
+  empty: t('manage:taskSummary.emptyDirectories'), unreadable: t('manage:taskSummary.unreadable'), cache_files: t('manage:taskSummary.cacheFiles'),
+  cache_bytes: t('manage:taskSummary.cacheSize'), bytes_reclaimed: t('manage:taskSummary.spaceFreed'),
+  cache_removed: t('manage:taskSummary.cacheCleaned'), cache_blocked_count: t('manage:taskSummary.cacheCleanupFailed'), files_removed: t('manage:taskSummary.filesDeleted'),
+  purged: t('manage:taskSummary.recordsDeleted'), vanished: t('manage:taskSummary.markedMissing'), reattached: t('manage:taskSummary.recordsTransferred'),
+  blocked_count: t('manage:taskSummary.recordsNotDeleted'), dirs_removed: t('manage:taskSummary.emptyDirsDeleted'), dir_errors: t('manage:taskSummary.directoryCleanupFailed'),
+  marked: t('manage:taskSummary.markedDead'), recovered: t('manage:taskSummary.recovered'), entities: t('manage:taskSummary.entities'),
+  found: t('manage:taskSummary.filesToRepair'), repaired: t('manage:taskSummary.repaired'), failed: t('manage:shared.failed'), missing_tool: t('manage:taskSummary.missingTool'),
+  moved: t('manage:taskSummary.filesOrganized'), restored: t('manage:taskSummary.restored'), skipped: t('manage:taskSummary.skipped'), made: t('manage:taskSummary.previewsGenerated'),
+  fetched: t('manage:taskSummary.metadataFetched'), updated: t('manage:taskSummary.updated'), discovered: t('manage:taskSummary.videosFound'), without_code: t('manage:taskSummary.withoutCode'),
+  incomplete: t('manage:taskSummary.incomplete'),
+  result: t('manage:taskSummary.result'),
 };
 
 const PROBLEM_COUNTS = [
@@ -213,17 +205,18 @@ export function problemDestination(run: TaskRunPayload, latest = true): { href: 
   if (!hasResultProblems(run) && run.status !== 'failed') return null;
   if (LATEST_ONLY.has(run.task_key) && !latest) return null;
   const targets: Record<string, [string, string]> = {
-    'link-check': ['/data-cleanup#link-manager', '查看有问题的链接'],
-    'link-prune': ['/data-cleanup#link-manager', '查看有问题的链接'],
+    'link-check': ['/data-cleanup#link-manager', t('manage:taskLinks.problemLinks')],
+    'link-prune': ['/data-cleanup#link-manager', t('manage:taskLinks.problemLinks')],
     // 「需要处理」不收这里的可重试项：问题清单有几百项，先看清单再在那张卡上重试。
-    'library-processing': ['/data-cleanup#libraryProcessing', '查看未完成项'],
-    'follow-check': ['/subscriptions', '查看关注来源'],
-    'feed-check': ['/subscriptions', '查看订阅源'],
-    'follow-resolve': ['/subscriptions?tab=add', '查看来源查找'],
-    'resource-scan': ['/data-cleanup#resource-sync', '查看资源同步'],
-    'resource-apply': ['/data-cleanup#resource-sync', '查看资源同步'],
-    'media-repair': ['/data-cleanup#mediaRepair', '查看媒体修复'],
-    'taste-refresh': ['/taste', '查看口味数据来源'],
+    'library-processing': ['/data-cleanup#libraryProcessing', t('manage:taskLinks.unfinished')],
+    'follow-check': ['/subscriptions', t('manage:taskLinks.followSources')],
+    'feed-check': ['/subscriptions', t('manage:taskLinks.feeds')],
+    'follow-resolve': ['/subscriptions?tab=add', t('manage:taskLinks.sourceLookup')],
+    'resource-scan': ['/data-cleanup#resource-sync', t('manage:taskLinks.resourceSync')],
+    'resource-apply': ['/data-cleanup#resource-sync', t('manage:taskLinks.resourceSync')],
+    'media-repair': ['/data-cleanup#mediaRepair', t('manage:taskLinks.mediaRepair')],
+    'taste-refresh': ['/taste', t('manage:taskLinks.tasteSources')],
+    'follow-evidence-reclaim': ['/settings/maintenance/repairs', t('manage:taskLinks.repairs')],
   };
   const target = targets[run.task_key];
   return target ? { href: target[0], label: target[1] } : null;
@@ -304,7 +297,7 @@ export function followupDetail(row: TaskRunPayload): string {
   const total = row.progress_total || 0;
   const { name: _name, ...result } = row.result_summary || {};
   const tail = readableErrorHeadline(row.error) || summaryText(result)
-    || (isActive(row) && total > 0 ? `${progressText(row.progress_current, total)} 项` : '');
+    || (isActive(row) && total > 0 ? t('manage:taskCenter.progressItems', { progress: progressText(row.progress_current, total) }) : '');
   return [item, tail].filter(Boolean).join(' · ');
 }
 
@@ -312,12 +305,12 @@ export function followupDetail(row: TaskRunPayload): string {
 export function elapsedText(seconds: number | null | undefined): string {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '';
   const whole = Math.floor(seconds);
-  if (whole < 60) return `${whole} 秒`;
+  if (whole < 60) return t('manage:duration.seconds', { count: whole });
   const minutes = Math.floor(whole / 60);
-  if (minutes < 60) return `${minutes} 分 ${whole % 60} 秒`;
+  if (minutes < 60) return t('manage:duration.minutesSeconds', { count: minutes, seconds: whole % 60 });
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours} 小时 ${minutes % 60} 分`;
-  return `${Math.floor(hours / 24).toLocaleString()} 天 ${hours % 24} 小时`;
+  if (hours < 48) return t('manage:duration.hoursMinutes', { count: hours, minutes: minutes % 60 });
+  return t('manage:duration.daysHours', { count: Math.floor(hours / 24), hours: hours % 24 });
 }
 
 /** 进度读数「已做 / 总数」：服务端偶尔报出超过总数的已做数，按总数封顶。 */
@@ -340,32 +333,34 @@ export function readableErrorHeadline(text: string | null | undefined): string {
   const head = errorHeadline(text);
   const technical = head.match(/^(?:[\w.]*Error|Exception):\s*(.*)$/);
   if (!technical) return head;
-  return requestErrorMessage(technical[1]);
+  // Peach 自己抛的原因是中文原话，照原样显示；第三方库的英文消息是技术细节，带着异常类型交给通用句。
+  return /[㐀-鿿]/.test(technical[1]!) ? technical[1]! : requestErrorMessage(head);
 }
 
 const OUTCOME_LABELS: Record<string, string> = {
-  partial: '处理已结束，部分项目需处理', complete: '处理完成', interrupted: '处理已中断',
-  cancelled: '已取消',
-  '没有新写法': '未发现新别名', '已装上': '已保存资料图片',
-  '已装着认得准的小图': '已保留身份核对通过的小尺寸图片',
-  '档案已不存在': '资料记录已不存在', '资料未过期': '现有资料仍在有效期内',
-  '图太小': '图片分辨率不足', '官网未取得': '未取得厂牌官网信息',
-  '两站都没有作品一览': '两个来源均未提供作品列表',
-  '哪一站都没对上她': '未找到与该人物相符的资料页',
-  '两站都没对上她': '两个来源均未找到与该人物相符的资料页',
-  '三站都没对上她': '三个来源均未找到与该人物相符的资料页',
-  '已有身份': '已有创作者分类', '已变': '资料已被其他操作修改，本次未保存',
+  partial: t('manage:taskOutcome.partial'), complete: t('manage:taskOutcome.complete'), interrupted: t('manage:taskOutcome.interrupted'),
+  cancelled: t('manage:shared.canceled'),
+  '没有新写法': t('manage:taskOutcome.noNewAliases'), '已装上': t('manage:taskOutcome.imageSaved'),
+  '已装着认得准的小图': t('manage:taskOutcome.smallImageKept'),
+  '档案已不存在': t('manage:taskOutcome.profileGone'), '资料未过期': t('manage:taskOutcome.stillCurrent'),
+  '图太小': t('manage:taskOutcome.imageTooSmall'), '官网未取得': t('manage:taskOutcome.noOfficialSite'),
+  '两站都没有作品一览': t('manage:taskOutcome.noVideoLists'),
+  '哪一站都没对上她': t('manage:taskOutcome.noMatch'),
+  '两站都没对上她': t('manage:taskOutcome.noMatchTwo'),
+  '三站都没对上她': t('manage:taskOutcome.noMatchThree'),
+  '已有身份': t('manage:taskOutcome.alreadyCreator'), '已变': t('manage:taskOutcome.changedElsewhere'),
 };
 const SOURCE_NAMES: Record<string, string> = { avwikidb: 'AVWikiDB', javdb: 'JavDB', 'minnano-av': 'みんなのAV' };
 const OPERATION_LABELS: Record<string, string> = {
-  like: '标记喜欢', seen: '标记看过', later: '加入稍后看', dispose: '移入回收站',
-  restore: '还原', delete: '永久删除', 'empty-trash': '清空回收站',
-  'dismiss-junk': '确认不是垃圾', 'reconsider-junk': '重新判定垃圾', region: '判定产地',
+  like: t('manage:taskOperation.like'), seen: t('manage:taskOperation.markWatched'), later: t('manage:taskOperation.watchLater'), dispose: t('manage:shared.moveToTrash'),
+  restore: t('manage:shared.restore'), delete: t('manage:shared.deletePermanently'), 'empty-trash': t('manage:shared.emptyTrash'),
+  'dismiss-junk': t('manage:taskOperation.notJunk'), 'reconsider-junk': t('manage:taskOperation.recheckJunk'), region: t('manage:batchDock.setRegion'),
 };
 const outcomeText = (text: string): string => OUTCOME_LABELS[text] || text
   .replace(/(avwikidb|javdb|minnano-av) (绑定|写入)/gi, (_, site: string, action: string) =>
-    action === '绑定' ? `已关联 ${SOURCE_NAMES[site.toLowerCase()]} 资料页`
-      : `已保存来自 ${SOURCE_NAMES[site.toLowerCase()]} 的资料`);
+    // i18n-exempt: 服务端结论里的动作原词
+    action === '绑定' ? t('manage:taskOutcome.linkedSite', { site: SOURCE_NAMES[site.toLowerCase()] })
+      : t('manage:taskOutcome.savedFromSite', { site: SOURCE_NAMES[site.toLowerCase()] }));
 
 /** 时间戳说成本地的「月-日 时:分」。数据库里存的是 UTC，界面上一律按本机时区读。 */
 export function momentText(stamp: string | null | undefined): string {
@@ -388,7 +383,7 @@ export function summaryItems(summary: Record<string, unknown>): string[] {
   const items = fieldItems(summary);
   // 「发现问题」要说得出是什么问题。原因已写进结论（「人脸模型不可用：…」「人像闸未生效…」）时不再说一遍。
   if (summary?.face_match_unavailable === true && !items.some((line) => /不可用|未生效/.test(line))) {
-    items.push('人脸模型不可用，未做人脸核对');
+    items.push(t('manage:taskOutcome.faceModelUnavailable'));
   }
   return items;
 }
@@ -400,11 +395,11 @@ function fieldItems(summary: Record<string, unknown>): string[] {
       && (typeof value === 'number' || typeof value === 'string')
       && String(value) !== '' && (value !== 0 || key === 'checked' || key === 'total'))
     .map(([key, value]) => {
-      if (key === 'followups') return `已安排 ${Number(value).toLocaleString()} 项补充任务`;
+      if (key === 'followups') return t('manage:taskOutcome.followupsScheduled', { count: Number(value) });
       if (key === 'error') return readableErrorHeadline(String(value));
       if (key === 'outcome' || key === 'result') return outcomeText(String(value));
       if (key === 'cache_bytes' || key === 'bytes_reclaimed') return `${SUMMARY_LABELS[key]} ${fmtSize(Number(value))}`;
-      if (key === 'operation') return `操作：${OPERATION_LABELS[String(value)] || '批量操作'}`;
+      if (key === 'operation') return t('manage:taskSummary.operationValue', { operation: OPERATION_LABELS[String(value)] || t('manage:taskOperation.bulk') });
       return `${SUMMARY_LABELS[key]} ${typeof value === 'number' ? value.toLocaleString() : value}`;
     });
 }

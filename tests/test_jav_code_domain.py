@@ -27,7 +27,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from peach.catalog_rules import (
@@ -420,6 +420,20 @@ class TokyoHotShapeTests(unittest.TestCase):
                 'edition_badges': ['中字', '无码']})
         self.assertEqual(jav_fallback_title('MKD-S118.mp4', 'MKD-S118'), '')
 
+    def test_uncensored_only_labels_get_the_uncensored_badge(self):
+        for name, code in (('SMBD-120.mp4', 'SMBD-120'), ('SKYHD-050-C.mp4', 'SKYHD-050')):
+            with self.subTest(code=code):
+                self.assertIn('无码', jav_display_metadata(name, code)['edition_badges'])
+        self.assertEqual(jav_display_metadata('MCDV-024.mp4', 'MCDV-024')['edition_badges'], [])
+
+    def test_ltx_after_the_code_marks_a_cracked_edition(self):
+        self.assertEqual(jav_display_metadata('ABP-123-LTX.mp4', 'ABP-123'), {
+            'display_code': 'ABP-123', 'display_title': '', 'edition_badges': ['无码破解']})
+        self.assertEqual(jav_display_metadata('ABP-123-C-LTX.mp4', 'ABP-123')['edition_badges'],
+                         ['中字', '无码破解'])
+        # 字母段本身是 LTX 的番号不是破解标记。
+        self.assertEqual(jav_display_metadata('LTX-123.mp4', 'LTX-123')['edition_badges'], [])
+
     def test_a_bare_number_is_read_only_at_the_head_of_the_name(self):
         self.assertEqual(release_code_from_filename("n1032.mkv"), "n1032")
         self.assertEqual(release_code_from_filename("n0762.mkv"), "n0762")
@@ -470,6 +484,14 @@ class DeliveryFilenameTests(unittest.TestCase):
         self.assertEqual(release_code_from_filename("heyzo_hd_1031_full.mp4"), "HEYZO-1031")
         self.assertEqual(release_code_from_filename("heyzo_lt_1380_full-1.mp4"), "HEYZO-1380")
         self.assertEqual(release_code_from_filename("HEYZO-1380.mp4"), "HEYZO-1380")
+
+    def test_heyzo_keeps_four_digits_below_one_thousand(self):
+        """#354：HEYZO 官方编号定宽四位，前导零是编号的一部分，收成三位就查不到资料。"""
+        for name in ("HEYZO-0707.mp4", "heyzo_hd_0707_full.mp4", "HEYZO-707.mp4", "heyzo-00707.mp4"):
+            with self.subTest(name=name):
+                self.assertEqual(release_code_from_filename(name), "HEYZO-0707")
+        self.assertEqual(normalise_code_key("HEYZO-707"), "HEYZO-0707")
+        self.assertEqual(normalise_code_key("ABC-0123"), "ABC-123")
 
     def test_the_number_alone_is_not_a_heyzo_release(self):
         # 站名是这条规则的全部证据：少了它，创作者目录里按下划线分段、末尾带画质
@@ -1100,6 +1122,27 @@ _identity_spec.loader.exec_module(identity)
 
 class ScrapedIdentityAuditTests(unittest.TestCase):
     """已落库的刮削归属按来源交回的编号重判身份，分错配、前缀未证实、来源无编号三档。"""
+
+    def test_date_code_review_keys_compare_the_release_not_the_key_namespace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / 'ledger.db'
+            upgrade(database, MIGRATIONS)
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("INSERT INTO asset(id,location,path,name,medium,code) "
+                                   "VALUES(1,'local','sample.mp4','sample.mp4','video','010101_001')")
+                connection.execute("INSERT INTO entity(id,kind,canonical_name,normalized_name,created_at,updated_at) "
+                                   "VALUES(1,'tag','sample','sample','now','now')")
+                metadata = {'review_item': 'date-code:1:tags', 'provider_id': '010101_001'}
+                connection.execute("INSERT INTO asset_entity(asset_id,entity_id,role,source,metadata_json) "
+                                   "VALUES(1,1,'tag','javinizer:test:tag',?)", (json.dumps(metadata),))
+                rows, tiers = identity.collect(connection)
+                self.assertEqual(rows, [])
+                self.assertEqual(dict(tiers), {})
+                metadata['provider_id'] = '010101_002'
+                connection.execute('UPDATE asset_entity SET metadata_json=?', (json.dumps(metadata),))
+                rows, tiers = identity.collect(connection)
+                self.assertEqual(tiers[identity.MISMATCH], 1)
+                self.assertEqual(rows[0]['review_code'], '010101_001')
 
     def test_each_tier_is_told_apart(self):
         self.assertIsNone(identity.classify("ABW-123", {"id": "ABW-123"}))

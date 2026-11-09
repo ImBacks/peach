@@ -1,6 +1,7 @@
 import { esc } from '../core';
 import { setActionBusy } from '../ui-kit/controls';
 import { spinnerHtml } from '../ui-kit/markup';
+import { t } from '../i18n';
 
 export interface SourceActionPorts {
   request(id: number): Promise<unknown>;
@@ -17,7 +18,7 @@ export function createRevealSourceAction(ports: SourceActionPorts) {
     const html = button?.innerHTML ?? '', label = button?.textContent?.trim() ?? '';
     if (button) {
       setActionBusy(button);
-      button.innerHTML = `${spinnerHtml('正在定位')}${label ? `<span>${esc(label)}</span>` : ''}`;
+      button.innerHTML = `${spinnerHtml(t('catalog:detailSource.locating'))}${label ? `<span>${esc(label)}</span>` : ''}`;
     }
     status.textContent = '';
     try {

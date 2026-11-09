@@ -8,11 +8,12 @@ import sys
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from peach import desktop_installer, job_recovery, settings_file, update_tasks
 from peach.jobs import BackgroundJob
-from peach.task_runs import TaskRunStore
+from peach.task_runs import TaskRunStore, stamp
 from support.ledger import fresh_ledger
 
 
@@ -66,6 +67,32 @@ class UpdateTaskTests(unittest.TestCase):
         pending = self.store.get(run.id)
         self.assertEqual((pending.status, pending.progress_current, pending.progress_total), ('pending', 3, 5))
 
+    def test_recovery_resumes_when_saved_pid_was_reused_by_another_process(self):
+        run = self.store.start('library-processing', trigger='manual')
+        old_start = stamp(datetime.now(timezone.utc) - timedelta(days=1))
+        with self.store.database.write_transaction(notify=False) as connection:
+            connection.execute('UPDATE task_run SET started_at=?,heartbeat_at=? WHERE id=?',
+                               (old_start, old_start, run.id))
+        job_recovery.save(self.db, 'library-processing', 'old-job', {'stage': 'collect'}, run_id=run.id)
+        path = update_tasks.state_for(self.db).parent / 'job-recovery/library-processing.json'
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data['pid'] = os.getpid()
+        path.write_text(json.dumps(data), encoding='utf-8')
+        self.store.suspend(run.id)
+        observed = []
+        job = BackgroundJob('pid-reuse-test', runs=self.store, task_key='library-processing')
+        def finish(identity):
+            observed.append(job.snapshot())
+            job.update(identity, status='complete')
+        handler = {'library-processing': lambda request: job.start(finish, restart=True, recovery=request)}
+        with patch('peach.jobs.process_creation_time', return_value=datetime.now(timezone.utc).timestamp()):
+            self.assertEqual(job_recovery.resume(self.db, handler), ['library-processing'])
+        job.thread.join(5)
+        self.assertFalse(job.thread.is_alive())
+        self.assertEqual((observed[0]['job_id'], observed[0]['run_id']), ('old-job', run.id))
+        self.assertEqual(self.store.get(run.id).status, 'succeeded')
+        self.assertIsNone(self.store.blocking('library-processing'))
+
     def test_terminal_checkpoint_is_readable_by_a_new_job_instance(self):
         first = BackgroundJob('resume-test', runs=self.store, task_key='link-check')
         original = first.start(lambda identity: first.update(identity, status='complete', checked=2, total=2), recovery={})
@@ -108,6 +135,67 @@ class UpdateTaskTests(unittest.TestCase):
                 self.store.finish(run.id, 'succeeded')
                 self.assertTrue(update_tasks.wait_quiescent(self.db, timeout=0))
                 update_tasks.release(self.db, token)
+
+    def test_pause_checks_do_not_wait_for_the_gate_lock_and_leave_stale_reservations_to_it(self):
+        """检查点问「在装更新吗」不取闸门锁；预约者死了只答「否」，文件留给持锁方清。"""
+        from filelock import FileLock
+        root = update_tasks.state_for(self.db)
+        root.mkdir(parents=True, exist_ok=True)
+        held, release = threading.Event(), threading.Event()
+
+        def hold():
+            with FileLock(root / 'admission.lock'):
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        try:
+            self.assertTrue(held.wait(5))
+            with patch.object(update_tasks, '_mutex', side_effect=AssertionError('检查点取了闸门锁')):
+                self.assertFalse(update_tasks.is_pausing(self.db))
+                (root / 'install.json').write_text(json.dumps({'pid': os.getpid(), 'token': 't'}), encoding='utf-8')
+                self.assertTrue(update_tasks.is_pausing(self.db))
+                with patch('peach.jobs.process_alive', return_value=False):
+                    self.assertFalse(update_tasks.is_pausing(self.db))
+                self.assertTrue((root / 'install.json').is_file())
+        finally:
+            release.set()
+            holder.join(5)
+        with patch('peach.jobs.process_alive', return_value=False):
+            update_tasks.reserve(self.db)
+        self.assertTrue(update_tasks.is_pausing(self.db))
+
+    def test_a_timed_out_gate_is_reported_as_busy_instead_of_a_bare_lock_timeout(self):
+        from filelock import FileLock
+        root = update_tasks.state_for(self.db)
+        root.mkdir(parents=True, exist_ok=True)
+        outcome = []
+
+        def admit():
+            try:
+                with update_tasks.admission(self.db):
+                    outcome.append(None)
+            except Exception as error:
+                outcome.append(error)
+
+        with FileLock(root / 'admission.lock'), patch.object(
+                update_tasks, '_mutex', lambda path: FileLock(path / 'admission.lock', timeout=0.05)):
+            worker = threading.Thread(target=admit)
+            worker.start()
+            worker.join(5)
+        self.assertIsInstance(outcome[0], update_tasks.GateBusy)
+        self.assertIsInstance(outcome[0], update_tasks.UpdateBusy)
+
+    def test_disk_guard_asks_about_installation_only_when_its_check_is_due(self):
+        from peach.jobs import DiskGuard
+        guard = DiskGuard(self.root, 0, interval_secs=3600)
+        with patch.object(update_tasks, 'check_pause') as pause:
+            guard.check()
+            for _ in range(50):
+                self.assertIsNone(guard.check())
+            guard.check(force=True)
+        self.assertEqual(pause.call_count, 2)
 
     def test_reservation_prevents_task_start_until_release(self):
         token = update_tasks.reserve(self.db)
