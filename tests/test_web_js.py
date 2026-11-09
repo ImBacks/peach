@@ -39,6 +39,10 @@ import { registerHooks } from 'node:module';
 import { extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// 中文文案断言使用明确的语言环境，不依赖 Node 所在主机的默认语言。
+Object.defineProperty(globalThis.navigator, 'languages', { value: ['zh-CN', 'zh'], configurable: true });
+Object.defineProperty(globalThis.navigator, 'language', { value: 'zh-CN', configurable: true });
+
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier.startsWith('.') && context.parentURL?.endsWith('.ts') && !extname(specifier)) {
