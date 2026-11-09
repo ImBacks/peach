@@ -670,7 +670,7 @@ OneJAV、Free JAV Torrent 只给种子链接。这类条目经索引器同源的
 - 轻量安装包复用应用更新包的工具清单、`standalone_update.prepare_tools` 与既有 HTTPX、hashlib、zipfile。Inno Setup 6.7.3 用 [external 文件](https://jrsoftware.org/ishelp/topic_filessection.htm)安装临时目录中已验证的工具，用[滚动进度页](https://jrsoftware.org/ishelp/topic_isxfunc_createoutputmarqueeprogresspage.htm)显示准备状态；官方 API 已于 2026-10-17 核对。工具先在预检目录准备，成功后才暂停任务并覆盖安装；安装包旁的工具 ZIP 同样按清单校验，不读取馆藏配置或增加依赖。不引入另一套下载器或更新框架，校验及解压路径与在线更新共用。
 - 不用 [Velopack](https://docs.velopack.io/packaging/operating-systems/windows)（要求其安装目录与包格式）与 [WinSparkle](https://winsparkle.org/)（要求 appcast 与原生更新界面）：产物是 PyInstaller ZIP、进度在 Web 显示，沿用托盘进程与目录替换协议。
 - Web 复用 Fieldset、Progress、confirmModal；状态由 `standalone-update.json` 保存。下载按字节计量，解压按文件数计量，替换使用阶段进度；服务重启期间保留等待状态，恢复连接后核对版本。
-- 新版有待应用迁移时，重启安装复用 `migrate upgrade --yes`，先保存 SQLite 备份；迁移或启动失败时恢复数据库与程序。数据库备份位于用户 Peach 数据目录的 `state/update-backups/`。
+- 新版有待应用迁移时，重启安装复用 `migrate upgrade --yes`，先保存 SQLite 备份；迁移或启动失败时恢复数据库与程序。数据库备份位于用户 Peach 数据目录的 `state/update-backups/`，只留最近两次；更新成功后由新版托盘在助手退出后删掉程序目录旁的事务目录，按目录内容判定已装好的旧事务一并清理，用 psutil 确认没有进程从里面运行。
 - 更新事务按当前配置读取 state 与账本路径，助手显式继承所选 Peach 数据目录。已有数据目录恢复复用严格配置解析与位置记录，只接受含配置和账本的目录。`scripts/smoke_desktop.py` 验证恢复及再次启动；`scripts/smoke_online_update.py` 使用真实 Release 包和临时馆藏验证在线更新，可注入无法启动的暂存 EXE 验证回滚。
 - 覆盖升级验收复用 `smoke_desktop` 的首启配置、临时 Peach 数据目录、登录和进程退出；`scripts/smoke_overlay_upgrade.py` 使用标准库下载并校验已发布制品，分别走 ZIP 原位解压和 Inno Setup 原位安装。安装包只在没有 Peach 安装登记的 Actions runner 上验收，覆盖安装器停止旧进程、目录记忆、配置与密码保留、账本哨兵、普通启动及卸载保留数据；不新增依赖。
 

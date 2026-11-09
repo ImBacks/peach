@@ -760,6 +760,69 @@ class StandaloneUpdateTests(unittest.TestCase):
         self.assertEqual((recovery / 'job.json').read_text(encoding='utf-8'), 'saved checkpoint')
         self.assertFalse(repairs.exists())
 
+    def transaction(self, ident, *parts):
+        directory = self.root / f'.app-update-{ident}'
+        for part in parts:
+            (directory / part).mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def test_a_finished_update_removes_its_transaction_and_older_finished_ones(self):
+        target = self.root / 'app'; (target / '_internal').mkdir(parents=True)
+        current, older, failed, pending = (f'{n}' * 32 for n in 'abcd')
+        installed = self.transaction(current, 'backup/_internal', 'helper/_internal', 'stage', 'tool-ffmpeg')
+        (installed / 'package.zip').write_bytes(b'zip')
+        (installed / 'helper/Peach.exe').write_text('old', encoding='utf-8')
+        previous = self.transaction(older, 'backup', 'helper')
+        rolled_back = self.transaction(failed, 'failed', 'helper')
+        unfinished = self.transaction(pending, 'backup', 'stage/Peach')
+        not_ours = self.transaction('fixture', 'backup')
+        (self.root / 'Peach Media').mkdir()
+        backups = self.state / 'update-backups'
+        for age, ident in enumerate((current, older, failed, 'e' * 32)):
+            (backups / ident).mkdir(parents=True)
+            (backups / ident / 'ledger.db').write_bytes(b'db')
+            os.utime(backups / ident, (1_000_000 - age * 1000,) * 2)
+        (backups / 'fixture').mkdir()
+        update.write({'id': current, 'version': update.__version__}, state='complete')
+        with patch.object(update.sys, 'executable', str(target / 'Peach.exe')), patch.object(
+                update, '_running_from', return_value=False):
+            self.assertFalse(update.sweep())
+        self.assertFalse(installed.exists())
+        self.assertFalse(previous.exists())
+        for kept in (rolled_back, unfinished, not_ours, target, self.root / 'Peach Media'):
+            self.assertTrue(kept.is_dir(), kept)
+        self.assertEqual(sorted(path.name for path in backups.iterdir()), sorted([current, older, 'fixture']))
+
+    def test_cleanup_waits_while_an_update_runs_or_its_helper_is_still_alive(self):
+        target = self.root / 'app'; target.mkdir()
+        ident = 'f' * 32
+        installed = self.transaction(ident, 'backup', 'helper')
+        with patch.object(update.sys, 'executable', str(target / 'Peach.exe')):
+            for state in ('installing', 'ready'):
+                update.write({'id': ident, 'version': update.__version__}, state=state)
+                with patch.object(update, '_running_from', return_value=False):
+                    self.assertTrue(update.sweep(), state)
+            update.write({'id': ident, 'version': update.__version__}, state='complete')
+            with patch.object(update, '_running_from', return_value=True):
+                self.assertTrue(update.sweep())
+            self.assertTrue(installed.is_dir())
+            for state, version in (('error', update.__version__), ('complete', '0.0.0')):
+                update.write({'id': ident, 'version': version}, state=state)
+                with patch.object(update, '_running_from', return_value=False):
+                    self.assertFalse(update.sweep())
+                self.assertTrue(installed.is_dir(), state)
+
+    def test_tray_poll_starts_the_cleanup_once_in_the_background(self):
+        tray = Mock()
+        update.write({'id': 'a' * 32}, state='complete')
+        with patch.object(update.distribution, 'standalone', return_value=True), patch.object(
+                update, '_sweep_started', update.threading.Event()), patch.object(update.threading, 'Thread') as thread:
+            update.poll(tray)
+            update.poll(tray)
+        thread.assert_called_once()
+        self.assertEqual(thread.call_args.kwargs['target'], update._sweep_in_background)
+        thread.return_value.start.assert_called_once_with()
+
     def test_running_installation_is_detected_by_the_current_executable_and_version(self):
         target = self.root / 'app'
         with patch.object(update.distribution, 'standalone', return_value=True), patch.object(

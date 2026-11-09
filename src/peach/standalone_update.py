@@ -4,8 +4,10 @@ from __future__ import annotations
 from contextlib import closing
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -24,6 +26,11 @@ from .windows_update import replace_with_retry
 from . import update_tasks
 
 ACTIVE = {"downloading", "verifying", "extracting", "preparing", "restarting", "installing"}
+LOGGER = logging.getLogger(__name__)
+# 事务号是 `start` 里的 uuid4().hex；清理只认这个形态的目录名。
+TRANSACTION_ID = re.compile(r"[0-9a-f]{32}")
+# 数据库与配置备份留最近两次：最新一次之外再留一次，诊断报告也只收最近两份迁移日志。
+KEEP_BACKUPS = 2
 MAX_ARCHIVE = 512 * 1024 * 1024
 MAX_EXPANDED = 2 * 1024 * 1024 * 1024
 
@@ -330,8 +337,95 @@ def request_restart() -> dict:
     return public()
 
 
+def _transaction_id(directory: Path, target: Path) -> str | None:
+    """本程序目录旁、按 `prepare` 的命名建出的事务目录才认，返回事务号。"""
+    prefix = f".{target.name}-update-"
+    ident = directory.name[len(prefix):] if directory.name.startswith(prefix) else ""
+    return ident if TRANSACTION_ID.fullmatch(ident) else None
+
+
+def _finished(transaction: Path) -> bool:
+    """装好的事务：旧程序已挪进 `backup`、暂存已换成正式目录，也没有回滚留下的 `failed`。"""
+    return ((transaction / "backup").is_dir() and not (transaction / "stage" / "Peach").exists()
+            and not (transaction / "failed").exists())
+
+
+def _running_from(directory: Path) -> bool:
+    """更新助手从事务里的 `helper` 运行，还有进程的可执行文件在目录里就不能删。"""
+    import psutil
+    root = os.path.normcase(str(directory.resolve())) + os.sep
+    for process in psutil.process_iter(["exe"]):
+        executable = process.info.get("exe")
+        if executable and os.path.normcase(executable).startswith(root):
+            return True
+    return False
+
+
+def sweep() -> bool:
+    """更新成功后清掉事务目录，`update-backups` 只留最近几次；返回 True 表示要稍后再试。
+
+    完成判定沿用助手写下的 `complete`：新版本已通过健康检查和就绪检查、托盘也在。
+    之后没有任何流程再用 `backup` 里的旧程序回滚，助手副本、更新包和工具包也只服务这一次，
+    所以整个事务目录都删。助手从 `helper` 运行，自己删不掉自己，由新版托盘在它退出后删。
+    以前版本留下的事务按目录内容判定已装好才删；失败、回滚过或还在进行的事务原样保留。
+    """
+    data = read()
+    if public().get("state") in ACTIVE | {"ready"}:
+        return True
+    target = Path(sys.executable).resolve().parent
+    current = data.get("id")
+    retry = False
+    for directory in target.parent.iterdir():
+        ident = _transaction_id(directory, target)
+        if not ident or directory.is_symlink() or not directory.is_dir() or not _finished(directory):
+            continue
+        if ident == current and not (data.get("state") == "complete" and data.get("version") == __version__):
+            continue
+        if _running_from(directory):
+            retry = True
+            continue
+        try:
+            shutil.rmtree(directory)
+            LOGGER.info("已清理更新事务目录：%s", directory)
+        except OSError:
+            LOGGER.warning("更新事务目录未能清理：%s", directory, exc_info=True)
+            retry = True
+    backups = settings_file.load_config().directory("state") / "update-backups"
+    found = sorted((path for path in backups.iterdir() if path.is_dir() and not path.is_symlink()
+                    and TRANSACTION_ID.fullmatch(path.name)), key=lambda path: path.stat().st_mtime,
+                   reverse=True) if backups.is_dir() else []
+    for path in found[KEEP_BACKUPS:]:
+        if path.name == current:
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            LOGGER.warning("旧的更新备份未能清理：%s", path, exc_info=True)
+    return retry
+
+
+def _sweep_in_background() -> None:
+    for _attempt in range(120):
+        try:
+            if not sweep():
+                return
+        except Exception:
+            LOGGER.warning("更新残留清理失败", exc_info=True)
+            return
+        time.sleep(5)
+
+
+_sweep_started = threading.Event()
+
+
 def poll(tray) -> None:
-    if not distribution.standalone() or read().get("state") != "restarting":
+    if not distribution.standalone():
+        return
+    if read().get("state") != "restarting":
+        # 删一次事务要动上千个文件、一两 GB，放到后台，托盘的健康巡检不等它。
+        if not _sweep_started.is_set():
+            _sweep_started.set()
+            threading.Thread(target=_sweep_in_background, daemon=True, name="PeachUpdateCleanup").start()
         return
     if not tray._action_lock.acquire(blocking=False):
         return
