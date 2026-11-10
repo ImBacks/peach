@@ -946,6 +946,7 @@ class UpgradeRepairs:
                 self._settle_javdb_records()
                 self._reclassify_videos()
                 self._settle_resolution_tags()
+                self._settle_quality()
                 self._convert_interface_text()
                 self._isolate_system_files()
                 return
@@ -998,6 +999,7 @@ class UpgradeRepairs:
             self._settle_javdb_records()
             self._reclassify_videos()
             self._settle_resolution_tags()
+            self._settle_quality()
             self._convert_interface_text()
             self._isolate_system_files()
 
@@ -1300,6 +1302,21 @@ class UpgradeRepairs:
             return
         LOGGER.info('interface text converted to codes: %s task rows, %s follow-up records',
                     result['rows'], result['attempts'])
+
+    def _settle_quality(self) -> None:
+        """按已存尺寸修正画质分档，原值与结果在同一事务写入回执。"""
+        from . import quality_repair
+        try:
+            with self.contract.database.write_transaction() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?', (quality_repair.KEY,)).fetchone():
+                    return
+                result = quality_repair.settle(connection)
+                connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
+                                   (quality_repair.KEY, str(time.time()), json.dumps(result, ensure_ascii=False)))
+        except Exception:
+            LOGGER.exception('画质分档补修失败')
+            return
+        LOGGER.info('画质分档：修正 %s 行', len(result['assets']))
 
     def _clear_stale_codes(self) -> None:
         """清掉旧版从文件名误认的番号（`stale_filename_codes`），只做一次。"""

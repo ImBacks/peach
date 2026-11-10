@@ -1198,6 +1198,7 @@
     "feed": "feed {{id}}",
     "uncensored": "uncensored",
     "censored": "censored",
+    "qualityRow": " - quality band {{asset}} {{quality}} → {{previous}} {{batch}}",
     "resolutionTagRow": " - resolution tag {{asset}} {{kind}} {{source}} {{batch}}",
     "dryRun": "dry-run; once confirmed, add --apply --backup <path>",
     "deletedFiles": "deleted_files",

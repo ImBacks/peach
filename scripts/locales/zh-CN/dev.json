@@ -1198,6 +1198,7 @@
     "feed": "订阅源 {{id}}",
     "uncensored": "无码",
     "censored": "有码",
+    "qualityRow": " - 画质分档 {{asset}} {{quality}} → {{previous}} {{batch}}",
     "resolutionTagRow": " - 分辨率标签 {{asset}} {{kind}} {{source}} {{batch}}",
     "dryRun": "dry-run；确认无误后加 --apply --backup <路径>",
     "deletedFiles": "删除文件",

@@ -629,6 +629,8 @@ Windows 上 TLS 私钥禁用了权限继承，只允许实际运行服务的账�
 
 ## 播放与转码
 
+视频画质按显示尺寸的长边分档：3000 及以上为 4K，2000–2999 为 2K，1800–1999 为 1080P，1200–1799 为 720P，其余为低画质。已有视频以已测尺寸自动修正符合旧规则的分档，无需重读文件。需要还原时，`scripts/revert_auto_landing.py --source upgrade:quality-resolution` 先列计划，再用 `--apply --backup` 执行；尺寸或画质已变化的行不还原。
+
 浏览器能直接播放的格式（例如常见的 MP4）不需要额外软件。Windows 安装版和绿色版携带 FFmpeg、ffprobe 与修复损坏 MP4 索引用的 untrunc。源码部署缺少这些工具时，Windows x64 可在配置页「应用与维护」→「运行信息」点「安装」：Peach 从最新发布下载同一份 `tools-ffmpeg.zip` 或 `tools-untrunc.zip`，经 Peach 代理设置出网，按发布摘要校验整包、按包内清单校验每个文件，再解压到数据目录的 `tools/ffmpeg`、`tools/untrunc`，装好后那一行显示版本。下载中断或校验不符时已有文件不变，再点一次即重新下载；已装且校验相符时不重复下载。macOS 与 Linux 没有发布的工具包（macOS 应用与 Docker 镜像自带工具），源码部署仍按页面上的官方下载入口自行安装，或加入 PATH。首次设置缺少 OpenSSL 时也会给出下载入口。
 
 Peach 按下面的顺序找 FFmpeg 和 ffprobe：
