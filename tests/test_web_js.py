@@ -39,6 +39,11 @@ import { registerHooks } from 'node:module';
 import { extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: { getItem: key => key === 'peach.settings.v1' ? JSON.stringify({ interfaceLanguage: 'zh-CN' }) : null },
+});
+
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier.startsWith('.') && context.parentURL?.endsWith('.ts') && !extname(specifier)) {
