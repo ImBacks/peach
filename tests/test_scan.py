@@ -394,6 +394,13 @@ class PosixShapeTests(_ScanCase):
                                  mounts={"local": (str(self.media),)}, windows=False)
         self.assertIn("挂载点", str(caught.exception))
 
+    def test_a_directory_outside_every_root_is_refused_before_touching_the_ledger(self):
+        """#591：Windows 挂载表为空时曾在取挂载表时越界（IndexError）。"""
+        with self.assertRaises(scan.ScanTargetError) as caught:
+            self._scan(r"Q:\elsewhere", declared_roots=self.DECLARED, mounts={}, windows=True)
+        self.assertIn("不在任何已配置的媒体目录下", str(caught.exception))
+        self.assertEqual(self._paths(), {})
+
 
 class CaseOnlyRenameTests(_ScanCase):
     """只改大小写的文件与目录（#487）：扫描跟随磁盘上的实际写法，资产 id 与个人资料不变。"""
@@ -617,6 +624,20 @@ class ScanTargetTests(unittest.TestCase):
             scan.check_scan_target("nas", "N:/", declared_roots=self.DECLARED)
         self.assertIn("nas", str(caught.exception))
         self.assertIn("local", str(caught.exception))
+
+    def test_a_subdirectory_maps_to_its_own_root_without_mounts(self):
+        """#591：Windows 挂载表为空、来源有多个根时，根下子目录原样作为扫描目录。"""
+        declared = {"local": (r"R:\media", r"S:\more")}
+        self.assertEqual(scan.walk_root_for("local", r"S:\more\演员\作品", declared_roots=declared,
+                                            mounts={}, windows=True), Path(r"S:\more\演员\作品"))
+
+    def test_a_directory_outside_every_root_is_a_readable_error_not_an_index_error(self):
+        """#591：不在任何根下时报可读错误；挂载表非空时也不能落到最后一个挂载点上。"""
+        for mounts, windows in (({}, True), ({"local": ("/mnt/media",)}, False)):
+            with self.subTest(mounts=mounts), self.assertRaises(scan.ScanTargetError) as caught:
+                scan.walk_root_for("local", r"Q:\elsewhere\作品", declared_roots=self.DECLARED,
+                                   mounts=mounts, windows=windows)
+            self.assertIn("不在任何已配置的媒体目录下", str(caught.exception))
 
     def test_medium_is_decided_by_extension(self):
         self.assertEqual([scan.medium_of(name) for name in

@@ -546,6 +546,14 @@ class ScanCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self._count(), 1)
 
+    def test_a_directory_outside_every_root_exits_with_a_readable_message(self):
+        """#591：不在任何已配置媒体目录下的目录给出提示后退出，不抛 IndexError。"""
+        (self.root / "outside").mkdir()
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["scan", "local", str(self.root / "outside"), "--db", str(self.db)])
+        self.assertTrue(str(caught.exception).startswith("✗"), caught.exception)
+        self.assertEqual(self._count(), 0)
+
     def test_an_undeclared_source_is_refused_and_lists_the_known_ones(self):
         with self.assertRaises(SystemExit) as caught:
             self._run(["scan", "nas", "--db", str(self.db)])
