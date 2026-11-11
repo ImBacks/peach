@@ -25,6 +25,7 @@ VENDORS = {
 MAINTAINER_MAILS = frozenset({
     "longmeidao@pm.me",
     "42052392+longmeidao@users.noreply.github.com",
+    "longmeidao@users.noreply.github.com",
 })
 
 #: 署名形态：`工具 (模型 版本) <厂商 noreply>`。括号里那一段是重点——同一个工具换代

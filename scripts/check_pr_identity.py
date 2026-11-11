@@ -1,4 +1,4 @@
-"""fork 来的 PR 不得用维护者身份提交。
+"""fork 来的 PR 不得以维护者为作者提交。
 
 贡献者的智能体读到仓库约定后，可能照 `git log` 把 user.name 和 user.email 配成维护者，
 提交就记在维护者名下，署名与追责都会错位。CI 对 fork PR 运行本检查，本机 `integrate`
@@ -30,26 +30,27 @@ FIX = (
 
 
 def problems(repo: Path, base: str, head: str = "HEAD") -> list[str]:
-    """`base..head` 里作者或提交者是维护者的非 merge 提交，每条写成 `短 hash 主题：命中的角色`。
+    """`base..head` 里作者是维护者的非 merge 提交，每条写成 `短 hash 主题`。
 
+    只看作者：GitHub 按作者记贡献，冒用也落在作者上。提交者是维护者有正当来源——维护者
+    rebase 或 cherry-pick 贡献者的提交、`integrate` 刷新分支——不拦。merge 提交也不看，
+    网页上「Update branch」生成的 merge 作者就是点按钮的维护者。
     已发布到远端 master 的提交本来就是维护者的，排除在外。
     """
-    output = git(repo, "log", "--no-merges", "--format=%h%x00%ae%x00%ce%x00%s",
+    output = git(repo, "log", "--no-merges", "--format=%h%x00%ae%x00%s",
                  f"{base}..{head}", *unpublished(repo))
     found = []
     for line in output.splitlines():
         if not line.strip():
             continue
-        short, author, committer, subject = line.split("\0", 3)
-        roles = [role for role, mail in (("author", author), ("committer", committer))
-                 if mail.strip().casefold() in MAINTAINER_MAILS]
-        if roles:
-            found.append(f"{short} {subject}：{'、'.join(roles)}")
+        short, author, subject = line.split("\0", 2)
+        if author.strip().casefold() in MAINTAINER_MAILS:
+            found.append(f"{short} {subject}")
     return found
 
 
 def explain(found: list[str]) -> str:
-    return ("以下提交用了维护者的身份 / These commits use the maintainer's identity:\n"
+    return ("以下提交的作者是维护者 / These commits are authored as the maintainer:\n"
             + "\n".join(f"  {item}" for item in found) + "\n" + FIX)
 
 

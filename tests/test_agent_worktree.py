@@ -451,12 +451,12 @@ class PullRequestIntegrationTests(_WorktreeCase):
                 self.assertRaisesRegex(WorkspaceError, "提交 [0-9a-f]+（人物 2 个", integrate, self.repo, self.branch)
 
     def test_a_fork_pull_request_committed_as_the_maintainer_is_refused(self):
-        """贡献者照 `git log` 配成维护者身份时，本机集成和 CI 一样拒收；同仓库分支不查。"""
+        """贡献者照 `git log` 把作者配成维护者时，本机集成和 CI 一样拒收；同仓库分支不查。"""
         _git(self.worker, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty",
              "-m", "fix(tooling): 冒用维护者身份")
         self.pr["headRefOid"] = _git(self.worker, "rev-parse", "HEAD").stdout.strip()
         with self.github(json.dumps({**self.pr, "isCrossRepository": True})):
-            self.assert_refused("maintainer's identity")
+            self.assert_refused("authored as the maintainer")
         with self.github(json.dumps({**self.pr, "isCrossRepository": False})):
             integrate(self.repo, self.branch)
         self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
@@ -1347,15 +1347,17 @@ class PullRequestIdentityTests(unittest.TestCase):
         git(self.repo, "commit", "--allow-empty", "-m", "fix(web): 贡献者自己的提交")
         self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
 
-    def test_the_maintainer_as_author_or_committer_is_refused(self):
+    def test_the_maintainer_as_author_is_refused(self):
         git(self.repo, "commit", "--allow-empty", "-m", "作者冒用",
             "--author", f"Maintainer <{MAINTAINER.upper()}>")
-        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "提交者冒用",
-            "--author", "Contributor <contributor@example.invalid>")
         found = check_pr_identity.problems(self.repo, "master")
-        self.assertEqual(len(found), 2)
-        self.assertTrue(found[0].endswith("提交者冒用：committer"), found)
-        self.assertTrue(found[1].endswith("作者冒用：author"), found)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].endswith("作者冒用"), found)
+
+    def test_the_maintainer_rebasing_a_contributor_s_commit_is_not_impersonation(self):
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "维护者 rebase 过",
+            "--author", "Contributor <contributor@example.invalid>")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
 
     def test_maintainer_commits_merged_from_the_target_branch_are_not_the_contributor_s(self):
         git(self.repo, "checkout", "master")
@@ -1377,7 +1379,7 @@ class PullRequestIdentityTests(unittest.TestCase):
         git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "冒用")
         result = run()
         self.assertEqual(result.returncode, 1, result.stderr)
-        for expected in ("维护者的身份", "maintainer's identity", "--reset-author", "冒用：author、committer"):
+        for expected in ("作者是维护者", "authored as the maintainer", "--reset-author", "冒用"):
             self.assertIn(expected, result.stderr)
 
 

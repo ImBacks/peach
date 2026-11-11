@@ -244,7 +244,7 @@ def require_pull_request(worker: Path, branch: str, target_branch: str, head: st
     """用工作树的 GitHub 仓库上下文取得当前分支 PR，绑定精确提交与目标分支。
 
     正文里独占一行的 issue 关联行原样带出，写进合并提交；正文中顺带提到的编号不算。
-    来自 fork 的 PR 还要核对提交没有用维护者身份，判据同 CI 的 `check_pr_identity.py`。
+    来自 fork 的 PR 还要核对提交作者不是维护者，判据同 CI 的 `check_pr_identity.py`。
     """
     fields = ("url", "state", "headRefOid", "baseRefName")
     try:
