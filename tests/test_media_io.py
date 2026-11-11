@@ -2,12 +2,14 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from types import SimpleNamespace
 
 from peach import media_io, library_processing
@@ -58,6 +60,67 @@ class MediaIoTests(unittest.TestCase):
             media_io.directory_files(self.root)
         self.assertEqual(len(children), 1)
         self.assertIsNotNone(children[0].poll())
+
+    @staticmethod
+    def _entry_line(name):
+        entry = dict(name=name, path=name, directory=False, symlink=False, attributes={'st_size': 1}, error='')
+        return json.dumps({'entry': entry}).encode() + b'\n'
+
+    @staticmethod
+    def _fake_reader(lines):
+        reader = Mock()
+        reader.stdout = MagicMock()
+        reader.stdout.__iter__.return_value = lines
+        return reader
+
+    def test_directory_keeps_reading_while_entries_keep_arriving(self):
+        """网络盘上的大目录：总时长超过期限，但每条间隔都在期限内，整目录照常读完。"""
+        def slow():
+            for index in range(12):
+                time.sleep(0.1)
+                yield self._entry_line(f'{index}.mp4')
+            yield b'{"end": 12}\n'
+        reader = self._fake_reader(slow())
+        started = time.monotonic()
+        with patch.object(media_io, 'TIMEOUT_SECONDS', 1.0), \
+                patch.object(media_io.subprocess, 'Popen', return_value=reader):
+            entries = media_io.directory_entries(self.root)
+        self.assertGreater(time.monotonic() - started, 1.0)
+        self.assertEqual([entry.name for entry in entries], [f'{index}.mp4' for index in range(12)])
+        reader.kill.assert_called_once_with()
+
+    def test_directory_that_stops_returning_entries_times_out_and_reaps_the_reader(self):
+        children = []
+        original_popen = subprocess.Popen
+        line = self._entry_line('first.mp4').decode()
+        def stalled(_command, **options):
+            script = f'import sys, time; sys.stdout.write({line!r}); sys.stdout.flush(); time.sleep(60)'
+            child = original_popen([sys._base_executable, '-c', script], **options)
+            children.append(child)
+            return child
+        with patch.object(media_io, 'TIMEOUT_SECONDS', 1.5), \
+                patch.object(media_io.subprocess, 'Popen', side_effect=stalled), \
+                self.assertRaises(TimeoutError):
+            media_io.directory_entries(self.root)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+
+    def test_directory_reader_that_exits_without_the_end_marker_fails_the_directory(self):
+        """中途断开的半截清单不能当成整个目录交给扫描。"""
+        lines = iter([self._entry_line('a.mp4'), self._entry_line('b.mp4')])
+        with patch.object(media_io.subprocess, 'Popen', return_value=self._fake_reader(lines)), \
+                self.assertRaisesRegex(OSError, '未完成'):
+            media_io.directory_entries(self.root)
+
+    def test_identity_is_not_read_for_files_the_scan_never_registers(self):
+        for name in ('ABW-101.mp4', 'ABW-101.nfo', 'Thumbs.db'):
+            (self.root / name).write_bytes(b'x')
+        with patch.object(media_io.os, 'stat', wraps=os.stat) as stat:
+            items = list(media_io._local_directory(self.root, 'identity'))
+        self.assertEqual(len(items), 3)
+        read = {Path(call.args[0]).name for call in stat.call_args_list}
+        # Windows 的目录快照没有文件 ID，只给会登记的文件补读；其他系统快照自带，不补读。
+        self.assertEqual(read, {'ABW-101.mp4'} if os.name == 'nt' else set())
 
     def test_packaged_cli_dispatches_the_read_only_worker(self):
         from peach.cli import main
