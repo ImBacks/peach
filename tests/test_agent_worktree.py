@@ -23,6 +23,7 @@ from support.gitrepo import seed_repository
 #: 仓库里版本化的 git hook，测试原样装进临时仓库。
 HOOKS = Path(__file__).resolve().parents[1] / agent_worktree.HOOKS_PATH
 AUTHOR = "Co-Authored-By: Codex (GPT-6) <noreply@openai.com>"
+MAINTAINER = sorted(agent_worktree.co_author.MAINTAINER_MAILS)[0]
 
 
 def install_commit_hooks(repo: Path) -> None:
@@ -448,6 +449,23 @@ class PullRequestIntegrationTests(_WorktreeCase):
             self.pr["headRefOid"] = _git(self.worker, "rev-parse", "HEAD").stdout.strip()
             with self.github(json.dumps({**self.pr, "body": "只修 ZZQ-101 的前缀。"})):
                 self.assertRaisesRegex(WorkspaceError, "提交 [0-9a-f]+（人物 2 个", integrate, self.repo, self.branch)
+
+    def test_a_fork_pull_request_committed_as_the_maintainer_is_refused(self):
+        """贡献者照 `git log` 配成维护者身份时，本机集成和 CI 一样拒收；同仓库分支不查。"""
+        _git(self.worker, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty",
+             "-m", "fix(tooling): 冒用维护者身份")
+        self.pr["headRefOid"] = _git(self.worker, "rev-parse", "HEAD").stdout.strip()
+        with self.github(json.dumps({**self.pr, "isCrossRepository": True})):
+            self.assert_refused("maintainer's identity")
+        with self.github(json.dumps({**self.pr, "isCrossRepository": False})):
+            integrate(self.repo, self.branch)
+        self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
+
+    def test_a_fork_pull_request_with_the_contributor_s_own_identity_integrates(self):
+        with self.github(json.dumps({**self.pr, "isCrossRepository": True})) as query:
+            integrate(self.repo, self.branch)
+        self.assertIn("isCrossRepository", query.call_args.args[0][-1])
+        self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
 
     def test_insider_terms_in_the_pr_body_are_refused_but_commit_messages_may_name_the_tooling(self):
         with mock.patch.object(check_public_text, "load_library", return_value=None):
@@ -1307,6 +1325,60 @@ class CoAuthorTests(unittest.TestCase):
             with self.assertRaisesRegex(agent_worktree.WorkspaceError, "Co-Authored-By"):
                 agent_worktree.require_verified(self.repo, "master", {"tests/example.py"})
             key.assert_not_called()
+
+
+from scripts import check_pr_identity
+
+
+class PullRequestIdentityTests(unittest.TestCase):
+    """fork PR 的提交不得记在维护者名下；维护者已在目标分支上的提交不算。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve()
+        git(self.repo, "init", "-b", "master")
+        git(self.repo, "config", "user.name", "Contributor")
+        git(self.repo, "config", "user.email", "contributor@example.invalid")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "base")
+        git(self.repo, "checkout", "-b", "worker")
+
+    def test_the_contributor_s_own_commits_pass(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "fix(web): 贡献者自己的提交")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
+
+    def test_the_maintainer_as_author_or_committer_is_refused(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "作者冒用",
+            "--author", f"Maintainer <{MAINTAINER.upper()}>")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "提交者冒用",
+            "--author", "Contributor <contributor@example.invalid>")
+        found = check_pr_identity.problems(self.repo, "master")
+        self.assertEqual(len(found), 2)
+        self.assertTrue(found[0].endswith("提交者冒用：committer"), found)
+        self.assertTrue(found[1].endswith("作者冒用：author"), found)
+
+    def test_maintainer_commits_merged_from_the_target_branch_are_not_the_contributor_s(self):
+        git(self.repo, "checkout", "master")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "上游的提交")
+        git(self.repo, "checkout", "worker")
+        git(self.repo, "commit", "--allow-empty", "-m", "贡献者自己的提交")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "merge", "--no-ff", "-m", "Merge master", "master")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
+
+    def test_the_ci_entry_runs_as_a_bare_script_and_explains_the_fix_in_both_languages(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "check_pr_identity.py"
+
+        def run():
+            return subprocess.run([sys.executable, str(script), "--base", "master"], cwd=self.repo,
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+        self.assertEqual(run().returncode, 0)
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "冒用")
+        result = run()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        for expected in ("维护者的身份", "maintainer's identity", "--reset-author", "冒用：author、committer"):
+            self.assertIn(expected, result.stderr)
 
 
 from scripts import commit_subject

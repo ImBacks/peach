@@ -20,6 +20,13 @@ VENDORS = {
     "opencode": "noreply@opencode.ai",
 }
 
+#: 维护者本人的提交邮箱（小写）。fork 来的 PR 里出现这些身份，说明贡献者照 `git log`
+#: 配成了维护者，`scripts/check_pr_identity.py` 据此拒收。
+MAINTAINER_MAILS = frozenset({
+    "longmeidao@pm.me",
+    "42052392+longmeidao@users.noreply.github.com",
+})
+
 #: 署名形态：`工具 (模型 版本) <厂商 noreply>`。括号里那一段是重点——同一个工具换代
 #: 模型，写出来的代码差别比换工具本身还大，事后翻这一行是要知道哪个模型写的。
 FORM = re.compile(r"(?P<tool>[^()<>]+) \((?P<model>[^()]+)\) <(?P<mail>[^<>\s]+)>")
