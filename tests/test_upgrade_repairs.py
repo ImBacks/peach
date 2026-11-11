@@ -21,6 +21,34 @@ GARBLED = BAD * 2 + 'ľ' + BAD * 2
 
 
 class UpgradeRepairTests(unittest.TestCase):
+    def test_auto_repair_speed_survives_dispatch_batches_without_changing_other_tasks(self):
+        from peach import task_control
+        from peach.followups import Followup
+
+        def dispatch(asset_id):
+            key = f'upgrade-library:processing-v2:{asset_id}'
+            planned = [Followup(key, upgrade_repairs.MEDIA_TASK, '补修')]
+            return self.service._dispatch(planned, {})[0]['run_id']
+
+        first = dispatch(1)
+        queued = dispatch(4)
+        self.assertEqual(task_control.projection(self.store, self.store.get(first))['speed_mode'], 'standard')
+        task_control.request(self.store, first, 'set_speed', mode='high')
+        self.assertEqual(task_control.projection(self.store, self.store.get(queued))['speed_mode'], 'high')
+        self.store.finish(first, 'succeeded')
+
+        # 新派发批次拥有新的父任务；重新构造服务也不能丢掉用户的选择。
+        self.service = upgrade_repairs.UpgradeRepairs(self.contract, available=True)
+        second = dispatch(2)
+        self.assertEqual(task_control.projection(self.store, self.store.get(second))['speed_mode'], 'high')
+        ordinary = self.store.start('scan', trigger='manual')
+        self.assertEqual(task_control.projection(self.store, ordinary)['speed_mode'], 'standard')
+        task_control.request(self.store, second, 'set_speed', mode='low')
+        self.assertEqual(task_control.projection(self.store, self.store.get(queued))['speed_mode'], 'low')
+        self.store.finish(second, 'succeeded')
+        third = dispatch(3)
+        self.assertEqual(task_control.projection(self.store, self.store.get(third))['speed_mode'], 'low')
+
     def display_key(self, asset_id=1):
         from peach.display_dimensions_repair import task_key
         with self.database.read_connection() as connection:

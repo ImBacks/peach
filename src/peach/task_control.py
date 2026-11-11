@@ -71,14 +71,18 @@ def speed_mode(db, run_id, ancestors=(), *, default='standard'):
     return command.get('speed_mode', default)
 
 
-def initialize_speed(store, run_id, parent=None):
-    from .processing_control import default_mode
+def initialize_speed(store, run_id, parent=None, *, task_key=None):
+    from .processing_control import MODES, default_mode
     from .update_tasks import _mutex
     db = store.database.db_path
     with _mutex(state_for(db)):
         path = _root(db) / f'{run_id}.speed.json'
         mode = (speed_mode(db, parent.id, (parent.parent_run_id, parent.root_run_id))
                 if parent is not None else default_mode(store.database))
+        if parent is None and task_key == 'upgrade-repairs':
+            saved = _read(_root(db) / 'upgrade-repairs.speed.json').get('speed_mode')
+            if saved in MODES:
+                mode = saved
         atomic_write_text(path, json.dumps({'speed_mode': mode, 'at': time.time_ns()}))
 
 
@@ -182,7 +186,17 @@ def _request(store, run_id, action, *, mode=None):
         return run
     if action == 'set_speed':
         command = json.dumps({'speed_mode': mode, 'at': time.time_ns()})
-        for child in (run, *store.active_descendants(run.id)):
+        children = (run, *store.active_descendants(run.id))
+        if run.task_key in ('upgrade-repairs', 'upgrade-library'):
+            # 自动修复由多次独立派发组成；当前批次的选择也用于已排队和之后派发的批次。
+            atomic_write_text(_root(db) / 'upgrade-repairs.speed.json', command)
+            with store.database.read_connection() as connection:
+                pending = connection.execute(
+                    "SELECT id FROM task_run WHERE task_key='upgrade-library' "
+                    "AND host=? AND status IN ('pending','running')", (store.host,)).fetchall()
+            for row in pending:
+                atomic_write_text(_root(db) / f'{row[0]}.speed.json', command)
+        for child in children:
             if child.host == store.host:
                 atomic_write_text(_root(db) / f'{child.id}.speed.json', command)
         return run
