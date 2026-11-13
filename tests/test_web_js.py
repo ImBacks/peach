@@ -42,6 +42,10 @@ import { registerHooks } from 'node:module';
 import { extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: { getItem: key => key === 'peach.settings.v1' ? JSON.stringify({ interfaceLanguage: 'zh-CN' }) : null },
+});
 if (!globalThis.navigator) Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
 Object.defineProperty(globalThis.navigator, 'languages', { value: ['zh-CN', 'zh'], configurable: true });
 Object.defineProperty(globalThis.navigator, 'language', { value: 'zh-CN', configurable: true });
