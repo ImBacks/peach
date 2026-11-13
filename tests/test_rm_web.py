@@ -663,6 +663,20 @@ class WebDataTests(unittest.TestCase):
         self.assertEqual(stats["tag_cov"], 2)
         self.assertIn("审核标签", {row["k"] for row in stats["top_tags"]})
 
+    def test_scraped_and_batch_tags_count_as_content_tags(self):
+        """#596：刮削与自动落库批次写的标签进内容标签排行与覆盖，不再只认旧来源名。"""
+        con = sqlite3.connect(self.db_path)
+        con.execute("DELETE FROM asset_tag")
+        con.executemany(
+            "INSERT INTO asset_tag(asset_id,tag,source) VALUES(?,?,?)",
+            [(1, "刮削标签", "javinizer:mgstage:tag"), (2, "刮削标签", "javinizer:makers:tag"),
+             (2, "批次标签", "auto:metadata-tags@20261101")])
+        con.commit(); con.close()
+        stats = rm_web.q_stats(self.contract)
+        self.assertEqual(stats["tag_cov"], 2)
+        self.assertEqual({row["k"]: row["n"] for row in stats["top_tags"]},
+                         {"刮削标签": 2, "批次标签": 1})
+
     def test_stats_band_videos_by_length_and_quality_in_probe_order(self):
         stats = rm_web.q_stats(self.contract)
         self.assertEqual(stats["by_length"], [
