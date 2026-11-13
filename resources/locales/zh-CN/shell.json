@@ -382,7 +382,7 @@
     "save": "保存顺序"
   },
   "pathLine": {
-    "reveal": "在资源管理器中显示"
+    "reveal": "查看文件位置"
   },
   "pendingWork": {
     "running": "正在补全：{{tasks}}",
@@ -697,7 +697,7 @@
     "reattached": "{{count, number}} 项的记录已接到库里的另一个版本",
     "resultSeparator": "，",
     "revealFailed": "打开文件管理器失败，请重试",
-    "revealed": "已在资源管理器中显示",
+    "revealed": "已在文件管理器中显示",
     "trashed": "已把 {{count, number}} 项移入回收站",
     "unreadable": "目录有 {{count, number}} 项暂时无法读取，本次未改动",
     "unsupportedPlatform": "当前服务端系统不支持直接定位文件",
@@ -790,5 +790,34 @@
     "added": "已加入稍后看",
     "removed": "已移出稍后看",
     "updateAction": "更新稍后看"
+  },
+  "serverPath": {
+    "dataTitle": "数据目录",
+    "dataField": "服务端数据目录",
+    "dataContainer": "容器数据位置由宿主机的数据卷挂载决定，请在 NAS 容器管理器中配置。",
+    "dataManual": "请填写运行 Peach 的服务器上的数据目录；保存时会检查目录是否可用。",
+    "useFolder": "使用此目录",
+    "close": "关闭",
+    "cancel": "取消",
+    "readFailed": "目录读取失败，请重试",
+    "pickTitle": "选择服务端目录",
+    "pickHelp": "这里显示 NAS 或容器内的路径，输入后按回车读取。新挂载目录也可以直接填在媒体目录输入框中。",
+    "pathField": "服务端目录路径",
+    "roots": "挂载目录",
+    "parent": "上一级",
+    "reading": "正在读取目录",
+    "noSubfoldersYet": "本批条目中没有子目录，可以继续读取。",
+    "noSubfolders": "这个目录下没有可选择的子目录。",
+    "readMore": "继续读取",
+    "noRoots": "尚未配置媒体挂载目录，请先手动填写容器内的路径。",
+    "choose": "选择此目录",
+    "locationTitle": "查看文件位置",
+    "locationContainer": "在 NAS 文件管理器中打开挂载给 Peach 的共享文件夹，再按目录内位置查找。容器路径与 NAS 共享路径可能不同。",
+    "locationServer": "文件位于运行 Peach 的服务器上，可以复制路径后在服务器中查找。",
+    "containerPath": "容器内路径",
+    "serverPath": "服务端路径",
+    "locationField": "服务端文件位置",
+    "mediaRoot": "媒体目录",
+    "relativePath": "目录内位置"
   }
 }

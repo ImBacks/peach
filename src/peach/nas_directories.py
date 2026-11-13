@@ -6,6 +6,12 @@ import json
 import os
 from pathlib import Path
 
+from .user_messages import UserValueError
+
+
+class NasDirectoryError(UserValueError):
+    """目录选择超出已配置的媒体根，或分页参数无效。"""
+
 
 def available() -> bool:
     from .local_playback import available as desktop_available
@@ -38,31 +44,35 @@ def roots(config) -> list[str]:
 def browse(config, initial: str, *, start: bool = False, offset: int = 0) -> dict:
     from .media_io import _request
     if type(offset) is not int or not 0 <= offset < 2**31:
-        raise ValueError('目录分页位置无效，请重新读取目录')
+        raise NasDirectoryError('errors.nasDirectories.invalidOffset')
     allowed = roots(config)
     if start or not initial:
         return {'mode': 'server', 'path': None, 'parent': None, 'roots': allowed,
                 'directories': [], 'next_offset': None}
     candidate = Path(initial)
     if not candidate.is_absolute() or not any(candidate.is_relative_to(Path(root)) for root in allowed):
-        raise ValueError('只能浏览已配置的媒体挂载目录；新挂载路径可在媒体目录输入框中填写')
-    return _request('browse', initial, value=json.dumps({'allowed': allowed, 'offset': offset}), timeout=10)
+        raise NasDirectoryError('errors.nasDirectories.outsideRoots')
+    try:
+        return _request('browse', initial, value=json.dumps({'allowed': allowed, 'offset': offset}), timeout=10)
+    except ValueError as exc:
+        # 读取子进程解析符号链接后才知道越界，回传的只有原因；界面一律按越界提示。
+        raise NasDirectoryError('errors.nasDirectories.outsideRoots') from exc
 
 
 def list_directory(path, allowed: list[str], offset: int = 0) -> dict:
     """由可终止的媒体读取子进程调用；不跟随列表中的符号链接。"""
     candidate = Path(path)
     if not candidate.is_absolute():
-        raise ValueError('请填写容器内的媒体绝对路径')
+        raise ValueError('the path must be absolute')
     boundaries = [Path(root) for root in allowed if candidate.is_relative_to(Path(root))
                   and Path(root) != Path(Path(root).anchor)]
     if not boundaries:
-        raise ValueError('只能浏览已配置的媒体挂载目录；新挂载路径可在媒体目录输入框中填写')
+        raise ValueError('outside the configured media roots')
     # 只访问本次路径所属的根；离线网盘不阻塞另一个本地媒体根。
     boundary = max(boundaries, key=lambda root: len(root.parts)).resolve(strict=True)
     target = candidate.resolve(strict=True)
     if not target.is_relative_to(boundary) or boundary == Path(boundary.anchor):
-        raise ValueError('只能浏览已配置的媒体挂载目录；新挂载路径可在媒体目录输入框中填写')
+        raise ValueError('outside the configured media roots')
     directories = []
     with os.scandir(target) as entries:
         limited = list(islice(entries, offset, offset + 501))

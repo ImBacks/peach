@@ -1796,7 +1796,8 @@
       "cannotOpen": "The system folder dialog can't be opened on this device",
       "failed": "Couldn't open the folder dialog",
       "noPermission": "Peach on this device doesn't have permission to show the dialog",
-      "unsupportedSystem": "No folder dialog is available on this system"
+      "unsupportedSystem": "No folder dialog is available on this system",
+      "headless": "On a server without a desktop, choose the media directory in the web page."
     },
     "followEvidence": {
       "estimating": "Still counting files that can be cleaned up. Try again later.",
@@ -2673,6 +2674,13 @@
     },
     "webJavDetail": {
       "resourcesFailed": "Couldn't fetch resources from magnets or comments"
+    },
+    "nasDirectories": {
+      "invalidPurpose": "Choose a media directory or a data directory.",
+      "invalidOffset": "The directory page position is invalid. Read the directory again.",
+      "outsideRoots": "Only mounted media directories can be browsed. Type a newly mounted path into the media directory field.",
+      "timedOut": "Reading the media directory timed out. Try again later or type the path.",
+      "unreadable": "The media directory can't be read. Check the mount and the directory permissions."
     }
   },
   "jobMessage": {

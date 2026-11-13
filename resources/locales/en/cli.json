@@ -178,7 +178,7 @@
     "description": "Generate a Compose file for a NAS container manager. It does not talk to Docker or start or overwrite an existing deployment.",
     "help": {
       "bind": "LAN IP address of the NAS",
-      "media": "Existing media folder on the host; read-only /media inside the container",
+      "media": "Existing media directory on the host; read-only /media inside the container",
       "hostname": "Keep this name so tasks stay with the same worker after the container is recreated",
       "uid": "Numeric UID that runs Peach, 1000 by default; use it to keep the NAS share permissions",
       "gid": "Numeric GID that runs Peach, 1000 by default",

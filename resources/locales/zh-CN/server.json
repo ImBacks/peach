@@ -1796,7 +1796,8 @@
       "cannotOpen": "这台电脑上打不开系统文件夹对话框",
       "failed": "没能打开文件夹对话框",
       "noPermission": "这台电脑上的 Peach 没有弹出对话框的权限",
-      "unsupportedSystem": "这个系统上没有可用的文件夹对话框"
+      "unsupportedSystem": "这个系统上没有可用的文件夹对话框",
+      "headless": "无桌面部署请在网页中选择媒体挂载目录"
     },
     "followEvidence": {
       "estimating": "还在统计能清理的文件，请稍后再试",
@@ -2673,6 +2674,13 @@
     },
     "webJavDetail": {
       "resourcesFailed": "磁力与评论里的资源都没有取到"
+    },
+    "nasDirectories": {
+      "invalidPurpose": "请选择媒体目录或数据目录",
+      "invalidOffset": "目录分页位置无效，请重新读取目录",
+      "outsideRoots": "只能浏览已配置的媒体挂载目录；新挂载路径可在媒体目录输入框中填写",
+      "timedOut": "媒体目录读取超时，请稍后重试或手动填写路径",
+      "unreadable": "媒体目录不可读取，请检查挂载与目录权限"
     }
   },
   "jobMessage": {

@@ -2,7 +2,7 @@ import { act } from 'react';
 import { expect, it, vi } from 'vitest';
 import { pickServerFolder, showServerPath } from '../../src/react/components/server-path-dialog';
 import { completeReveal } from '../../src/application/source-action';
-import { buttonNamed, click, flush, type } from './render';
+import { buttonNamed, click, settle, type } from './render';
 
 it('桌面选择直接沿用系统结果，服务端选择支持取消与只读浏览', async () => {
   expect(await pickServerFolder('', vi.fn().mockResolvedValue({ path: '/desktop' }))).toBe('/desktop');
@@ -10,7 +10,7 @@ it('桌面选择直接沿用系统结果，服务端选择支持取消与只读�
     .mockResolvedValue({ mode: 'server', path: '/media', roots: ['/media'], directories: [] });
   let selected!: Promise<string | null>;
   await act(async () => { selected = pickServerFolder('', request) });
-  await flush();
+  await settle();
   expect(buttonNamed('选择此目录')?.disabled).toBe(true);
   await click(buttonNamed('/media'));
   await type(document.querySelector<HTMLInputElement>('input[aria-label="服务端目录路径"]'), '/media/unread');
@@ -30,7 +30,7 @@ it('初始路径失效时仍可从挂载根重新选择', async () => {
     .mockResolvedValue({ mode: 'server', path: '/media', roots: ['/media'], directories: [], next_offset: null });
   let selected!: Promise<string | null>;
   await act(async () => { selected = pickServerFolder('/missing', request) });
-  await flush();
+  await settle();
   expect(request).toHaveBeenNthCalledWith(1, { initial: '/missing', purpose: 'media', start: true });
   expect(document.body.textContent).toContain('媒体目录不可读取');
   expect(buttonNamed('选择此目录')?.disabled).toBe(true);
@@ -55,14 +55,14 @@ it('文件占满前一批时可以继续读取后面的文件夹', async () => {
 });
 
 it('无桌面的数据目录可手填，容器数据卷只提供配置说明', async () => {
-  const request = vi.fn().mockResolvedValue({ mode: 'manual', path: '/data', editable: true, message: '填写服务端数据目录' });
+  const request = vi.fn().mockResolvedValue({ mode: 'manual', path: '/data', editable: true, container: false });
   let selected!: Promise<string | null>;
   await act(async () => { selected = pickServerFolder('/data', request, 'data') });
   await type(document.querySelector<HTMLInputElement>('input[aria-label="服务端数据目录"]'), '/srv/peach-data');
   await click(buttonNamed('使用此目录'));
   expect(await selected).toBe('/srv/peach-data');
   expect(request).toHaveBeenCalledWith({ initial: '/data', purpose: 'data', start: true });
-  request.mockResolvedValue({ mode: 'manual', path: '/data', editable: false, message: '由数据卷挂载决定' });
+  request.mockResolvedValue({ mode: 'manual', path: '/data', editable: false, container: true });
   await act(async () => { selected = pickServerFolder('/data', request, 'data') });
   expect(buttonNamed('使用此目录')).toBeNull();
   expect(document.querySelector<HTMLInputElement>('input')?.readOnly).toBe(true);

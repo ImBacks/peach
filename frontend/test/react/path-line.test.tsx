@@ -19,7 +19,7 @@ it('定位请求只递这条路径，成功回执一句', async () => {
   expect(fetcher.mock.calls[0]?.[0]).toBe('/api/reveal');
   expect(sentBody(fetcher)).toEqual({ path: LOG });
   /* 资源管理器弹在跑 Peach 那台机器上：从别的设备看这一页时，屏幕上不会有任何动静。 */
-  expect(revealed).toHaveBeenCalledWith('已在资源管理器中显示');
+  expect(revealed).toHaveBeenCalledWith('已在文件管理器中显示');
 });
 
 it('开不了时原因留在路径旁边，不冒充成功的回执', async () => {

@@ -418,7 +418,7 @@
     "save": "Save order"
   },
   "pathLine": {
-    "reveal": "Show in folder"
+    "reveal": "Show file location"
   },
   "pendingWork": {
     "running": "Filling in: {{tasks}}",
@@ -846,5 +846,34 @@
     "added": "Added to watch later",
     "removed": "Removed from watch later",
     "updateAction": "Watch later update"
+  },
+  "serverPath": {
+    "dataTitle": "Data directory",
+    "dataField": "Data directory on the server",
+    "dataContainer": "The container's data location is set by the host's data volume. Configure it in the NAS container manager.",
+    "dataManual": "Enter the data directory on the server that runs Peach. It is checked when you save.",
+    "useFolder": "Use this directory",
+    "close": "Close",
+    "cancel": "Cancel",
+    "readFailed": "Couldn't read the directory. Try again.",
+    "pickTitle": "Choose a directory on the server",
+    "pickHelp": "Paths here are on the NAS or inside the container. Type a path and press Enter to read it. A newly mounted directory can also be typed straight into the media directory field.",
+    "pathField": "Directory path on the server",
+    "roots": "Mounted directories",
+    "parent": "Up one level",
+    "reading": "Reading the directory",
+    "noSubfoldersYet": "No subdirectories in this batch. You can read more.",
+    "noSubfolders": "This directory has no subdirectories to choose.",
+    "readMore": "Read more",
+    "noRoots": "No media directory is mounted yet. Enter the path inside the container first.",
+    "choose": "Choose this directory",
+    "locationTitle": "File location",
+    "locationContainer": "In the NAS file manager, open the share mounted for Peach, then find the file by its location in the directory. Container paths can differ from NAS share paths.",
+    "locationServer": "The file is on the server that runs Peach. Copy the path and find it there.",
+    "containerPath": "Path in the container",
+    "serverPath": "Path on the server",
+    "locationField": "File location on the server",
+    "mediaRoot": "Media directory",
+    "relativePath": "Location in the directory"
   }
 }

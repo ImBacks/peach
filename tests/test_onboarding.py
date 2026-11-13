@@ -1551,10 +1551,10 @@ class StandaloneConfigurationTests(_Case):
         headers = {'X-Token': 'test-token'}
         with mock.patch.dict(os.environ, {'PEACH_HEADLESS_MANAGED': '1', 'PEACH_DISTRIBUTION': 'source'}), self.client() as client:
             response = client.post('/api/pick-folder', headers=headers,
-                json={'initial': str(self.data_root), 'purpose': 'data', 'start': True})
+                json={'initial': str(self.config.data_root), 'purpose': 'data', 'start': True})
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()['mode'], 'manual')
-            self.assertEqual(response.json()['path'], str(self.data_root))
+            self.assertEqual(response.json()['path'], str(self.config.data_root))
             self.assertTrue(response.json()['editable'])
             started = client.post('/api/pick-folder', headers=headers,
                 json={'initial': '/missing/old-path', 'purpose': 'media', 'start': True})

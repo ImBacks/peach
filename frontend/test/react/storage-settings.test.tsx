@@ -185,7 +185,7 @@ it('空目录自动读取 CloudDrive，填入表单后由保存写入设置', as
 
 it('服务端迁移选择数据目录，确认前不提交迁移', async () => {
   const seen = confirmWith(false);
-  const fetcher = fetchMock(200, { mode: 'manual', path: '/data', editable: true, message: '填写服务端数据目录' });
+  const fetcher = fetchMock(200, { mode: 'manual', path: '/data', editable: true, container: false });
   vi.stubGlobal('fetch', fetcher);
   const host = await mount(<StorageSettings initial={measured} receipt={vi.fn()} />);
   await click(buttonNamed('更改位置', host));

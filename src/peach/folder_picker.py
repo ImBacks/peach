@@ -199,7 +199,7 @@ def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
                 run=subprocess.run) -> str | None:
     """弹对话框，返回选中的绝对路径；用户取消返回 None。"""
     if os.environ.get('PEACH_HEADLESS_MANAGED') == '1':
-        raise PickerUnsupported('无桌面部署请在网页中选择媒体挂载目录')
+        raise PickerUnsupported("errors.folderPicker.headless")
     argv, extra = command(initial, platform)
     if not _LOCK.acquire(blocking=False):
         raise PickerBusy("errors.folderPicker.busy")

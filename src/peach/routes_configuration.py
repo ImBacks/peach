@@ -36,7 +36,7 @@ from .jobs import JobAlreadyRunning
 from .routes_auth import (FIRST_ACCESS_DENIED_CODE, login_mode, origin_allowed, require_auth, require_authenticated_client, safe_next, same_origin,
                           set_auth_cookie, sessions as access_sessions)
 from .web_entry import field_errors, runtime_fact_entries
-from .user_messages import UserValueError, error_detail, message_fields
+from .user_messages import UserFacingError, UserOSError, UserTimeoutError, UserValueError, error_detail, message_fields
 from .web_local_access import local_client, managed_configuration
 from . import (interface_text, release_updates, standalone_update, peach_proxy, desktop_startup, desktop_uninstall,
                docker_update, media_tools)
@@ -1574,24 +1574,23 @@ def pick_folder(request: Request, body: dict[str, Any] = Body(default_factory=di
     initial = body.get("initial")
     purpose = body.get('purpose', 'media')
     if not isinstance(purpose, str) or purpose not in {'media', 'data'}:
-        raise HTTPException(400, '请选择媒体目录或数据目录')
+        raise UserValueError("errors.nasDirectories.invalidPurpose")
     from . import nas_directories
     if not nas_directories.available():
         if purpose == 'data':
+            # 说明文字由页面按 container 选，容器的数据卷位置在宿主机上定，页面只读。
+            container = os.environ.get('PEACH_DISTRIBUTION') == 'docker'
             return {'mode': 'manual', 'path': initial if isinstance(initial, str) else '',
-                    'editable': os.environ.get('PEACH_DISTRIBUTION') != 'docker',
-                    'message': ('容器数据位置由宿主机的数据卷挂载决定，请在 NAS 容器管理器中配置。'
-                                if os.environ.get('PEACH_DISTRIBUTION') == 'docker' else
-                                '请填写运行 Peach 的服务器上的数据目录；保存时会检查目录是否可用。')}
+                    'editable': not container, 'container': container}
         try:
-            return nas_directories.browse(settings_file.active(), initial if isinstance(initial, str) else '',
+            return nas_directories.browse(settings_file.load_config(), initial if isinstance(initial, str) else '',
                                           start=body.get('start') is True, offset=body.get('offset', 0))
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        except UserFacingError:
+            raise
         except TimeoutError as exc:
-            raise HTTPException(504, '媒体目录读取超时，请稍后重试或手动填写路径') from exc
+            raise UserTimeoutError("errors.nasDirectories.timedOut", status_code=504) from exc
         except OSError as exc:
-            raise HTTPException(409, '媒体目录不可读取，请检查挂载与目录权限') from exc
+            raise UserOSError("errors.nasDirectories.unreadable", status_code=409) from exc
     try:
         path = folder_picker.pick_folder(initial if isinstance(initial, str) and initial else None)
     except folder_picker.PickerBusy as exc:
