@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141", e._sentryDebugIdIdentifier = "sentry-dbid-f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1", e._sentryDebugIdIdentifier = "sentry-dbid-f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -6904,6 +6904,14 @@ var He = {
 			submitted: "Submitted"
 		}
 	},
+	dockerVaapi: {
+		hostBindRejected: "Pass through a single node using Compose devices; do not bind mount the host's /dev/dri.",
+		identitySwitchFailed: "The service user switch did not complete.",
+		invalidRenderDevice: "Only /dev/dri/renderD128 through renderD191 are allowed.",
+		nonRootAccountRequired: "The peach account must use a non-root identity.",
+		notRenderDevice: "The target is not a DRM render node.",
+		rootRequired: "Device preparation requires root; the service runs as peach after preparation."
+	},
 	http: {
 		methodNotAllowed: "This address doesn't accept this kind of request.",
 		notFound: "There's no page at this address.",
@@ -6974,6 +6982,17 @@ var He = {
 			}
 		},
 		storageFull: "Cloud drive storage is full; free up space or upgrade, then retry"
+	},
+	nasSetup: {
+		invalidBind: "Enter the NAS LAN IP address or a loopback address.",
+		invalidHostname: "The hostname accepts only letters, numbers, dots, and hyphens.",
+		invalidImage: "The image name is invalid.",
+		invalidMediaPath: "Enter an absolute path to the media directory on the host.",
+		invalidPort: "The port must be between 1 and 65535.",
+		invalidRenderDevice: "Select a render node from renderD128 through renderD191 under /dev/dri.",
+		invalidRenderGid: "The render node GID is invalid.",
+		renderDeviceRequired: "Specify a render node when configuring GPU permissions.",
+		renderPermissionChoice: "Choose either an extra group GID or container device preparation for the GPU, not both."
 	},
 	ledgerBackup: { purpose: {
 		"auto-landing-revert": "Before undoing automatic changes",
@@ -7312,7 +7331,8 @@ var He = {
 			skipped: "Skipped: another run was still in progress",
 			interrupted: "The service restarted before this run finished",
 			unknownFollowup: "No follow-up task is registered for {{task}}",
-			dispatchInterrupted: "Metadata dispatch was interrupted, rescheduling"
+			dispatchInterrupted: "Metadata dispatch was interrupted, rescheduling",
+			stoppedEarly: "Stopped early with exit code {{code}}"
 		}
 	},
 	stage: {
@@ -13646,6 +13666,14 @@ var He = {
 			submitted: "已提交"
 		}
 	},
+	dockerVaapi: {
+		hostBindRejected: "请使用 Compose devices 透传单个节点，不能绑定宿主机 /dev/dri",
+		identitySwitchFailed: "服务身份切换未完成",
+		invalidRenderDevice: "只允许 /dev/dri/renderD128 到 renderD191",
+		nonRootAccountRequired: "peach 必须使用非 root 身份",
+		notRenderDevice: "目标不是 DRM 渲染节点",
+		rootRequired: "设备权限准备入口需要 root；服务会在准备后以 peach 用户运行"
+	},
 	http: {
 		methodNotAllowed: "这个地址不接受这种请求。",
 		notFound: "这个地址下没有页面。",
@@ -13716,6 +13744,17 @@ var He = {
 			}
 		},
 		storageFull: "网盘空间不足，扩容或清理后重试"
+	},
+	nasSetup: {
+		invalidBind: "请填写 NAS 的局域网 IP 或回环地址",
+		invalidHostname: "主机名只接受字母、数字、点和连字符",
+		invalidImage: "镜像名称无效",
+		invalidMediaPath: "请填写宿主机上的媒体目录绝对路径",
+		invalidPort: "端口应在 1 到 65535 之间",
+		invalidRenderDevice: "请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191",
+		invalidRenderGid: "渲染节点 GID 无效",
+		renderDeviceRequired: "设置核显权限时须同时指定渲染节点",
+		renderPermissionChoice: "核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用"
 	},
 	ledgerBackup: { purpose: {
 		"auto-landing-revert": "撤回自动写入前",
@@ -14054,7 +14093,8 @@ var He = {
 			skipped: "已有一轮在进行，本次跳过",
 			interrupted: "服务重启，这一轮没有跑完",
 			unknownFollowup: "没有登记 {{task}} 这种后继",
-			dispatchInterrupted: "资料派发被中断，正在重新安排"
+			dispatchInterrupted: "资料派发被中断，正在重新安排",
+			stoppedEarly: "提前收工，退出码 {{code}}"
 		}
 	},
 	stage: {
@@ -38116,4 +38156,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141
+//# debugId=f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1

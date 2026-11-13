@@ -103,6 +103,8 @@ Open `http://127.0.0.1:8900` on the host, or reach it through a private VPN or S
 
 On NAS container UIs, run `peach token` in the Peach container's terminal to get the sign-in token.
 
+For a new NAS installation, `python -m peach.nas_setup --bind <NAS IP> --media <host media directory>` inside the image generates a Compose file with a persistent data volume, read-only media and a stable hostname. The amd64 image includes Intel iHD and Mesa VAAPI drivers. GPU access is optional: use the render node's numeric group, or explicitly select `--prepare-render` for a mode-0600 node; this prepares only the container device and drops to the non-root service user. See the [NAS installation and hardware guide](https://github.com/peach-mitao/peach/blob/master/docs/DOCKER.md) for prerequisites, preserving an existing deployment and verification.
+
 ## Updating
 
 Run `docker compose pull` and `docker compose up -d` again. Keep the `peach-data` volume: deleting it removes your settings, database and watch history.
