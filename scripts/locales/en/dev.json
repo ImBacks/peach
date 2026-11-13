@@ -2522,5 +2522,12 @@
     "raised": "{{file}}: {{count}} (baseline {{baseline}})",
     "written": "Wrote {{path}}: {{files}} files, {{count}} strings",
     "clean": "No file is above its baseline"
+  },
+  "check_pr_identity": {
+    "baseHelp": "Target commit of the PR",
+    "headHelp": "Head commit of the PR",
+    "notRead": "Could not read commit identities: {{error}}",
+    "impersonated": "These commits are authored as the maintainer:",
+    "fix": "First set your own identity, then rewrite these commits and force-push the PR branch:\n  git config user.name \"<your name>\"\n  git config user.email \"<your email>\"\n  git rebase -r <base> --exec \"git commit --amend --no-edit --reset-author\"\n  git push --force-with-lease\n<base> is the PR's target branch, e.g. upstream/master."
   }
 }

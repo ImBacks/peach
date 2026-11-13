@@ -2522,5 +2522,12 @@
     "raised": "{{file}}: {{count}}（基线 {{baseline}}）",
     "written": "已写入 {{path}}：{{files}} 个文件、{{count}} 条",
     "clean": "没有超过基线的文件"
+  },
+  "check_pr_identity": {
+    "baseHelp": "PR 的目标提交",
+    "headHelp": "PR 的头提交",
+    "notRead": "未取得提交身份：{{error}}",
+    "impersonated": "以下提交的作者是维护者：",
+    "fix": "先把自己的身份配好，再重写这些提交并强推 PR 分支：\n  git config user.name \"<your name>\"\n  git config user.email \"<your email>\"\n  git rebase -r <base> --exec \"git commit --amend --no-edit --reset-author\"\n  git push --force-with-lease\n<base> 是 PR 的目标分支，例如 upstream/master。"
   }
 }

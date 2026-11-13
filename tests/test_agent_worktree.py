@@ -456,7 +456,7 @@ class PullRequestIntegrationTests(_WorktreeCase):
              "-m", "fix(tooling): 冒用维护者身份")
         self.pr["headRefOid"] = _git(self.worker, "rev-parse", "HEAD").stdout.strip()
         with self.github(json.dumps({**self.pr, "isCrossRepository": True})):
-            self.assert_refused("authored as the maintainer")
+            self.assert_refused("作者是维护者")
         with self.github(json.dumps({**self.pr, "isCrossRepository": False})):
             integrate(self.repo, self.branch)
         self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
@@ -1367,20 +1367,21 @@ class PullRequestIdentityTests(unittest.TestCase):
         git(self.repo, "-c", f"user.email={MAINTAINER}", "merge", "--no-ff", "-m", "Merge master", "master")
         self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
 
-    def test_the_ci_entry_runs_as_a_bare_script_and_explains_the_fix_in_both_languages(self):
+    def test_the_ci_entry_runs_as_a_bare_script_and_explains_the_fix_in_the_local_language(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "check_pr_identity.py"
 
-        def run():
+        def run(language="en"):
             return subprocess.run([sys.executable, str(script), "--base", "master"], cwd=self.repo,
                                   capture_output=True, text=True, encoding="utf-8",
-                                  env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                                  env={**os.environ, "PYTHONIOENCODING": "utf-8", "PEACH_LANGUAGE": language})
 
         self.assertEqual(run().returncode, 0)
         git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "冒用")
-        result = run()
-        self.assertEqual(result.returncode, 1, result.stderr)
-        for expected in ("作者是维护者", "authored as the maintainer", "--reset-author", "冒用"):
-            self.assertIn(expected, result.stderr)
+        for language, said in (("en", "authored as the maintainer"), ("zh-CN", "作者是维护者")):
+            result = run(language)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            for expected in (said, "--reset-author", "冒用"):
+                self.assertIn(expected, result.stderr)
 
 
 from scripts import commit_subject

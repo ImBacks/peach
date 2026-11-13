@@ -14,19 +14,8 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "scripts"
-from .check_readme_impact import git, unpublished
+from .check_readme_impact import git, t, unpublished
 from .co_author import MAINTAINER_MAILS
-
-FIX = (
-    "先把自己的身份配好，再重写这些提交并强推 PR 分支：\n"
-    "First set your own identity, then rewrite these commits and force-push the PR branch:\n"
-    '  git config user.name "<your name>"\n'
-    '  git config user.email "<your email>"\n'
-    '  git rebase -r <base> --exec "git commit --amend --no-edit --reset-author"\n'
-    "  git push --force-with-lease\n"
-    "<base> 是 PR 的目标分支，例如 upstream/master。\n"
-    "<base> is the PR's target branch, e.g. upstream/master."
-)
 
 
 def problems(repo: Path, base: str, head: str = "HEAD") -> list[str]:
@@ -50,19 +39,19 @@ def problems(repo: Path, base: str, head: str = "HEAD") -> list[str]:
 
 
 def explain(found: list[str]) -> str:
-    return ("以下提交的作者是维护者 / These commits are authored as the maintainer:\n"
-            + "\n".join(f"  {item}" for item in found) + "\n" + FIX)
+    return "\n".join([t("check_pr_identity.impersonated"), *(f"  {item}" for item in found),
+                      t("check_pr_identity.fix")])
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", required=True, help="PR 的目标提交")
-    parser.add_argument("--head", default="HEAD", help="PR 的头提交")
+    parser.add_argument("--base", required=True, help=t("check_pr_identity.baseHelp"))
+    parser.add_argument("--head", default="HEAD", help=t("check_pr_identity.headHelp"))
     args = parser.parse_args(argv)
     try:
         found = problems(Path.cwd(), args.base, args.head)
     except subprocess.CalledProcessError as error:
-        print(f"未取得提交身份：{(error.stderr or '').strip() or error}", file=sys.stderr)
+        print(t("check_pr_identity.notRead", error=(error.stderr or "").strip() or error), file=sys.stderr)
         return 2
     if found:
         print(explain(found), file=sys.stderr)
