@@ -18,8 +18,10 @@ def settle(connection) -> dict:
     for row in rows.fetchall():
         asset_id, width, height, previous = row['id'], row['width'], row['height'], row['ctx_quality']
         longest = max(width, height)
+        if longest < 900:
+            continue
         old = ('4K' if longest >= 3000 else '2K' if longest >= 1900 else '1080P' if longest >= 1300
-               else '720P' if longest >= 900 else '低画质')
+               else '720P')
         quality = context_fields(width, height, 0)[2]
         if previous != old or quality == previous:
             continue

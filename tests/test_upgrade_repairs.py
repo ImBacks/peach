@@ -1979,7 +1979,7 @@ class UpgradeRepairTests(unittest.TestCase):
             planned = auto_landing_revert.plan(connection, quality_repair.SOURCE,
                                                logo_root=self.root / 'logos', cover_root=self.root / 'covers')
             connection.execute("UPDATE asset SET path='R:\\media\\later.mp4' WHERE id=9")
-            self.assertEqual(auto_landing_revert.apply(connection, planned)['还原画质分档'], 1)
+            self.assertEqual(auto_landing_revert.apply(connection, planned)['restored_quality'], 1)
         self.assertEqual(qualities(), {1: '2K', 2: '手工', 3: '720P', 4: '自定义',
                                        5: '2K', 6: '720P', 7: '2K', 8: '1080P', 9: '1080P'})
         self.service.prepare()

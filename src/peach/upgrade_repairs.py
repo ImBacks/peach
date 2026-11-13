@@ -1314,9 +1314,9 @@ class UpgradeRepairs:
                 connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
                                    (quality_repair.KEY, str(time.time()), json.dumps(result, ensure_ascii=False)))
         except Exception:
-            LOGGER.exception('画质分档补修失败')
+            LOGGER.exception('Quality classification repair failed')
             return
-        LOGGER.info('画质分档：修正 %s 行', len(result['assets']))
+        LOGGER.info('Quality classification repair: corrected %s rows', len(result['assets']))
 
     def _clear_stale_codes(self) -> None:
         """清掉旧版从文件名误认的番号（`stale_filename_codes`），只做一次。"""
