@@ -33,7 +33,17 @@ export function mountCaptionStyle(root: HTMLElement, video: HTMLVideoElement, si
   const touched = new Set<CaptionKey>();
   const overlay = document.createElement('div'); overlay.className = 'vjs-peach-captions'; overlay.setAttribute('aria-hidden', 'true');
   const window = document.createElement('div'); window.className = 'vjs-peach-caption-window'; overlay.append(window);
-  root.querySelector('media-container')!.append(overlay); root.dataset.peachCaptions = '';
+  root.querySelector('media-container')!.append(overlay);
+  // 网页层字幕只在页面内播放时可见；iOS 原生全屏与画中画由系统绘制画面，那时交还原生字幕轨道。
+  const presentation = () => {
+    const native = video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean; webkitPresentationMode?: string };
+    const outside = !!native.webkitDisplayingFullscreen || (native.webkitPresentationMode ?? 'inline') !== 'inline'
+      || document.pictureInPictureElement === video;
+    if (outside) delete root.dataset.peachCaptions; else root.dataset.peachCaptions = '';
+  };
+  for (const event of ['webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged', 'enterpictureinpicture', 'leavepictureinpicture'])
+    video.addEventListener(event, presentation, { signal });
+  presentation();
   const paintStyle = () => {
     const rgba = (color: string, opacity: string) => `rgba(${COLORS[color]},${Number(opacity) / 100})`;
     root.style.setProperty('--peach-caption-font', FONTS[style.font]!);
