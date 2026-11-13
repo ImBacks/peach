@@ -846,6 +846,34 @@ class UpgradeRepairTests(unittest.TestCase):
         with self.database.read_connection() as connection:
             self.assertIsNone(connection.execute('SELECT disposal FROM asset WHERE id=1').fetchone()[0])
 
+    def test_webm_filed_as_other_becomes_video_once_and_is_queued_for_processing(self):
+        """#551：旧版把 WebM 登记成 other；升级时改成视频并补处理，不要求用户完整重扫。"""
+        from peach import repair_center
+        rows = [(1, r'R:\media\clip.WeBM', None), (2, r'R:\media\notes.txt', None),
+                (3, r'R:\media\gone.webm', 'trash'), (4, r'R:\media\._clip.webm', None)]
+        with self.database.write_transaction() as connection:
+            for key, path, disposal in rows:
+                connection.execute("INSERT INTO asset(id,location,path,name,medium,rating,disposal) "
+                                   "VALUES(?,'local',?,?,'other',5,?)", (key, path, PureWindowsPath(path).name, disposal))
+        self.service.prepare()
+        with self.database.read_connection() as connection:
+            self.assertEqual([tuple(row) for row in connection.execute('SELECT id,medium,rating FROM asset ORDER BY id')],
+                             [(1, 'video', 5), (2, 'other', 5), (3, 'other', 5), (4, 'other', 5)])
+            stored = json.loads(connection.execute('SELECT result_json FROM ledger_upgrade_repair WHERE id=?',
+                                                   (upgrade_repairs.VIDEO_MEDIUM_KEY,)).fetchone()[0])
+            center = repair_center.snapshot(connection, {}, cloud_pending=0)
+        self.assertEqual(stored['video'], [1])
+        self.assertEqual(next(item['changed'] for item in center['items'] if item['id'] == 'video-medium'), 1)
+        receipt = upgrade_repairs._read(self.service.receipt)
+        self.assertIn(1, receipt['media_ids'])
+        self.assertFalse(receipt['dispatch_complete'])
+        # 回执在就不再重做：撤回后的 other 保持原样。
+        with self.database.write_transaction() as connection:
+            connection.execute("UPDATE asset SET medium='other' WHERE id=1")
+        self.service.prepare()
+        with self.database.read_connection() as connection:
+            self.assertEqual(connection.execute('SELECT medium FROM asset WHERE id=1').fetchone()[0], 'other')
+
     def test_prior_restore_uses_windows_path_identity_without_exempting_other_paths(self):
         from peach import system_file_repair
         with self.database.write_transaction() as connection:
@@ -1052,10 +1080,11 @@ class UpgradeRepairTests(unittest.TestCase):
             row=connection.execute('SELECT catalog_title,field_owners FROM asset WHERE id=1').fetchone()
             self.assertEqual(row[0], '元の題名')
             self.assertEqual(json.loads(row[1])['catalog_title'], 'auto:dmm')
-            # 悬空候选、JavDB 记录类型、来源分辨率标签与旧记录转换四条补修各记一行，这里只数更新已有资料的回执。
-            self.assertEqual(connection.execute('SELECT count(*) FROM ledger_upgrade_repair WHERE id NOT IN (?,?,?,?)',
+            # 悬空候选、JavDB 记录类型、视频改登记、来源分辨率标签与旧记录转换五条补修各记一行，这里只数更新已有资料的回执。
+            self.assertEqual(connection.execute('SELECT count(*) FROM ledger_upgrade_repair WHERE id NOT IN (?,?,?,?,?)',
                                                 (upgrade_repairs.DANGLING_KEY,
                                                  upgrade_repairs.JAVDB_RECORDS_KEY,
+                                                 upgrade_repairs.VIDEO_MEDIUM_KEY,
                                                  upgrade_repairs.RESOLUTION_TAGS_KEY,
                                                  interface_text_upgrade.RECEIPT_KEY)).fetchone()[0], 2)
             self.assertEqual(connection.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
@@ -1579,10 +1608,11 @@ class UpgradeRepairTests(unittest.TestCase):
         with self.database.read_connection() as connection:
             rows = connection.execute('SELECT id,code,duration FROM asset ORDER BY id').fetchall()
             self.assertEqual([tuple(row) for row in rows], [(1, 'SSIS-123', None), (2, 'BAD-001', None)])
-            # 悬空候选、JavDB 记录类型、来源分辨率标签与旧记录转换四条补修各记一行，这里只数更新已有资料的回执。
-            self.assertEqual(connection.execute('SELECT count(*) FROM ledger_upgrade_repair WHERE id NOT IN (?,?,?,?)',
+            # 悬空候选、JavDB 记录类型、视频改登记、来源分辨率标签与旧记录转换五条补修各记一行，这里只数更新已有资料的回执。
+            self.assertEqual(connection.execute('SELECT count(*) FROM ledger_upgrade_repair WHERE id NOT IN (?,?,?,?,?)',
                                                 (upgrade_repairs.DANGLING_KEY,
                                                  upgrade_repairs.JAVDB_RECORDS_KEY,
+                                                 upgrade_repairs.VIDEO_MEDIUM_KEY,
                                                  upgrade_repairs.RESOLUTION_TAGS_KEY,
                                                  interface_text_upgrade.RECEIPT_KEY)).fetchone()[0], 1)
         self.assertEqual(len(list(self.root.glob('ledger.pre-upgrade-*.db'))), 1)

@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f83fb880-0fc1-4145-86cd-7a923122c8c1", e._sentryDebugIdIdentifier = "sentry-dbid-f83fb880-0fc1-4145-86cd-7a923122c8c1");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "e696b154-7eec-4320-8672-4bbb30885c95", e._sentryDebugIdIdentifier = "sentry-dbid-e696b154-7eec-4320-8672-4bbb30885c95");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -7124,6 +7124,7 @@ var He = {
 			"follow-evidence-reclaim": "Old follow snapshots removed",
 			"javdb-actor-records": "JavDB links on people pages",
 			"source-resolution-tags": "4K tags from sources",
+			"video-medium": "Reclassified as videos",
 			"stale-filename-codes": "Misread codes cleared",
 			"studio-unbounded-misses": "Label lookup cache",
 			"verification-settlement": "Verification differences settled",
@@ -7161,6 +7162,10 @@ var He = {
 			"resolution-tags": {
 				summary: "A 4K tag on a metadata site means an official 4K release exists, not that this file is 4K. These tags are removed.",
 				title: "4K tags from sources"
+			},
+			"video-medium": {
+				summary: "WebM and other videos once filed as other files become videos again. Duration, previews, and metadata are filled in automatically.",
+				title: "Reclassified as videos"
 			},
 			"system-files": {
 				summary: "Moves NAS system thumbnails, macOS ._ files, and similar extras out of the collection. The files aren't deleted.",
@@ -13878,6 +13883,7 @@ var He = {
 			"follow-evidence-reclaim": "清理关注抓取的旧快照",
 			"javdb-actor-records": "人物页的 JavDB 入口",
 			"source-resolution-tags": "来源的 4K 标签",
+			"video-medium": "改登记为视频",
 			"stale-filename-codes": "清除误认的番号",
 			"studio-unbounded-misses": "厂牌查询缓存",
 			"verification-settlement": "核查差异结算",
@@ -13915,6 +13921,10 @@ var He = {
 			"resolution-tags": {
 				summary: "资料站标的 4K 指官方出过 4K 版，不是这份文件的画质，这类标签解除",
 				title: "来源的 4K 标签"
+			},
+			"video-medium": {
+				summary: "WebM 等以前登记成其他文件的视频改回视频，进馆藏后自动补时长、预览与资料",
+				title: "改登记为视频"
 			},
 			"system-files": {
 				summary: "NAS 系统目录里的缩略图、macOS 的 ._ 附属文件等移出馆藏，文件本身不删",
@@ -38140,4 +38150,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=f83fb880-0fc1-4145-86cd-7a923122c8c1
+//# debugId=e696b154-7eec-4320-8672-4bbb30885c95
