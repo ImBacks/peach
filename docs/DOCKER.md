@@ -4,6 +4,14 @@ Peach 的 Docker 镜像用于单人 VPS 与 NAS，通过浏览器管理，镜像
 
 Docker 不使用桌面托盘。在网页配置中添加媒体目录时，只需填写容器内实际目录，例如 `/media`；Peach 自动保存所需的路径配置。Windows 安装包、macOS 源码运行和 Docker 的入口分别见 [README](../README.md#下载与使用)。
 
+## NAS 快速开始
+
+1. 在 `compose.yaml` 同目录创建 `.env`，写 `PEACH_MEDIA_ROOT=<宿主机媒体目录>` 和 `PEACH_BIND=<NAS 局域网 IP>`。Compose 默认只绑定 `127.0.0.1`，不改时只有 NAS 自己能打开，容器照样显示运行中。
+2. 运行 `docker compose up -d`。
+3. 在另一台电脑的浏览器打开 `http://<NAS 局域网 IP>:8900`，在首次设置页设访问密码或选择免登录。Peach 没有初始密码；`peach token` 显示的口令供用户脚本和 API 使用，不是登录密码。
+
+各项的完整说明见下文[首次运行与访问](#首次运行与访问)。
+
 ## 数据与媒体
 
 NAS 的 SMB 共享也可作为[SMB 媒体来源](SMB.md)直接连接，按账号权限读写，无需挂入媒体目录；Peach 数据卷仍单独保留。
@@ -51,12 +59,12 @@ rootless Docker 和 `userns-remap` 仍受宿主机 ID 映射限制；容器内�
 镜像中的生成器可以输出一份可导入 Container Station、Container Manager 或其他 NAS 容器管理器的 Compose。它不启动 Docker，不读取媒体，也不修改已有部署。无需在 NAS 上另装 Python。在新建的安装文件夹运行：
 
 ```sh
-docker run --rm --entrypoint python longmeidao/peach:edge -m peach.nas_setup --bind 192.0.2.10 --media /srv/videos
+docker run --rm --entrypoint python longmeidao/peach:latest -m peach.nas_setup --bind 192.0.2.10 --media /srv/videos
 ```
 
 把输出保存为新建的 `compose.yaml`，将示例 IP 与媒体目录替换为宿主机实际值，然后在该目录执行 `docker compose up -d`。也可以把生成内容导入 NAS 的 Compose 管理界面。容器内的媒体路径固定为 `/media`，数据保存在 `peach-data` 命名卷，媒体默认只读。文件夹不存在时拒绝启动，不自动创建空目录来掩盖挂载错误。
 
-源码环境可用 `python -m peach.nas_setup ... --output compose.yaml` 保存；文件已存在时拒绝覆盖。`--port` 修改访问端口，`--image` 选择已发布版本。生成器固定 `hostname` 为 `peach-nas`，重建容器后任务仍归同一执行端。已有安装迁入此配置时，先通过 `docker inspect --format '{{.Config.Hostname}}' <容器名>` 取得原名称，再用 `--hostname` 保留它；同时保留原 Compose 项目名和数据卷名称，不能用新项目误建空数据卷。
+源码环境可用 `python -m peach.nas_setup ... --output compose.yaml` 保存；文件已存在时拒绝覆盖。`--port` 修改访问端口，`--image` 选择镜像，默认 `longmeidao/peach:latest`，NAS 面板按它提示更新；`--uid`、`--gid` 指定运行身份，见上文「运行 UID/GID」。生成器固定 `hostname` 为 `peach-nas`，重建容器后任务仍归同一执行端。已有安装迁入此配置时，先通过 `docker inspect --format '{{.Config.Hostname}}' <容器名>` 取得原名称，再用 `--hostname` 保留它；同时保留原 Compose 项目名和数据卷名称，不能用新项目误建空数据卷。
 
 安装后打开 `http://<NAS IP>:<端口>`，按网页完成首次设置和访问密码设置；没有通用初始密码。已有部署沿用原来的访问设置，容器终端中的 `peach token` 可以查看内部访问口令。配置完成后运行 `docker compose exec peach peach doctor` 检查配置、数据库、工具和挂载。容器运行状态与来源网络连通性分别检查，见下文 amane 及采集说明。
 

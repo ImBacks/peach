@@ -95,19 +95,13 @@ Start Peach:
 docker compose up -d
 ```
 
-Show the first sign-in token. It is private, so run this in your own terminal only:
-
-```console
-docker compose exec peach peach token
-```
-
-Open `http://127.0.0.1:8900` on the host, or reach it through a private VPN or SSH tunnel. Sign in, set an access password, then add a media folder inside the container, such as `/media`, on the settings page.
+Open `http://127.0.0.1:8900` on the host, or reach it through a private VPN or SSH tunnel. The first-time setup page asks for the media folder inside the container, such as `/media`, and an access password. There is no default password.
 
 ## NAS and LAN access
 
 `PEACH_BIND=127.0.0.1` only accepts connections from the host itself. To open Peach from another computer, set `PEACH_BIND` to the NAS's LAN IP, recreate the container and open `http://<NAS LAN IP>:<PEACH_PORT>`. Set an access password first. The image has no multi-user accounts; for public hosting, read the [security policy](https://github.com/peach-mitao/peach/blob/master/SECURITY.md).
 
-On NAS container UIs, run `peach token` in the Peach container's terminal to get the sign-in token. `docker compose exec` enters the container as root; the `peach` command switches to the configured UID/GID before it runs, so it leaves no root-owned files in `/data`.
+`peach token` in the container's terminal shows the token for the userscript and the API; it is not the sign-in password. `docker compose exec` enters the container as root; the `peach` command switches to the configured UID/GID before it runs, so it leaves no root-owned files in `/data`.
 
 For a new NAS installation, `python -m peach.nas_setup --bind <NAS IP> --media <host media directory>` inside the image generates a Compose file with a persistent data volume, read-only media and a stable hostname. The amd64 image includes Intel iHD and Mesa VAAPI drivers. GPU access is optional: use the render node's numeric group, or explicitly select `--prepare-render` for a mode-0600 node; the image entrypoint then hands only the container device to the service group before it drops to the non-root user. `--uid` and `--gid` set `PEACH_UID` and `PEACH_GID`. See the [NAS installation and hardware guide](https://github.com/peach-mitao/peach/blob/master/docs/DOCKER.md) for prerequisites, preserving an existing deployment and verification.
 
