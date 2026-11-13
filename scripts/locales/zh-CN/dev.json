@@ -2154,8 +2154,9 @@
     "sameNameDiffers": "候选文件同名但内容不同",
     "sha256Mismatch": "下载产物与演练的 SHA-256 不一致",
     "imageTagMismatch": "镜像标签与发布提交或版本不一致",
+    "imageArchitectureMismatch": "镜像架构与要记录的候选不一致",
     "imageDigestMismatch": "镜像与演练验收的摘要不一致",
-    "imageVersionRequired": "镜像核验需要版本",
+    "imageVersionRequired": "镜像核验需要版本与架构",
     "description": "GitHub CI 通过官方 REST 接口晋级同一提交的已验收产物，不调用 CLI。"
   },
   "job_status": {
