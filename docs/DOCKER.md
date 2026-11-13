@@ -125,7 +125,7 @@ Linux 首次重编码时会探测实际可用的硬件编码器，整片 MP4 与
 
 镜像自带 OpenCV（`vision` 依赖组）和头像取景与比对用的人脸模型（YuNet 为 MIT，SFace 为 Apache-2.0，许可证在同一目录），位于 `/app/tools/face-models`，由 `PEACH_FACE_MODELS` 指向，容器不联网也能用。构建镜像时按固定地址下载并校验 SHA-256。
 
-镜像包含 Debian FFmpeg、Mesa VAAPI 驱动、Intel iHD 驱动（`intel-media-va-driver`）与 `vainfo`。宿主机仍须加载对应内核驱动（Intel `i915` / `xe`，AMD `amdgpu`）和固件，并提供 `/dev/dri/renderD*`。iHD 面向其支持的 Intel GPU，旧设备需要按型号选择驱动；安装用户态驱动不能替代宿主机内核支持。将下面的条目合入 Compose 的 `services.peach`，设备路径按宿主机调整：
+镜像包含 Debian FFmpeg、Mesa VAAPI 驱动、Intel iHD 驱动（`intel-media-va-driver`，仅 amd64 镜像）与 `vainfo`。宿主机仍须加载对应内核驱动（Intel `i915` / `xe`，AMD `amdgpu`）和固件，并提供 `/dev/dri/renderD*`。iHD 面向其支持的 Intel GPU，旧设备需要按型号选择驱动；安装用户态驱动不能替代宿主机内核支持。将下面的条目合入 Compose 的 `services.peach`，设备路径按宿主机调整：
 
 ```yaml
     devices:

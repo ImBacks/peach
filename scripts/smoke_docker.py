@@ -68,10 +68,12 @@ def transcode_checks(name: str) -> None:
            "import ctypes; from pathlib import Path; "
            "drivers=list(Path('/usr/lib').glob('*/dri/radeonsi_drv_video.so')); "
            "assert drivers, '缺少 AMD VAAPI 驱动'; ctypes.CDLL(str(drivers[0]))")
+    # Intel iHD 只有 amd64 包，arm64 镜像不带。
     docker("exec", name, "python", "-c",
-           "import ctypes; from pathlib import Path; "
+           "import ctypes, platform; from pathlib import Path; "
            "drivers=list(Path('/usr/lib').glob('*/dri/iHD_drv_video.so')); "
-           "assert drivers, '缺少 Intel VAAPI 驱动'; ctypes.CDLL(str(drivers[0]))")
+           "assert drivers or platform.machine() != 'x86_64', '缺少 Intel VAAPI 驱动'; "
+           "[ctypes.CDLL(str(path)) for path in drivers[:1]]")
     docker("exec", name, "ffmpeg", "-v", "error", "-i", "/data/smoke-media/fixture.mp4",
            "-c:v", "mpeg4", "/data/smoke-media/transcode.mkv")
     docker("exec", name, "python", "-c",

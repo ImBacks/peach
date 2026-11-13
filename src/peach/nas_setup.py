@@ -25,24 +25,23 @@ def compose(*, bind: str, media: str, port: int = 8900,
             prepare_render: bool = False) -> str:
     address = ipaddress.ip_address(bind)
     if address.is_unspecified or address.is_multicast or address.is_link_local:
-        raise NasSetupError('请填写 NAS 的局域网 IP 或回环地址', code='nasSetup.invalidBind')
+        raise NasSetupError('nasSetup.invalidBind')
     if not 1 <= port <= 65535:
-        raise NasSetupError('端口应在 1 到 65535 之间', code='nasSetup.invalidPort')
+        raise NasSetupError('nasSetup.invalidPort')
     if not PurePosixPath(media).is_absolute() or any(c in media for c in '\r\n\0'):
-        raise NasSetupError('请填写宿主机上的媒体目录绝对路径', code='nasSetup.invalidMediaPath')
+        raise NasSetupError('nasSetup.invalidMediaPath')
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}', hostname):
-        raise NasSetupError('主机名只接受字母、数字、点和连字符', code='nasSetup.invalidHostname')
+        raise NasSetupError('nasSetup.invalidHostname')
     if not image or any(c.isspace() or c == '\0' for c in image):
-        raise NasSetupError('镜像名称无效', code='nasSetup.invalidImage')
+        raise NasSetupError('nasSetup.invalidImage')
     if render_device and not re.fullmatch(r'/dev/dri/renderD(?:12[89]|1[3-8][0-9]|19[01])', render_device):
-        raise NasSetupError('请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191', code='nasSetup.invalidRenderDevice')
+        raise NasSetupError('nasSetup.invalidRenderDevice')
     if render_gid is not None and (type(render_gid) is not int or not 0 <= render_gid < 2**32 - 1):
-        raise NasSetupError('渲染节点 GID 无效', code='nasSetup.invalidRenderGid')
+        raise NasSetupError('nasSetup.invalidRenderGid')
     if (render_gid is not None or prepare_render) and not render_device:
-        raise NasSetupError('设置核显权限时须同时指定渲染节点', code='nasSetup.renderDeviceRequired')
+        raise NasSetupError('nasSetup.renderDeviceRequired')
     if render_device and sum((render_gid is not None, prepare_render)) != 1:
-        raise NasSetupError('核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用',
-                            code='nasSetup.renderPermissionChoice')
+        raise NasSetupError('nasSetup.renderPermissionChoice')
     endpoint = f'[{address}]' if address.version == 6 else str(address)
     lines = ['services:', '  peach:', f'    image: {_quoted(image)}',
              f'    hostname: {_quoted(hostname)}', '    init: true',
