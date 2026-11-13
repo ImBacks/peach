@@ -309,6 +309,9 @@ class DockerUpdateTests(unittest.TestCase):
         self.assertIn("令牌", docker_update.status(transport=transport)["reason"])
         docker_update.ensure_token()
         self.assertEqual(docker_update.status(transport=transport), {"available": True, "reason": ""})
+        with patch.dict("os.environ", {docker_update.IMAGE_TAG_ENV: "latest"}):
+            self.assertEqual(docker_update.status(transport=transport), {"available": True, "reason": ""},
+                             "latest 与 edge 同时推送，NAS 面板按 latest 部署也能一键更新")
         self.assertEqual(docker_update.status(transport=self.watchtower(202, reachable=False)[0]),
                          {"available": False, "reason": ""}, "没启用 watchtower profile 时照常给两步命令，不报错")
         for tag, message in (("0.53.0", ".env"), ("", "compose.yaml")):

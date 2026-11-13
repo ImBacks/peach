@@ -549,7 +549,7 @@ jobs:
             .venv/bin/python scripts/release_r2.py --root build/mirror --version "${GITHUB_REF_NAME#v}" --apply
 
   # 镜像在演练中构建和验收，标签核对相同 image ID 后发布；发布排在 GitHub Release 成功之后：
-  # 桌面包任何一步没发出去，Docker Hub 的版本号与 edge 都不动（ADR-0121）。
+  # 桌面包任何一步没发出去，Docker Hub 的版本号、edge 与 latest 都不动（ADR-0121）。
   docker:
     name: Linux amd64 镜像构建与验收
     needs: validate
@@ -626,10 +626,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       # Docker Hub 是应用内更新与 Watchtower 认的来源，先推；ghcr 推同一镜像，挂到仓库侧栏的 Packages（ADR-0147）。
-      - name: 推送版本号与 edge
+      # NAS 容器面板与不写标签的 `docker pull` 只认 latest，与 edge 指向同一镜像（ADR-0121）。
+      - name: 推送版本号、edge 与 latest
         run: |
           for image in longmeidao/peach ghcr.io/peach-mitao/peach; do
-            for tag in "${GITHUB_REF_NAME#v}" edge; do
+            for tag in "${GITHUB_REF_NAME#v}" edge latest; do
               docker tag longmeidao/peach:candidate "$image:$tag"
               docker push "$image:$tag"
             done

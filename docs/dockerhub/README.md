@@ -25,7 +25,7 @@ Movie demo data; see [asset credits and licenses](https://peach.video/en/credits
 | --- | --- |
 | Image | `longmeidao/peach`; the same image is also published as `ghcr.io/peach-mitao/peach` |
 | Version tags | One per release, built from the release commit |
-| `edge` | Moves to the latest complete release |
+| `edge`, `latest` | Both move to the latest complete release; NAS container managers check `latest` for updates |
 | Platform | `linux/amd64`; ARM NAS is not yet verified |
 | User | UID/GID `1000`, non-root |
 | Port | `8900/tcp` |
