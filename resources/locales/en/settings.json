@@ -878,7 +878,7 @@
     "checkDone": "Up to date",
     "checkIncomplete": "Check incomplete",
     "checkedAt": "Checked {{time}}",
-    "connectionLost": "Can't reach Peach. Check the tray, then refresh the page.",
+    "connectionLost": "Can't reach Peach. Make sure it is running, then refresh the page.",
     "currentVersion": "Current version",
     "dockerUpdateBody": "Watchtower pulls the Peach {{version}} image and recreates the container. The /data volume is kept, and running tasks resume after startup.",
     "downloadAndInstall": "Download and install",

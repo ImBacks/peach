@@ -490,21 +490,21 @@
     "viewItem": "View {{title}}"
   },
   "requestError": {
-    "badGateway": "The Peach service didn't return a result. Try again later; if it keeps failing, check the tray log.",
+    "badGateway": "The Peach service didn't return a result. Try again later; if it keeps failing, check the Peach log.",
     "badRequest": "The submitted data is invalid. Check your input and try again.",
     "clientTimeout": "Timed out waiting for the service. Check your connection and try again.",
     "conflict": "This action isn't allowed right now. Refresh and try again.",
-    "fallback": "The action didn't finish. Try again; if it keeps failing, check the tray log.",
-    "forbidden": "This device isn't allowed to do this. Use the computer running Peach.",
+    "fallback": "The action didn't finish. Try again; if it keeps failing, check the Peach log.",
+    "forbidden": "This device isn't allowed to do this. Use the device running Peach.",
     "gatewayTimeout": "Timed out waiting for the service. Try again later.",
     "notFound": "The requested item no longer exists. Refresh the list.",
     "rateLimited": "Too many requests. Try again later.",
-    "serverError": "The Peach service couldn't process this. Try again; if it keeps failing, check the tray log.",
+    "serverError": "The Peach service couldn't process this. Try again; if it keeps failing, check the Peach log.",
     "sessionExpired": "Your session has expired. Refresh the page to sign in again.",
     "timeout": "The request timed out. Try again later.",
     "tooLarge": "The submission is too large. Select fewer items and try again.",
     "unavailable": "The Peach service is temporarily unavailable. Try again later.",
-    "unreachable": "Can't connect to the Peach service. Check your network connection and make sure the tray service is running."
+    "unreachable": "Can't connect to the Peach service. Check your network connection and make sure Peach is running."
   },
   "routeTitle": {
     "agencies": "Agencies",
@@ -742,7 +742,7 @@
     "fileMissing": "Source file not found. Click the scan button on the right to recheck the directory.",
     "libraryOffline": "The library isn't reachable, so files can't be checked. Try again once it's back.",
     "noChanges": "Directory check complete. Nothing to change.",
-    "notMapped": "This storage has no drive letter mapped on the computer running Peach.",
+    "notMapped": "This storage isn't mounted on the device running Peach.",
     "reattached_one": "Moved activity for {{count, number}} item to another version in the library.",
     "reattached_other": "Moved activity for {{count, number}} items to another version in the library.",
     "resultSeparator": " ",

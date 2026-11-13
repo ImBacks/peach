@@ -447,21 +447,21 @@
     "viewItem": "查看{{title}}"
   },
   "requestError": {
-    "badGateway": "Peach 服务没有取回结果，请稍后重试；持续失败时查看托盘日志。",
+    "badGateway": "Peach 服务没有取回结果，请稍后重试；持续失败时查看 Peach 运行日志。",
     "badRequest": "提交内容有误，请检查输入后重试。",
     "clientTimeout": "等待服务响应超时，请检查连接后重试。",
     "conflict": "当前状态不允许此操作，请刷新后重试。",
-    "fallback": "操作未完成，请重试；持续失败时查看托盘日志。",
-    "forbidden": "当前设备没有执行此操作的权限，请在运行 Peach 的电脑上操作。",
+    "fallback": "操作未完成，请重试；持续失败时查看 Peach 运行日志。",
+    "forbidden": "当前设备没有执行此操作的权限，请在运行 Peach 的设备上操作。",
     "gatewayTimeout": "等待服务响应超时，请稍后重试。",
     "notFound": "请求的内容已不存在，请刷新列表。",
     "rateLimited": "请求过于频繁，请稍后重试。",
-    "serverError": "Peach 服务处理失败，请重试；持续失败时查看托盘日志。",
+    "serverError": "Peach 服务处理失败，请重试；持续失败时查看 Peach 运行日志。",
     "sessionExpired": "登录已失效，请刷新页面重新登录。",
     "timeout": "请求超时，请稍后重试。",
     "tooLarge": "提交内容过大，请减少数量后重试。",
     "unavailable": "Peach 服务暂时不可用，请稍后重试。",
-    "unreachable": "无法连接到 Peach 服务，请确认网络连接和托盘服务已启动。"
+    "unreachable": "无法连接到 Peach 服务，请确认网络连接正常、Peach 正在运行。"
   },
   "routeTitle": {
     "agencies": "事务所",
@@ -693,7 +693,7 @@
     "fileMissing": "找不到源文件；点右侧的扫描按钮重新检查目录。",
     "libraryOffline": "媒体库无法访问，暂时无法核对文件；恢复连接后重试",
     "noChanges": "目录核对完成，无需改动",
-    "notMapped": "本机没有映射这个来源的盘符",
+    "notMapped": "运行 Peach 的设备上没有挂载这个来源",
     "reattached": "{{count, number}} 项的记录已接到库里的另一个版本",
     "resultSeparator": "，",
     "revealFailed": "打开文件管理器失败，请重试",

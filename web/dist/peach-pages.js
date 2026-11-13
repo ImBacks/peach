@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "4ba90077-c7d9-454f-af43-e3df949b6e0b", e._sentryDebugIdIdentifier = "sentry-dbid-4ba90077-c7d9-454f-af43-e3df949b6e0b");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "6fa2d85e-1aae-454c-8b01-bec07fff331c", e._sentryDebugIdIdentifier = "sentry-dbid-6fa2d85e-1aae-454c-8b01-bec07fff331c");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -6481,7 +6481,7 @@ var He = {
 		checkDone: "Up to date",
 		checkIncomplete: "Check incomplete",
 		checkedAt: "Checked {{time}}",
-		connectionLost: "Can't reach Peach. Check the tray, then refresh the page.",
+		connectionLost: "Can't reach Peach. Make sure it is running, then refresh the page.",
 		currentVersion: "Current version",
 		dockerUpdateBody: "Watchtower pulls the Peach {{version}} image and recreates the container. The /data volume is kept, and running tasks resume after startup.",
 		downloadAndInstall: "Download and install",
@@ -8213,21 +8213,21 @@ var He = {
 		viewItem: "View {{title}}"
 	},
 	requestError: {
-		badGateway: "The Peach service didn't return a result. Try again later; if it keeps failing, check the tray log.",
+		badGateway: "The Peach service didn't return a result. Try again later; if it keeps failing, check the Peach log.",
 		badRequest: "The submitted data is invalid. Check your input and try again.",
 		clientTimeout: "Timed out waiting for the service. Check your connection and try again.",
 		conflict: "This action isn't allowed right now. Refresh and try again.",
-		fallback: "The action didn't finish. Try again; if it keeps failing, check the tray log.",
-		forbidden: "This device isn't allowed to do this. Use the computer running Peach.",
+		fallback: "The action didn't finish. Try again; if it keeps failing, check the Peach log.",
+		forbidden: "This device isn't allowed to do this. Use the device running Peach.",
 		gatewayTimeout: "Timed out waiting for the service. Try again later.",
 		notFound: "The requested item no longer exists. Refresh the list.",
 		rateLimited: "Too many requests. Try again later.",
-		serverError: "The Peach service couldn't process this. Try again; if it keeps failing, check the tray log.",
+		serverError: "The Peach service couldn't process this. Try again; if it keeps failing, check the Peach log.",
 		sessionExpired: "Your session has expired. Refresh the page to sign in again.",
 		timeout: "The request timed out. Try again later.",
 		tooLarge: "The submission is too large. Select fewer items and try again.",
 		unavailable: "The Peach service is temporarily unavailable. Try again later.",
-		unreachable: "Can't connect to the Peach service. Check your network connection and make sure the tray service is running."
+		unreachable: "Can't connect to the Peach service. Check your network connection and make sure Peach is running."
 	},
 	routeTitle: {
 		agencies: "Agencies",
@@ -8457,7 +8457,7 @@ var He = {
 		fileMissing: "Source file not found. Click the scan button on the right to recheck the directory.",
 		libraryOffline: "The library isn't reachable, so files can't be checked. Try again once it's back.",
 		noChanges: "Directory check complete. Nothing to change.",
-		notMapped: "This storage has no drive letter mapped on the computer running Peach.",
+		notMapped: "This storage isn't mounted on the device running Peach.",
 		reattached_one: "Moved activity for {{count, number}} item to another version in the library.",
 		reattached_other: "Moved activity for {{count, number}} items to another version in the library.",
 		resultSeparator: " ",
@@ -13244,7 +13244,7 @@ var He = {
 		checkDone: "检查完成",
 		checkIncomplete: "检查未完成",
 		checkedAt: "检查于 {{time}}",
-		connectionLost: "尚未连接到 Peach，请检查托盘后刷新页面。",
+		connectionLost: "尚未连接到 Peach，请确认 Peach 正在运行后刷新页面。",
 		currentVersion: "当前版本",
 		dockerUpdateBody: "Watchtower 会拉取 Peach {{version}} 的镜像并重建容器，/data 数据卷保留，进行中的任务在启动后续跑。",
 		downloadAndInstall: "下载并安装",
@@ -14925,21 +14925,21 @@ var He = {
 		viewItem: "查看{{title}}"
 	},
 	requestError: {
-		badGateway: "Peach 服务没有取回结果，请稍后重试；持续失败时查看托盘日志。",
+		badGateway: "Peach 服务没有取回结果，请稍后重试；持续失败时查看 Peach 运行日志。",
 		badRequest: "提交内容有误，请检查输入后重试。",
 		clientTimeout: "等待服务响应超时，请检查连接后重试。",
 		conflict: "当前状态不允许此操作，请刷新后重试。",
-		fallback: "操作未完成，请重试；持续失败时查看托盘日志。",
-		forbidden: "当前设备没有执行此操作的权限，请在运行 Peach 的电脑上操作。",
+		fallback: "操作未完成，请重试；持续失败时查看 Peach 运行日志。",
+		forbidden: "当前设备没有执行此操作的权限，请在运行 Peach 的设备上操作。",
 		gatewayTimeout: "等待服务响应超时，请稍后重试。",
 		notFound: "请求的内容已不存在，请刷新列表。",
 		rateLimited: "请求过于频繁，请稍后重试。",
-		serverError: "Peach 服务处理失败，请重试；持续失败时查看托盘日志。",
+		serverError: "Peach 服务处理失败，请重试；持续失败时查看 Peach 运行日志。",
 		sessionExpired: "登录已失效，请刷新页面重新登录。",
 		timeout: "请求超时，请稍后重试。",
 		tooLarge: "提交内容过大，请减少数量后重试。",
 		unavailable: "Peach 服务暂时不可用，请稍后重试。",
-		unreachable: "无法连接到 Peach 服务，请确认网络连接和托盘服务已启动。"
+		unreachable: "无法连接到 Peach 服务，请确认网络连接正常、Peach 正在运行。"
 	},
 	routeTitle: {
 		agencies: "事务所",
@@ -15163,7 +15163,7 @@ var He = {
 		fileMissing: "找不到源文件；点右侧的扫描按钮重新检查目录。",
 		libraryOffline: "媒体库无法访问，暂时无法核对文件；恢复连接后重试",
 		noChanges: "目录核对完成，无需改动",
-		notMapped: "本机没有映射这个来源的盘符",
+		notMapped: "运行 Peach 的设备上没有挂载这个来源",
 		reattached: "{{count, number}} 项的记录已接到库里的另一个版本",
 		resultSeparator: "，",
 		revealFailed: "打开文件管理器失败，请重试",
@@ -38142,4 +38142,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=4ba90077-c7d9-454f-af43-e3df949b6e0b
+//# debugId=6fa2d85e-1aae-454c-8b01-bec07fff331c
