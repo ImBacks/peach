@@ -28,6 +28,8 @@ MEDIA_SECURITY_HEADERS = {
 
 def passive_media_type(value: str) -> bool:
     """代理只返回被动媒体；活动文档和未知类型不能在应用域打开。"""
+    if not isinstance(value, str):
+        return False
     kind = value.split(';',1)[0].strip().lower()
     return (not kind.endswith(('/svg+xml','+xml','/xml'))
             and (kind.startswith(('image/','video/','audio/'))
@@ -74,7 +76,8 @@ class RemoteMediaCache:
                 if (passive_media_type(metadata['headers'].get('content-type',''))
                         and path.is_file() and path.stat().st_size == metadata["size"]):
                     return path, metadata
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                # 元数据被改坏（headers 不是对象）也只算没命中，重新取一份覆盖它。
                 continue
         return None
 
