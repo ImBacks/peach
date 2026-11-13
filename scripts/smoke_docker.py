@@ -140,6 +140,61 @@ def amane_checks(name: str, identity: str = "1000:1000") -> None:
     assert bridge["installed"] is True and bridge["revision"] == manifest["revision"], bridge
 
 
+def identity_checks(name: str, volume: str, image: str, extra_containers: list[str]) -> None:
+    """已有卷换运行身份、group_add、只读数据卷与非法身份；name 是已停下验收的首个容器。"""
+    # 同一个已有卷从 1000 迁移到 NAS 常用非 1000 身份。
+    docker("rm", "--force", name)
+    migrated = name + "-migrated"
+    extra_containers.append(migrated)
+    docker("run", "-d", "--name", migrated, "--network", "none",
+           "--mount", f"type=volume,source={volume},target=/data",
+           "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", image)
+    ready(migrated)
+    assert process_identity(migrated) == "1026:1027"
+    assert docker("exec", migrated, "stat", "-c", "%u:%g", "/data") == "1026:1027"
+    assert docker("exec", migrated, "stat", "-c", "%u:%g",
+                  "/data/database/ledger.db") == "1026:1027"
+    assert docker("exec", migrated, "stat", "-c", "%u:%g", "/update") == "1026:1027"
+    # docker exec 以 root 进来；peach 管理命令先换成服务身份，/data 里不能多出别的属主。
+    docker("exec", migrated, "peach", "token")
+    assert docker("exec", migrated, "find", "/data", "!", "-user", "1026", "-print", "-quit") == ""
+    docker("restart", "--time", "75", migrated)
+    ready(migrated)
+    assert process_identity(migrated) == "1026:1027"
+
+    # group_add 必须在降权后继续存在于主进程。
+    docker("rm", "--force", migrated)
+    grouped = name + "-grouped"
+    extra_containers.append(grouped)
+    docker("run", "-d", "--name", grouped, "--network", "none",
+           "--mount", f"type=volume,source={volume},target=/data",
+           "--group-add", "2468",
+           "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", image)
+    ready(grouped)
+    groups = process_groups(grouped)
+    assert 2468 in groups and 0 not in groups, groups
+    docker("rm", "--force", grouped)
+
+    # 只读数据卷必须在应用启动前失败，不能先以 root 拉起服务。
+    code, output = run_failure([
+        "--mount", f"type=volume,source={volume},target=/data,readonly",
+        "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", image,
+    ])
+    assert code != 0 and "not writable" in output, output
+
+    for values in (
+        ["-e", "PEACH_UID="],
+        ["-e", "PEACH_GID="],
+        ["-e", "PEACH_UID=0"],
+        ["-e", "PEACH_GID=-1"],
+        ["-e", "PEACH_UID=abc"],
+        ["-e", "PEACH_UID=4294967296"],
+        ["-e", "PEACH_UID=1026", "-e", "UID=1027"],
+    ):
+        code, output = run_failure([*values, image])
+        assert code != 0 and "PEACH_" in output, output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
@@ -218,57 +273,7 @@ def main() -> None:
         assert process_identity(name) == "1000:1000"
         assert docker("exec", name, "stat", "-c", "%u:%g", "/data") == "1000:1000"
 
-        # 同一个已有卷从 1000 迁移到 NAS 常用非 1000 身份。
-        docker("rm", "--force", name)
-        migrated = name + "-migrated"
-        extra_containers.append(migrated)
-        docker("run", "-d", "--name", migrated, "--network", "none",
-               "--mount", f"type=volume,source={volume},target=/data",
-               "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", args.image)
-        ready(migrated)
-        assert process_identity(migrated) == "1026:1027"
-        assert docker("exec", migrated, "stat", "-c", "%u:%g", "/data") == "1026:1027"
-        assert docker("exec", migrated, "stat", "-c", "%u:%g",
-                      "/data/database/ledger.db") == "1026:1027"
-        assert docker("exec", migrated, "stat", "-c", "%u:%g", "/update") == "1026:1027"
-        # docker exec 以 root 进来；peach 管理命令先换成服务身份，/data 里不能多出别的属主。
-        docker("exec", migrated, "peach", "token")
-        assert docker("exec", migrated, "find", "/data", "!", "-user", "1026", "-print", "-quit") == ""
-        docker("restart", "--time", "75", migrated)
-        ready(migrated)
-        assert process_identity(migrated) == "1026:1027"
-
-        # group_add 必须在降权后继续存在于主进程。
-        docker("rm", "--force", migrated)
-        grouped = name + "-grouped"
-        extra_containers.append(grouped)
-        docker("run", "-d", "--name", grouped, "--network", "none",
-               "--mount", f"type=volume,source={volume},target=/data",
-               "--group-add", "2468",
-               "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", args.image)
-        ready(grouped)
-        groups = process_groups(grouped)
-        assert 2468 in groups and 0 not in groups, groups
-        docker("rm", "--force", grouped)
-
-        # 只读数据卷必须在应用启动前失败，不能先以 root 拉起服务。
-        code, output = run_failure([
-            "--mount", f"type=volume,source={volume},target=/data,readonly",
-            "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", args.image,
-        ])
-        assert code != 0 and "not writable" in output, output
-
-        for values in (
-            ["-e", "PEACH_UID="],
-            ["-e", "PEACH_GID="],
-            ["-e", "PEACH_UID=0"],
-            ["-e", "PEACH_GID=-1"],
-            ["-e", "PEACH_UID=abc"],
-            ["-e", "PEACH_UID=4294967296"],
-            ["-e", "PEACH_UID=1026", "-e", "UID=1027"],
-        ):
-            code, output = run_failure([*values, args.image])
-            assert code != 0 and "PEACH_" in output, output
+        identity_checks(name, volume, args.image, extra_containers)
 
         print(json.dumps({"image": args.image, "checks": ["first-setup", "non-root", "ready", "auth", "configuration",
                                                          "scan", "range", "vaapi-stack", "transcode-fallback",

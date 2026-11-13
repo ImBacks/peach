@@ -24,11 +24,9 @@ def _quoted(value: str) -> str:
     return json.dumps(value.replace('$', '$$'), ensure_ascii=False)
 
 
-def compose(*, bind: str, media: str, port: int = 8900,
-            image: str = IMAGE, hostname: str = 'peach-nas',
-            render_device: str = '', render_gid: int | None = None,
-            prepare_render: bool = False, uid: int | None = None, gid: int | None = None) -> str:
-    address = ipaddress.ip_address(bind)
+def _validate(address, *, port: int, media: str, hostname: str, image: str, render_device: str,
+              render_gid: int | None, prepare_render: bool, uid: int | None, gid: int | None) -> None:
+    """生成前拒绝无效参数；报错带 nasSetup.* 的 code。"""
     if address.is_unspecified or address.is_multicast or address.is_link_local:
         raise NasSetupError('nasSetup.invalidBind')
     if not 1 <= port <= 65535:
@@ -50,6 +48,15 @@ def compose(*, bind: str, media: str, port: int = 8900,
         raise NasSetupError('nasSetup.renderDeviceRequired')
     if render_device and sum((render_gid is not None, prepare_render)) != 1:
         raise NasSetupError('nasSetup.renderPermissionChoice')
+
+
+def compose(*, bind: str, media: str, port: int = 8900,
+            image: str = IMAGE, hostname: str = 'peach-nas',
+            render_device: str = '', render_gid: int | None = None,
+            prepare_render: bool = False, uid: int | None = None, gid: int | None = None) -> str:
+    address = ipaddress.ip_address(bind)
+    _validate(address, port=port, media=media, hostname=hostname, image=image, render_device=render_device,
+              render_gid=render_gid, prepare_render=prepare_render, uid=uid, gid=gid)
     endpoint = f'[{address}]' if address.version == 6 else str(address)
     lines = ['services:', '  peach:', f'    image: {_quoted(image)}',
              f'    hostname: {_quoted(hostname)}', '    init: true',
