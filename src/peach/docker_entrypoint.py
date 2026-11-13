@@ -1,4 +1,7 @@
-"""Docker 启动时准备数据目录，并降权到配置的数值 UID/GID。"""
+"""Docker 启动时准备数据目录，并降权到配置的数值 UID/GID。
+
+日志写到容器标准错误，固定英文（ADR-0159）。
+"""
 from __future__ import annotations
 
 import glob
@@ -16,6 +19,11 @@ DEFAULT_UID = 1000
 DEFAULT_GID = 1000
 MAX_ID = 2**32 - 2
 DATA_ROOT = Path("/data")
+#: 一键更新令牌卷（ADR-0140），镜像里原本交给 UID 1000；换身份后 Peach 要能写令牌。
+UPDATE_DIR_ENV = "PEACH_UPDATE_DIR"
+#: nas_setup --prepare-render 写入；降权前把透传的渲染节点交给目标组（docker_vaapi）。
+VAAPI_PREPARE_ENV = "PEACH_VAAPI_PREPARE"
+VAAPI_DEVICE_ENV = "PEACH_VAAPI_DEVICE"
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 
 EX_CONFIG = 64
@@ -54,16 +62,10 @@ class DataPreparation:
 def parse_id(value: str, name: str) -> int:
     """只接受容器 ID 可用的 ASCII 十进制数，拒绝 root 与 -1 哨兵值。"""
     if _DECIMAL.fullmatch(value) is None:
-        raise EntrypointError(
-            f"{name} 必须是 1..{MAX_ID} 范围内的十进制整数，当前为 {value!r}",
-            EX_CONFIG,
-        )
+        raise EntrypointError(f"{name} must be a decimal integer in 1..{MAX_ID}, got {value!r}", EX_CONFIG)
     number = int(value, 10)
     if not 1 <= number <= MAX_ID:
-        raise EntrypointError(
-            f"{name} 必须是 1..{MAX_ID} 范围内的十进制整数，当前为 {value!r}",
-            EX_CONFIG,
-        )
+        raise EntrypointError(f"{name} must be a decimal integer in 1..{MAX_ID}, got {value!r}", EX_CONFIG)
     return number
 
 
@@ -79,9 +81,7 @@ def _identity_value(
     compatible = parse_id(environ[alias], alias) if alias_set else None
     if selected is not None and compatible is not None and selected != compatible:
         raise EntrypointError(
-            f"{primary} 与 {alias} 同时设置但数值不同：{selected} != {compatible}",
-            EX_CONFIG,
-        )
+            f"{primary} and {alias} are both set to different values: {selected} != {compatible}", EX_CONFIG)
     if selected is not None:
         return selected
     assert compatible is not None
@@ -113,7 +113,7 @@ def _lchown_changed(
     try:
         os.lchown(path, identity.uid, identity.gid)
     except OSError as exc:
-        raise EntrypointError(f"/data 所有者迁移失败：{path}：{exc}", EX_DATA) from exc
+        raise EntrypointError(f"cannot change the owner of {path}: {exc}", EX_DATA) from exc
     return True
 
 
@@ -159,9 +159,9 @@ def prepare_data(root: Path, identity: Identity) -> DataPreparation:
     try:
         root_stat = os.lstat(root)
     except OSError as exc:
-        raise EntrypointError(f"无法读取数据目录 {root}：{exc}", EX_DATA) from exc
+        raise EntrypointError(f"cannot read the data directory {root}: {exc}", EX_DATA) from exc
     if not stat.S_ISDIR(root_stat.st_mode):
-        raise EntrypointError(f"数据目录不是目录：{root}", EX_DATA)
+        raise EntrypointError(f"the data directory is not a directory: {root}", EX_DATA)
 
     old_owner = (root_stat.st_uid, root_stat.st_gid)
     if old_owner == (identity.uid, identity.gid):
@@ -204,7 +204,7 @@ def prepare_data(root: Path, identity: Identity) -> DataPreparation:
     except EntrypointError:
         raise
     except OSError as exc:
-        raise EntrypointError(f"/data 所有者迁移失败：{exc}", EX_DATA) from exc
+        raise EntrypointError(f"cannot change the owner of {root}: {exc}", EX_DATA) from exc
     return DataPreparation(old_owner, changed, tuple(skipped_mounts))
 
 
@@ -213,11 +213,7 @@ def drop_privileges(identity: Identity) -> list[int]:
     if os.geteuid() != 0:
         effective = Identity(os.getuid(), os.getgid())
         if effective != identity:
-            raise EntrypointError(
-                f"容器不是以 root 启动，实际身份 {effective.uid}:{effective.gid} "
-                f"与要求的 {identity.uid}:{identity.gid} 不同",
-                EX_IDENTITY,
-            )
+            raise EntrypointError(_identity_mismatch(effective, identity), EX_IDENTITY)
         return os.getgroups()
 
     groups = groups_for_drop(os.getgroups(), identity.gid)
@@ -232,18 +228,26 @@ def drop_privileges(identity: Identity) -> list[int]:
         else:
             os.setuid(identity.uid)
     except OSError as exc:
-        raise EntrypointError(
-            f"无法降权到 {identity.uid}:{identity.gid}：{exc}", EX_IDENTITY
-        ) from exc
+        raise EntrypointError(f"cannot drop privileges to {identity.uid}:{identity.gid}: {exc}", EX_IDENTITY) from exc
 
     effective = Identity(os.getuid(), os.getgid())
     if effective != identity or os.geteuid() != identity.uid or os.getegid() != identity.gid:
         raise EntrypointError(
-            f"降权后身份为 {effective.uid}:{effective.gid}，"
-            f"要求 {identity.uid}:{identity.gid}",
-            EX_IDENTITY,
-        )
+            f"identity after dropping privileges is {effective.uid}:{effective.gid}, "
+            f"expected {identity.uid}:{identity.gid}", EX_IDENTITY)
     return os.getgroups()
+
+
+def _identity_mismatch(actual: Identity, identity: Identity) -> str:
+    return (f"the container did not start as root and runs as {actual.uid}:{actual.gid}, "
+            f"not the requested {identity.uid}:{identity.gid}")
+
+
+def prepare_update_dir(environ: Mapping[str, str], identity: Identity) -> None:
+    """令牌卷只有一个文件，与 /data 一样只在属主不对时迁移；compose 没挂这个卷时跳过。"""
+    directory = environ.get(UPDATE_DIR_ENV, "").strip()
+    if directory and Path(directory).is_dir():
+        prepare_data(Path(directory), identity)
 
 
 def verify_data_writable(root: Path) -> None:
@@ -252,7 +256,7 @@ def verify_data_writable(root: Path) -> None:
         with tempfile.NamedTemporaryFile(prefix=".peach-write-", dir=root):
             pass
     except OSError as exc:
-        raise EntrypointError(f"/data 对目标身份不可写：{root}：{exc}", EX_DATA) from exc
+        raise EntrypointError(f"{root} is not writable for the service identity: {exc}", EX_DATA) from exc
 
     database = root / "database" / "ledger.db"
     try:
@@ -260,18 +264,15 @@ def verify_data_writable(root: Path) -> None:
     except FileNotFoundError:
         return
     except OSError as exc:
-        raise EntrypointError(
-            f"无法检查已有账本权限：{database}：{exc}", EX_DATA
-        ) from exc
+        raise EntrypointError(f"cannot check the existing ledger {database}: {exc}", EX_DATA) from exc
     if not stat.S_ISREG(database_stat.st_mode):
-        raise EntrypointError(f"已有账本不是普通文件：{database}", EX_DATA)
+        raise EntrypointError(f"the existing ledger is not a regular file: {database}", EX_DATA)
     try:
         descriptor = os.open(database, os.O_RDWR)
         os.close(descriptor)
     except OSError as exc:
         raise EntrypointError(
-            f"已有账本对目标身份不可写：{database}：{exc}", EX_DATA
-        ) from exc
+            f"the existing ledger {database} is not writable for the service identity: {exc}", EX_DATA) from exc
 
 
 def _media_status(path: Path) -> str:
@@ -302,7 +303,7 @@ def _report(
             f"-> {identity.uid}:{identity.gid}; changed={preparation.changed_entries}"
         )
     for path in preparation.skipped_mounts:
-        _log(f"跳过 /data 内的嵌套挂载点：{path}")
+        _log(f"skipped a nested mount inside /data: {path}")
     _log(
         f"effective uid={os.getuid()} gid={os.getgid()} groups={','.join(map(str, groups)) or '-'}; "
         f"/data owner={owner} mode={mode} writable=yes; "
@@ -314,19 +315,24 @@ def _run(
     command: Sequence[str], environ: Mapping[str, str], data_root: Path,
 ) -> None:
     if not command:
-        raise EntrypointError("没有可执行命令；镜像应通过 CMD 提供 Peach 启动命令", EX_CONFIG)
+        raise EntrypointError("no command to run; the image provides the Peach command through CMD", EX_CONFIG)
 
     identity = identity_from_environment(environ)
     if os.geteuid() == 0:
         preparation = prepare_data(data_root, identity)
+        prepare_update_dir(environ, identity)
+        if environ.get(VAAPI_PREPARE_ENV) == "1":
+            from .docker_vaapi import prepare
+            try:
+                prepare(environ.get(VAAPI_DEVICE_ENV) or "/dev/dri/renderD128", identity.gid)
+            except (ValueError, OSError) as exc:
+                raise EntrypointError(f"cannot prepare the render node: {exc}", EX_CONFIG) from exc
     else:
         actual = Identity(os.getuid(), os.getgid())
         if actual != identity:
-            raise EntrypointError(
-                f"容器不是以 root 启动，实际身份 {actual.uid}:{actual.gid} "
-                f"与要求的 {identity.uid}:{identity.gid} 不同",
-                EX_IDENTITY,
-            )
+            raise EntrypointError(_identity_mismatch(actual, identity), EX_IDENTITY)
+        if environ.get(VAAPI_PREPARE_ENV) == "1":
+            raise EntrypointError(f"{VAAPI_PREPARE_ENV}=1 needs the container to start as root", EX_IDENTITY)
         preparation = DataPreparation((actual.uid, actual.gid), 0, ())
 
     groups = drop_privileges(identity)
@@ -337,7 +343,7 @@ def _run(
     try:
         os.execvpe(command[0], list(command), child_environment)
     except OSError as exc:
-        raise EntrypointError(f"无法执行 {command[0]!r}：{exc}", EX_COMMAND) from exc
+        raise EntrypointError(f"cannot run {command[0]!r}: {exc}", EX_COMMAND) from exc
 
 
 def main(
@@ -354,9 +360,22 @@ def main(
         _log(str(exc))
         return exc.code
     except OSError as exc:
-        _log(f"入口初始化失败：{exc}")
+        _log(f"entrypoint failed: {exc}")
         return EX_DATA
     return 0
+
+
+def drop_root_for_cli(environ: Mapping[str, str] | None = None) -> None:
+    """`docker compose exec` 默认以 root 进容器；管理命令先换成服务身份，免得在 /data 留下 root 的文件。"""
+    environment = os.environ if environ is None else environ
+    if environment.get("PEACH_DISTRIBUTION") != "docker" or not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    try:
+        drop_privileges(identity_from_environment(environment))
+    except EntrypointError as exc:
+        _log(str(exc))
+        raise SystemExit(exc.code) from None
+    os.environ["HOME"] = str(DATA_ROOT)
 
 
 if __name__ == "__main__":

@@ -7,11 +7,16 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 
+from .interface_text import cli as _t
 from .user_messages import UserFacingError
 
 
 class NasSetupError(UserFacingError, ValueError):
     """NAS 安装参数错误；命令行保留原提示，调用方也能取得稳定编码。"""
+
+
+#: NAS 容器面板只按 latest 检查更新（ADR-0121），生成的配置默认用它。
+IMAGE = 'longmeidao/peach:latest'
 
 
 def _quoted(value: str) -> str:
@@ -20,9 +25,9 @@ def _quoted(value: str) -> str:
 
 
 def compose(*, bind: str, media: str, port: int = 8900,
-            image: str = 'longmeidao/peach:edge', hostname: str = 'peach-nas',
+            image: str = IMAGE, hostname: str = 'peach-nas',
             render_device: str = '', render_gid: int | None = None,
-            prepare_render: bool = False) -> str:
+            prepare_render: bool = False, uid: int | None = None, gid: int | None = None) -> str:
     address = ipaddress.ip_address(bind)
     if address.is_unspecified or address.is_multicast or address.is_link_local:
         raise NasSetupError('nasSetup.invalidBind')
@@ -38,6 +43,9 @@ def compose(*, bind: str, media: str, port: int = 8900,
         raise NasSetupError('nasSetup.invalidRenderDevice')
     if render_gid is not None and (type(render_gid) is not int or not 0 <= render_gid < 2**32 - 1):
         raise NasSetupError('nasSetup.invalidRenderGid')
+    for value in (uid, gid):
+        if value is not None and (type(value) is not int or not 1 <= value < 2**32 - 1):
+            raise NasSetupError('nasSetup.invalidIdentity')
     if (render_gid is not None or prepare_render) and not render_device:
         raise NasSetupError('nasSetup.renderDeviceRequired')
     if render_device and sum((render_gid is not None, prepare_render)) != 1:
@@ -51,30 +59,39 @@ def compose(*, bind: str, media: str, port: int = 8900,
              f'        source: {_quoted(media)}', '        target: /media',
              '        read_only: true', '        bind:', '          propagation: rslave',
              '          create_host_path: false']
+    environment = {}
+    if uid is not None:
+        environment['PEACH_UID'] = str(uid)
+    if gid is not None:
+        environment['PEACH_GID'] = str(gid)
     if render_device:
-        lines.extend(['    devices:', f'      - {_quoted(render_device + ":" + render_device)}',
-                      '    environment:', f'      PEACH_VAAPI_DEVICE: {_quoted(render_device)}'])
+        lines.extend(['    devices:', f'      - {_quoted(render_device + ":" + render_device)}'])
+        environment['PEACH_VAAPI_DEVICE'] = render_device
         if prepare_render:
-            lines.extend(['    user: "0:0"',
-                          '    entrypoint: ["python", "-m", "peach.docker_vaapi"]'])
+            # 镜像以 root 启动，入口把节点交给服务的主组后再降权（docker_entrypoint）。
+            environment['PEACH_VAAPI_PREPARE'] = '1'
         else:
             lines.extend(['    group_add:', f'      - "{render_gid}"'])
+    if environment:
+        lines.append('    environment:')
+        lines.extend(f'      {name}: {_quoted(value)}' for name, value in environment.items())
     return '\n'.join([*lines, 'volumes:', '  peach-data:', ''])
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--bind', required=True, help='NAS 的局域网 IP')
-    parser.add_argument('--media', required=True, help='宿主机已有的媒体目录，容器中为 /media，只读')
+    parser = argparse.ArgumentParser(description=_t('nasSetup.description'))
+    parser.add_argument('--bind', required=True, help=_t('nasSetup.help.bind'))
+    parser.add_argument('--media', required=True, help=_t('nasSetup.help.media'))
     parser.add_argument('--port', type=int, default=8900)
-    parser.add_argument('--image', default='longmeidao/peach:edge')
-    parser.add_argument('--hostname', default='peach-nas', help='保持此名称可在重建容器后恢复任务')
+    parser.add_argument('--image', default=IMAGE)
+    parser.add_argument('--hostname', default='peach-nas', help=_t('nasSetup.help.hostname'))
+    parser.add_argument('--uid', type=int, help=_t('nasSetup.help.uid'))
+    parser.add_argument('--gid', type=int, help=_t('nasSetup.help.gid'))
     parser.add_argument('--render-device', default='')
     permission = parser.add_mutually_exclusive_group()
     permission.add_argument('--render-gid', type=int)
-    permission.add_argument('--prepare-render', action='store_true',
-                            help='为 0600 节点准备容器内权限，再以 peach 用户运行；不修改宿主机节点')
-    parser.add_argument('--output', type=Path, help='保存为新文件；已存在时拒绝覆盖，默认写到标准输出')
+    permission.add_argument('--prepare-render', action='store_true', help=_t('nasSetup.help.prepareRender'))
+    parser.add_argument('--output', type=Path, help=_t('nasSetup.help.output'))
     args = vars(parser.parse_args(argv))
     output = args.pop('output')
     try:

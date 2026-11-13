@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1", e._sentryDebugIdIdentifier = "sentry-dbid-f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "4ba90077-c7d9-454f-af43-e3df949b6e0b", e._sentryDebugIdIdentifier = "sentry-dbid-4ba90077-c7d9-454f-af43-e3df949b6e0b");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -6904,14 +6904,6 @@ var He = {
 			submitted: "Submitted"
 		}
 	},
-	dockerVaapi: {
-		hostBindRejected: "Pass through a single node using Compose devices; do not bind mount the host's /dev/dri.",
-		identitySwitchFailed: "The service user switch did not complete.",
-		invalidRenderDevice: "Only /dev/dri/renderD128 through renderD191 are allowed.",
-		nonRootAccountRequired: "The peach account must use a non-root identity.",
-		notRenderDevice: "The target is not a DRM render node.",
-		rootRequired: "Device preparation requires root; the service runs as peach after preparation."
-	},
 	http: {
 		methodNotAllowed: "This address doesn't accept this kind of request.",
 		notFound: "There's no page at this address.",
@@ -6986,6 +6978,7 @@ var He = {
 	nasSetup: {
 		invalidBind: "Enter the NAS LAN IP address or a loopback address.",
 		invalidHostname: "The hostname accepts only letters, numbers, dots, and hyphens.",
+		invalidIdentity: "UID and GID must be integers from 1 to 4294967294.",
 		invalidImage: "The image name is invalid.",
 		invalidMediaPath: "Enter an absolute path to the media directory on the host.",
 		invalidPort: "The port must be between 1 and 65535.",
@@ -13666,14 +13659,6 @@ var He = {
 			submitted: "已提交"
 		}
 	},
-	dockerVaapi: {
-		hostBindRejected: "请使用 Compose devices 透传单个节点，不能绑定宿主机 /dev/dri",
-		identitySwitchFailed: "服务身份切换未完成",
-		invalidRenderDevice: "只允许 /dev/dri/renderD128 到 renderD191",
-		nonRootAccountRequired: "peach 必须使用非 root 身份",
-		notRenderDevice: "目标不是 DRM 渲染节点",
-		rootRequired: "设备权限准备入口需要 root；服务会在准备后以 peach 用户运行"
-	},
 	http: {
 		methodNotAllowed: "这个地址不接受这种请求。",
 		notFound: "这个地址下没有页面。",
@@ -13748,6 +13733,7 @@ var He = {
 	nasSetup: {
 		invalidBind: "请填写 NAS 的局域网 IP 或回环地址",
 		invalidHostname: "主机名只接受字母、数字、点和连字符",
+		invalidIdentity: "UID 和 GID 应为 1 到 4294967294 之间的整数",
 		invalidImage: "镜像名称无效",
 		invalidMediaPath: "请填写宿主机上的媒体目录绝对路径",
 		invalidPort: "端口应在 1 到 65535 之间",
@@ -38156,4 +38142,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=f153c5bd-d7fd-4c8b-8129-9cc4ba5b14a1
+//# debugId=4ba90077-c7d9-454f-af43-e3df949b6e0b

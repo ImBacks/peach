@@ -35,9 +35,9 @@ class IdentityParsingTests(unittest.TestCase):
         )
 
     def test_conflicting_primary_and_alias_values_fail_before_startup(self):
-        with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "数值不同"):
+        with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "different values"):
             docker_entrypoint.identity_from_environment({"PEACH_UID": "1026", "UID": "1001"})
-        with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "数值不同"):
+        with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "different values"):
             docker_entrypoint.identity_from_environment({"PEACH_GID": "1027", "GID": "1000"})
 
     def test_ids_are_ascii_decimal_and_stay_away_from_root_and_overflow(self):
@@ -99,7 +99,7 @@ class PrivilegeTests(unittest.TestCase):
                                   return_value=1027, create=True), \
                 mock.patch.object(docker_entrypoint.os, "getgid",
                                   return_value=1027, create=True):
-            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "实际身份"):
+            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "did not start as root"):
                 docker_entrypoint.drop_privileges(docker_entrypoint.Identity(1026, 1027))
 
 
@@ -117,12 +117,12 @@ class DataPreparationTests(unittest.TestCase):
     def test_missing_or_non_directory_data_root_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing"
-            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "无法读取"):
+            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "cannot read"):
                 docker_entrypoint.prepare_data(missing, docker_entrypoint.Identity(1026, 1027))
 
             file = Path(directory) / "file"
             file.write_text("x", encoding="utf-8")
-            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "不是目录"):
+            with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "not a directory"):
                 docker_entrypoint.prepare_data(file, docker_entrypoint.Identity(1026, 1027))
 
     def test_migration_skips_nested_mounts_and_changes_the_data_root_last(self):
@@ -254,8 +254,72 @@ class DataPreparationTests(unittest.TestCase):
                 "NamedTemporaryFile",
                 side_effect=PermissionError("denied"),
             ):
-                with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "不可写"):
+                with self.assertRaisesRegex(docker_entrypoint.EntrypointError, "not writable"):
                     docker_entrypoint.verify_data_writable(root)
+
+
+class StartupDutiesTests(unittest.TestCase):
+    """root 启动时一并准备的其它东西：一键更新令牌卷与可选的核显节点，都在降权之前。"""
+
+    def run_as_root(self, environ):
+        order = []
+        identity = docker_entrypoint.Identity(1026, 1027)
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(docker_entrypoint.os, "geteuid", return_value=0, create=True), \
+                mock.patch.object(docker_entrypoint, "prepare_data",
+                                  side_effect=lambda root, who: order.append(("prepare", Path(root).name, who))
+                                  or docker_entrypoint.DataPreparation((1000, 1000), 0, ())), \
+                mock.patch("peach.docker_vaapi.prepare",
+                           side_effect=lambda device, gid: order.append(("render", device, gid))), \
+                mock.patch.object(docker_entrypoint, "drop_privileges",
+                                  side_effect=lambda who: order.append(("drop", who)) or []), \
+                mock.patch.object(docker_entrypoint, "verify_data_writable"), \
+                mock.patch.object(docker_entrypoint, "_report"), \
+                mock.patch.object(docker_entrypoint.os, "execvpe", create=True):
+            update = Path(directory) / "update"
+            update.mkdir()
+            data = Path(directory) / "data"
+            data.mkdir()
+            docker_entrypoint._run(["peach"], {"PEACH_UID": "1026", "PEACH_GID": "1027",
+                                               "PEACH_UPDATE_DIR": str(update), **environ}, data)
+        return identity, order
+
+    def test_the_update_token_volume_follows_the_service_identity(self):
+        identity, order = self.run_as_root({})
+        self.assertEqual(order, [("prepare", "data", identity), ("prepare", "update", identity),
+                                 ("drop", identity)], "换 UID 后 Peach 仍要能写一键更新令牌")
+
+    def test_the_render_node_goes_to_the_service_group_before_dropping_privileges(self):
+        identity, order = self.run_as_root({"PEACH_VAAPI_PREPARE": "1", "PEACH_VAAPI_DEVICE": "/dev/dri/renderD129"})
+        self.assertEqual(order[-2:], [("render", "/dev/dri/renderD129", 1027), ("drop", identity)])
+
+    def test_a_render_failure_stops_startup_with_a_logged_reason(self):
+        with mock.patch("peach.docker_vaapi.prepare", side_effect=PermissionError("bind mount refused")), \
+                self.assertRaisesRegex(docker_entrypoint.EntrypointError, "render node: bind mount refused"), \
+                mock.patch.object(docker_entrypoint.os, "geteuid", return_value=0, create=True), \
+                mock.patch.object(docker_entrypoint, "prepare_data",
+                                  return_value=docker_entrypoint.DataPreparation((1000, 1000), 0, ())):
+            docker_entrypoint._run(["peach"], {"PEACH_VAAPI_PREPARE": "1"}, Path("/data"))
+
+
+class CommandLineIdentityTests(unittest.TestCase):
+    """`docker compose exec` 以 root 进容器；peach 管理命令换成服务身份，不在 /data 留下 root 的文件。"""
+
+    def test_root_management_commands_run_as_the_service_identity(self):
+        with mock.patch.object(docker_entrypoint.os, "geteuid", return_value=0, create=True), \
+                mock.patch.object(docker_entrypoint, "drop_privileges") as drop, \
+                mock.patch.dict(docker_entrypoint.os.environ, {}, clear=False):
+            docker_entrypoint.drop_root_for_cli({"PEACH_DISTRIBUTION": "docker", "PEACH_UID": "1026"})
+            self.assertEqual(docker_entrypoint.os.environ["HOME"], str(docker_entrypoint.DATA_ROOT))
+        drop.assert_called_once_with(docker_entrypoint.Identity(1026, 1000))
+
+    def test_other_installs_and_non_root_shells_are_left_alone(self):
+        for environ, euid in (({"PEACH_DISTRIBUTION": "docker"}, 1000), ({}, 0)):
+            with self.subTest(environ=environ, euid=euid), \
+                    mock.patch.object(docker_entrypoint.os, "geteuid", return_value=euid, create=True), \
+                    mock.patch.object(docker_entrypoint, "drop_privileges") as drop:
+                docker_entrypoint.drop_root_for_cli(environ)
+            drop.assert_not_called()
 
 
 if __name__ == "__main__":

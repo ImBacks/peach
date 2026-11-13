@@ -95,12 +95,12 @@ def transcode_checks(name: str, identity: str = "1000:1000") -> None:
     exec_as(name, identity, "python", "-c",
             "import ctypes; from pathlib import Path; "
             "drivers=list(Path('/usr/lib').glob('*/dri/radeonsi_drv_video.so')); "
-            "assert drivers, '缺少 AMD VAAPI 驱动'; ctypes.CDLL(str(drivers[0]))")
+            "assert drivers, 'AMD VAAPI driver is missing'; ctypes.CDLL(str(drivers[0]))")
     # Intel iHD 只有 amd64 包，arm64 镜像不带。
     exec_as(name, identity, "python", "-c",
             "import ctypes, platform; from pathlib import Path; "
             "drivers=list(Path('/usr/lib').glob('*/dri/iHD_drv_video.so')); "
-            "assert drivers or platform.machine() != 'x86_64', '缺少 Intel VAAPI 驱动'; "
+            "assert drivers or platform.machine() != 'x86_64', 'Intel VAAPI driver is missing'; "
             "[ctypes.CDLL(str(path)) for path in drivers[:1]]")
     exec_as(name, identity, "ffmpeg", "-v", "error", "-i", "/data/smoke-media/fixture.mp4",
             "-c:v", "mpeg4", "/data/smoke-media/transcode.mkv")
@@ -110,7 +110,7 @@ def transcode_checks(name: str, identity: str = "1000:1000") -> None:
             "from peach.streaming import StreamSessionRegistry; "
             "root=Path('/data/smoke-media'); resolver=FFmpegResolver(root/'tools'); "
             "whole=TranscodeService(resolver,root/'mp4-cache'); "
-            "assert not whole.hardware.encoders(resolver.ffmpeg().path), '验收容器应未透传 GPU'; "
+            "assert not whole.hardware.encoders(resolver.ffmpeg().path), 'the smoke container must not have a GPU'; "
             "source=root/'transcode.mkv'; target,converted=whole.browser_path(95,source); "
             "assert converted and target.stat().st_size; target.rename(root/'converted.mp4'); "
             "hls=HlsSegmentService(resolver,root/'hls-cache',hardware=whole.hardware); "
@@ -230,6 +230,10 @@ def main() -> None:
         assert docker("exec", migrated, "stat", "-c", "%u:%g", "/data") == "1026:1027"
         assert docker("exec", migrated, "stat", "-c", "%u:%g",
                       "/data/database/ledger.db") == "1026:1027"
+        assert docker("exec", migrated, "stat", "-c", "%u:%g", "/update") == "1026:1027"
+        # docker exec 以 root 进来；peach 管理命令先换成服务身份，/data 里不能多出别的属主。
+        docker("exec", migrated, "peach", "token")
+        assert docker("exec", migrated, "find", "/data", "!", "-user", "1026", "-print", "-quit") == ""
         docker("restart", "--time", "75", migrated)
         ready(migrated)
         assert process_identity(migrated) == "1026:1027"
@@ -252,7 +256,7 @@ def main() -> None:
             "--mount", f"type=volume,source={volume},target=/data,readonly",
             "-e", "PEACH_UID=1026", "-e", "PEACH_GID=1027", args.image,
         ])
-        assert code != 0 and "不可写" in output, output
+        assert code != 0 and "not writable" in output, output
 
         for values in (
             ["-e", "PEACH_UID="],

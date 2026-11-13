@@ -27,7 +27,7 @@ PEACH_GID=1027
 
 这两个值必须是十进制数字，不能是用户名或组名。`PEACH_UID`/`PEACH_GID` 优先；未设置时可使用 `UID`/`GID`，两者同时出现且数值不同会拒绝启动。`0`、负数和超出 Linux ID 范围的值也会在 Peach 初始化前失败。
 
-启动入口只在准备阶段使用 root。它会在必要时把 `/data` 及其现有内容改为目标所有者，然后把补充组、GID 和 UID 固定下来，再以目标身份启动 Peach 及其子进程。`/media` 不参与递归改所有者；媒体权限应通过宿主机所有者、ACL 或 `group_add` 提供。
+启动入口只在准备阶段使用 root。它会在必要时把 `/data` 和一键更新的令牌卷 `/update` 及其现有内容改为目标所有者，然后把补充组、GID 和 UID 固定下来，再以目标身份启动 Peach 及其子进程。`docker compose exec peach peach …` 进容器时是 root，`peach` 命令会先换成同一身份再执行，不会在 `/data` 留下 root 的文件。`/media` 不参与递归改所有者；媒体权限应通过宿主机所有者、ACL 或 `group_add` 提供。
 
 绑定已有的 `/data` 宿主机目录前先停止 Peach 并完整备份。所有者迁移会修改宿主机文件的所有者；不愿接受时，应预先让该目录和内容对目标 UID/GID 可写。环境变量要写在持久的 `.env` 或 NAS 配置中，否则容器重建后会回到 `1000:1000`，并可能再次迁移数据所有者。
 
@@ -99,7 +99,7 @@ PEACH_MEDIA_ROOT=/srv/videos
 容器已更新并重新启动后，在 `compose.yaml` 所在目录运行以下命令，可查看新版注释与当前配置值；命令只显示内容，不改写 `/data/config.toml`：
 
 ```sh
-docker compose exec peach python -m peach.docker_entrypoint python -c "from peach import settings_file as s; print(s.render(s.active()), end='')"
+docker compose exec peach python -c "from peach import settings_file as s; print(s.render(s.active()), end='')"
 ```
 
 默认模板只包含初始值，不包含已有部署的媒体目录和自定义设置。用默认模板整份替换会同时替换这些值，可能使已有影片无法读取。只更新说明时可以替换注释，保留配置值；需要替换整个文件时，先备份并逐项核对差异。
@@ -156,9 +156,9 @@ Linux 首次重编码时会探测实际可用的硬件编码器，整片 MP4 与
 
 `PEACH_RENDER_GID` 填宿主机渲染节点所属组的数字 GID。运行用户（默认 `1000:1000`，也可由 `PEACH_UID`/`PEACH_GID` 指定）需要该节点的读写权限；入口降权时保留 Docker `group_add` 的补充组。只透传设备但没有组权限仍会初始化失败。Unraid 在容器设置中添加同样的设备映射、环境变量和额外组，无需开启特权模式。默认 Compose 不挂设备，无 GPU 的机器可直接运行。
 
-生成器对应参数为 `--render-device /dev/dri/renderD128 --render-gid <数字 GID>`。若 NAS 节点模式为 `0600`，额外组也没有读写权限，可以显式改用 `--render-device /dev/dri/renderD128 --prepare-render`。此选项只在启动阶段使用 root，核对透传节点为容器 `/dev` 文件系统中的独立 DRM 渲染节点后，赋予 peach 组读写权限，再永久降权到 UID/GID 1000 启动原服务。非 root 的补充组保留，组 0 移除。媒体和数据卷不参与权限修改；宿主节点权限不变。绑定宿主机的 `/dev/dri`、符号链接、非 DRM 设备和未完成降权的启动均拒绝。
+生成器对应参数为 `--render-device /dev/dri/renderD128 --render-gid <数字 GID>`。若 NAS 节点模式为 `0600`，额外组也没有读写权限，可以显式改用 `--render-device /dev/dri/renderD128 --prepare-render`。生成的配置写入 `PEACH_VAAPI_PREPARE=1`：镜像入口在准备阶段核对透传节点为容器 `/dev` 文件系统中的独立 DRM 渲染节点，把它交给运行身份的主组读写，再和平时一样降权到 `PEACH_UID`/`PEACH_GID`（默认 1000）启动。非 root 的补充组保留，组 0 移除。媒体和数据卷不参与权限修改；宿主节点权限不变。绑定宿主机的 `/dev/dri`、符号链接、非 DRM 设备和未完成降权的启动均拒绝。
 
-`--prepare-render` 必须搭配单节点 `devices` 透传，不能改为 bind mount，也不需要 `privileged`、`SYS_ADMIN` 或宿主机 PID 空间。已有安装可以选择 NAS 管理器提供的设备 ACL；本入口不管理宿主机的 ACL 或内核驱动。设备准备入口固定使用镜像的 peach 身份，与可配置 UID/GID 的入口是不同方案，不要叠加两个入口。
+`--prepare-render` 必须搭配单节点 `devices` 透传，不能改为 bind mount，也不需要 `privileged`、`SYS_ADMIN` 或宿主机 PID 空间。已有安装可以选择 NAS 管理器提供的设备 ACL；入口不管理宿主机的 ACL 或内核驱动。生成器的 `--uid`、`--gid` 写入 `PEACH_UID`、`PEACH_GID`，与核显选项可以同时使用。
 
 | 环境变量 | 值与用途 |
 | --- | --- |
@@ -211,7 +211,7 @@ Docker 部署使用网页「Peach 配置 → 系统诊断 → 下载诊断报告
 网页不可用时，在 Compose 文件所在目录执行下面的命令，在正在运行的 `peach` 服务容器中生成脱敏 ZIP。目标文件已存在会拒绝覆盖；再次导出时同时更换两条命令中的文件名。
 
 ```text
-docker compose exec peach python -m peach.docker_entrypoint python -m peach.support_bundle /tmp/peach-support.zip
+docker compose exec peach python -m peach.support_bundle /tmp/peach-support.zip
 ```
 
 将 ZIP 复制到当前目录：

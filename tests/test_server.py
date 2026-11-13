@@ -245,9 +245,22 @@ class NasComposeTests(unittest.TestCase):
         self.assertIn('read_only: true', text)
         self.assertIn('create_host_path: false', text)
         self.assertIn('peach-data:/data', text)
-        self.assertIn('peach.docker_vaapi', text)
+        self.assertIn('PEACH_VAAPI_PREPARE: "1"', text, "节点由镜像入口在降权前准备")
+        self.assertNotIn('entrypoint:', text, "只有一个入口，UID/GID 与核显准备在同一处降权")
+        self.assertNotIn('user:', text)
         self.assertNotIn('privileged', text)
         self.assertNotIn('SYS_ADMIN', text)
+        self.assertIn('image: "longmeidao/peach:latest"', text, "NAS 面板只按 latest 检查更新")
+
+    def test_the_run_identity_can_follow_the_nas_share_owner(self):
+        from peach.nas_setup import compose
+        text = compose(bind='192.0.2.10', media='/srv/videos', uid=1026, gid=100)
+        self.assertIn('PEACH_UID: "1026"', text)
+        self.assertIn('PEACH_GID: "100"', text)
+        self.assertNotIn('environment:', compose(bind='192.0.2.10', media='/srv/videos'))
+        for value in (0, -1, 2**32 - 1):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                compose(bind='192.0.2.10', media='/srv/videos', uid=value)
 
     def test_cpu_and_group_access_do_not_request_root(self):
         from peach.nas_setup import compose
@@ -298,33 +311,23 @@ class RenderDevicePreparationTests(unittest.TestCase):
                   patch.object(docker_vaapi.os, 'minor', return_value=128),
                   patch.object(docker_vaapi.os, 'stat', return_value=SimpleNamespace(st_dev=1)),
                   patch.object(docker_vaapi.os, 'chown') as chown,
-                  self.assertRaises((PermissionError, ValueError)) as caught):
-                docker_vaapi.prepare(device)
+                  self.assertRaises((PermissionError, ValueError))):
+                docker_vaapi.prepare(device, 1027)
             chown.assert_not_called()
-            from peach.user_messages import UserFacingError
-            self.assertIsInstance(caught.exception, UserFacingError)
 
-    def test_device_preparation_drops_root_and_preserves_non_root_extra_groups(self):
+    def test_the_node_goes_to_the_service_group_and_identity_is_left_to_the_entrypoint(self):
         from peach import docker_vaapi
         import stat
         device = SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=0, st_dev=1)
-        account = SimpleNamespace(pw_uid=1000, pw_gid=1000)
-        with (patch.object(docker_vaapi.os, 'geteuid', side_effect=[0, 1000]),
-              patch.object(docker_vaapi.os, 'getuid', return_value=1000),
+        with (patch.object(docker_vaapi.os, 'geteuid', return_value=0),
               patch.object(docker_vaapi.os, 'lstat', return_value=device),
               patch.object(docker_vaapi.os, 'stat', return_value=SimpleNamespace(st_dev=1)),
               patch.object(docker_vaapi.os, 'major', return_value=226),
               patch.object(docker_vaapi.os, 'minor', return_value=128),
-              patch.object(docker_vaapi.pwd, 'getpwnam', return_value=account),
               patch.object(docker_vaapi.os, 'chown') as chown,
-              patch.object(docker_vaapi.os, 'chmod') as chmod,
-              patch.object(docker_vaapi.os, 'getgroups', return_value=[0, 107]),
-              patch.object(docker_vaapi.os, 'setgroups') as groups,
-              patch.object(docker_vaapi.os, 'setgid') as gid,
-              patch.object(docker_vaapi.os, 'setuid') as uid):
-            docker_vaapi.prepare('/dev/dri/renderD128')
-        chown.assert_called_once_with('/dev/dri/renderD128', 0, 1000)
+              patch.object(docker_vaapi.os, 'chmod') as chmod):
+            docker_vaapi.prepare('/dev/dri/renderD128', 1027)
+            with self.assertRaises(PermissionError):
+                docker_vaapi.prepare('/dev/dri/renderD128', 0)
+        chown.assert_called_once_with('/dev/dri/renderD128', 0, 1027)
         chmod.assert_called_once_with('/dev/dri/renderD128', 0o660)
-        groups.assert_called_once_with([107, 1000])
-        gid.assert_called_once_with(1000)
-        uid.assert_called_once_with(1000)
