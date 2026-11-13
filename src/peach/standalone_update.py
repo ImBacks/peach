@@ -386,9 +386,9 @@ def sweep() -> bool:
             continue
         try:
             shutil.rmtree(directory)
-            LOGGER.info("已清理更新事务目录：%s", directory)
+            LOGGER.info("Removed update transaction directory: %s", directory)
         except OSError:
-            LOGGER.warning("更新事务目录未能清理：%s", directory, exc_info=True)
+            LOGGER.warning("Could not remove update transaction directory: %s", directory, exc_info=True)
             retry = True
     backups = settings_file.load_config().directory("state") / "update-backups"
     found = sorted((path for path in backups.iterdir() if path.is_dir() and not path.is_symlink()
@@ -400,7 +400,7 @@ def sweep() -> bool:
         try:
             shutil.rmtree(path)
         except OSError:
-            LOGGER.warning("旧的更新备份未能清理：%s", path, exc_info=True)
+            LOGGER.warning("Could not remove old update backup: %s", path, exc_info=True)
     return retry
 
 
@@ -410,7 +410,7 @@ def _sweep_in_background() -> None:
             if not sweep():
                 return
         except Exception:
-            LOGGER.warning("更新残留清理失败", exc_info=True)
+            LOGGER.warning("Update leftover cleanup failed", exc_info=True)
             return
         time.sleep(5)
 
