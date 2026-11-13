@@ -22,6 +22,7 @@ from filelock import FileLock
 from .fsutil import atomic_write_text
 from .jobs import DiskSpaceDenied
 from .platform import system_volume
+from .user_messages import UserOSError, UserValueError
 
 GIB = 1024 ** 3
 POLICY_NAME = 'storage-policy.json'
@@ -69,23 +70,23 @@ class StoragePolicy:
 
 def validate(raw: object, *, check_path=True) -> StoragePolicy:
     if not isinstance(raw, dict) or set(raw) - set(asdict(StoragePolicy())):
-        raise ValueError('容量设置包含不支持的字段')
+        raise UserValueError('errors.storageBudget.unsupportedField')
     values = {**asdict(StoragePolicy()), **raw}
     for key in ('minimum_free_gib', 'data_max_gib', 'cache_max_gib', 'external_cache_max_gib'):
         value = values[key]
         minimum = 0
         if type(value) is not int or not minimum <= value <= 1_048_576:
-            raise ValueError(f'{key} 必须是 {minimum} 到 1048576 之间的整数 GiB')
+            raise UserValueError('errors.storageBudget.gibOutOfRange', {'key': key, 'minimum': minimum})
     for key in ('enabled', 'auto_clean'):
         if type(values[key]) is not bool:
-            raise ValueError(f'{key} 必须是开关值')
+            raise UserValueError('errors.storageBudget.switchRequired', {'key': key})
     raw_path = values['external_cache_path']
     if not isinstance(raw_path, str):
-        raise ValueError('外部缓存目录必须是路径')
+        raise UserValueError('errors.storageBudget.externalPathNotString')
     if raw_path:
         path = Path(raw_path)
         if check_path and values['enabled'] and (not path.is_absolute() or not path.is_dir()):
-            raise ValueError('外部缓存目录必须是本机可读取的绝对目录')
+            raise UserValueError('errors.storageBudget.externalPathNotAbsoluteDirectory')
         if check_path and path.is_absolute():
             values['external_cache_path'] = str(path.absolute())
     return StoragePolicy(**values)
@@ -97,7 +98,7 @@ def load_policy(config) -> StoragePolicy:
     except FileNotFoundError:
         return StoragePolicy()
     except (OSError, ValueError) as error:
-        raise ValueError(f'容量设置未取得：{error}') from error
+        raise UserValueError('errors.storageBudget.policyUnreadable', {'error': str(error)}) from error
     return validate(raw, check_path=False)
 
 
@@ -109,7 +110,7 @@ def save_policy(config, raw) -> StoragePolicy:
         for managed in (config.data_root, *(config.directory(name) for name in DIRECTORY_KEYS)):
             managed = managed.resolve()
             if external.is_relative_to(managed) or managed.is_relative_to(external):
-                raise ValueError('外部缓存目录必须独立于 Peach 数据及各配置目录')
+                raise UserValueError('errors.storageBudget.externalPathOverlaps')
     path = config.directory('state') / POLICY_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + '.lock'):
@@ -187,7 +188,7 @@ def _update_saved(config, change) -> bool:
             atomic_write_text(path, json.dumps({'invalidated_at': marker, 'readings': readings}, ensure_ascii=False))
         return True
     except (OSError, TimeoutError) as error:
-        logging.getLogger(__name__).warning('容量读数未保存（%s）', type(error).__name__)
+        logging.getLogger(__name__).warning('Capacity reading not saved (%s)', type(error).__name__)
         return False
 
 
@@ -253,7 +254,7 @@ def _refresh_in_background(config, policy, part):
             with _REFRESH_GUARD:
                 _FAILURES[_reading_key(config, policy, part)] = (time.time(), str(error))
         except (OSError, ValueError) as error:
-            logging.getLogger(__name__).warning('容量统计未取得（%s）', type(error).__name__)
+            logging.getLogger(__name__).warning('Capacity count unavailable (%s)', type(error).__name__)
         finally:
             lock.release()
     threading.Thread(target=run, name=f'PeachCapacityMeasure-{part}', daemon=True).start()
@@ -352,7 +353,7 @@ def _history_due(config):
     try:
         return sample_due(config)
     except (OSError, ValueError) as error:
-        logging.getLogger(__name__).warning('容量历史未取得（%s）', type(error).__name__)
+        logging.getLogger(__name__).warning('Capacity history unavailable (%s)', type(error).__name__)
         return False
 
 
@@ -362,7 +363,7 @@ def record_history(config, *, data_bytes, cache_bytes, cleaned_bytes=0):
     try:
         record_sample(config, data_bytes, cache_bytes, cleaned_bytes)
     except (OSError, ValueError) as error:
-        logging.getLogger(__name__).warning('容量历史未取得（%s）', type(error).__name__)
+        logging.getLogger(__name__).warning('Capacity history unavailable (%s)', type(error).__name__)
 
 
 @lru_cache(maxsize=1)
@@ -467,7 +468,7 @@ def count_file(info, seen):
     if info.st_nlink <= 1:
         return True
     if not info.st_ino:
-        raise OSError('文件系统未提供硬链接身份，分配量未取得')
+        raise UserOSError('errors.storageBudget.hardLinkIdentityMissing')
     key = info.st_dev, info.st_ino
     if key in seen:
         return False
@@ -493,13 +494,13 @@ def cache_usage(config, policy=None, *, managed=True, external=True, check=lambd
     if external and policy.external_cache_path:
         root = Path(policy.external_cache_path)
         if not root.is_absolute():
-            raise OSError('外部缓存路径不适用于当前系统，请更新路径')
+            raise UserOSError('errors.storageBudget.externalPathForeign')
         root = root.resolve()
         if not root.is_dir():
-            raise OSError('外部缓存目录不可访问')
+            raise UserOSError('errors.storageBudget.externalDirectoryInaccessible')
         result['external_cache_bytes'] = _allocated((root,), check)
     if layout(config, policy) != binding:
-        raise OSError('缓存目录在统计期间发生变化，请重新统计')
+        raise UserOSError('errors.storageBudget.cacheLayoutChanged')
     _SCANS[key] = (time.monotonic(), result)
     return dict(result)
 
@@ -508,7 +509,7 @@ def data_usage(config, *, check=lambda: None):
     binding = layout(config)
     amount = _allocated(data_roots(config), check)
     if layout(config) != binding:
-        raise OSError('数据目录在统计期间发生变化，请重新统计')
+        raise UserOSError('errors.storageBudget.dataLayoutChanged')
     return amount
 
 
@@ -525,7 +526,7 @@ def _allocated(roots, check):
                 except (FileNotFoundError, PermissionError):
                     skipped[0] += 1
     if skipped[0]:
-        logging.getLogger(__name__).info('容量统计跳过 %d 个正在变化的文件或目录', skipped[0])
+        logging.getLogger(__name__).info('Capacity count skipped %d files or directories that were changing', skipped[0])
     return total
 
 
@@ -540,7 +541,7 @@ def _free_space_check(config, policy, interval_secs=2):
         next_check = now + interval_secs
         reasons = _exceeded(policy, dict(_UNKNOWN), _disks(config, policy))
         if reasons:
-            raise DiskSpaceDenied('扫描期间磁盘余量触线，已暂停当前写入，请清理或重试：' + '；'.join(reasons))
+            raise DiskSpaceDenied('errors.storageBudget.scanPaused', {'reasons': '；'.join(reasons)})
     return check_free
 
 
@@ -555,7 +556,7 @@ def _measure_part(config, policy, part) -> dict:
                             external=bool(policy.external_cache_max_gib), check=check_free)
         usage = {'cache_bytes': cache['managed_cache_bytes'], 'external_cache_bytes': cache['external_cache_bytes']}
     if layout(config, policy) != binding:
-        raise OSError('容量目录在统计期间发生变化，请重新统计')
+        raise UserOSError('errors.storageBudget.capacityLayoutChanged')
     # 容量历史按天记：数据每天统计一次照记；缓存每 5 分钟一次，只记当天第一份，
     # 否则清理后回填的每次波动都会被算成增长。
     if part == 'data' or _history_due(config):
@@ -598,7 +599,7 @@ def _disks(config, policy, *, strict=True, playback=False):
         if external.is_absolute() and external.is_dir():
             paths.append(external)
         elif strict:
-            raise OSError('外部缓存目录不可访问，迁移后请更新容量设置中的路径')
+            raise UserOSError('errors.storageBudget.externalDirectoryMoved')
     devices, result = set(), []
     for path in dict.fromkeys(paths):
         target = _existing(path)
@@ -754,7 +755,7 @@ class CapacityGuard:
             try:
                 self._clean(policy)  # 结论由后台检查点按新读数自己下
             except (OSError, ValueError, TimeoutError) as error:
-                logging.getLogger(__name__).warning('自动清理未完成（%s）', type(error).__name__)
+                logging.getLogger(__name__).warning('Automatic cleanup did not finish (%s)', type(error).__name__)
             finally:
                 _CLEANING.release()
         threading.Thread(target=run, name='PeachCapacityClean', daemon=True).start()
@@ -811,15 +812,16 @@ class CapacityGuard:
                 # 前台不写状态文件：设置页的「已暂停」只说后台任务，由后台检查点写。
                 blocking = _exceeded(policy, dict(_UNKNOWN), disks)
                 if blocking:
-                    raise DiskSpaceDenied('；'.join(blocking) + '；磁盘空间不足，已停止写入缓存，请清理后重试')
+                    raise DiskSpaceDenied('errors.storageBudget.cacheWritesStopped', {'reasons': '；'.join(blocking)})
                 self._denied = None
                 return status
             status['layout'] = layout(self.config, policy)
             self._write_status(status)
             if usage.get('errors'):
-                raise OSError('容量统计未取得：' + '；'.join(usage['errors'].values()))
+                raise UserOSError('errors.storageBudget.usageUnavailable',
+                                  {'errors': '；'.join(usage['errors'].values())})
             if reasons:
-                raise DiskSpaceDenied('；'.join(reasons) + '；已停止领取新项，请调整容量或清理后重试')
+                raise DiskSpaceDenied('errors.storageBudget.intakeStopped', {'reasons': '；'.join(reasons)})
             self._denied = None
             return status
         except DiskSpaceDenied as error:
@@ -827,8 +829,8 @@ class CapacityGuard:
             raise
         except (OSError, ValueError, TimeoutError) as error:
             if self.foreground:
-                logging.getLogger(__name__).warning('容量检查未取得，播放照常（%s）', type(error).__name__)
+                logging.getLogger(__name__).warning('Capacity check unavailable, playback continues (%s)', type(error).__name__)
                 self._denied = None
                 return {'paused': False, 'reasons': [], 'error': str(error), 'checked_at': time.time()}
-            self._denied = DiskSpaceDenied(f'容量保护检查未取得，已暂停：{error}')
+            self._denied = DiskSpaceDenied('errors.storageBudget.checkUnavailable', {'error': str(error)})
             raise self._denied from error

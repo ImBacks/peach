@@ -29,6 +29,7 @@ export interface OrganizeJob {
   status: 'idle' | 'running' | 'complete' | 'failed';
   job_id?: string;
   stage?: string;
+  stage_code?: string;
   message?: string;
   checked?: number;
   total?: number;

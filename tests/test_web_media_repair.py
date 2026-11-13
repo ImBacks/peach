@@ -210,7 +210,7 @@ class MediaRepairRunTests(unittest.TestCase):
     def test_a_file_no_reference_can_rebuild_is_not_tried_again(self):
         def hopeless(source, references, **kwargs):
             self.recovered.append((Path(source).name, []))
-            raise RepairUnavailable("没有一个参照切得出能解码的片子")
+            raise RepairUnavailable("errors.mp4recover.noDecodableReference")
 
         self.recover = hopeless
         first = self.run_once()

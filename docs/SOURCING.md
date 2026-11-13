@@ -288,7 +288,7 @@ Wiki 与视频作品资料无关。
 | 站 | 状态 | 位置 | 说明 |
 | --- | --- | --- | --- |
 | JavBus | 已套契约 | `sources/javbus.py` | 年龄门归 `auth_required`；404 与番号对不上归 `not_found` |
-| javdb | 已套契约 | `sources/javdb.py` | 刮削登记 `JavDBPublicSource`：匿名接口搜索与详情两跳，解析器名 `javdb-api`，类别经 `javdb_genres` 按 id 换回详情页原词，搜索无命中归 `not_found`、同番号多个作品归 `parse_error`、接口冷却抛 `SourcePaused`（ADR-0144）。详情页解析 `JavDBSource` 只留给视频预览：登录页归 `auth_required`，详情页番号与搜索结果不一致归 `parse_error`；主机间隔 3 秒进配置 |
+| javdb | 已套契约 | `sources/javdb.py` | 刮削登记 `JavDBPublicSource`：匿名接口搜索与详情两跳，解析器名 `javdb-api`，类别经 `javdb_genres` 按 id 换回详情页原词，搜索无命中归 `not_found`、同番号多个作品归 `parse_error`（ADR-0144）；接口冷却或未取得时改读详情页，解析器名 `javdb-page`（ADR-0160）。详情页解析 `JavDBSource` 也供视频预览：登录页归 `auth_required`，详情页番号与搜索结果不一致归 `parse_error`；主机间隔 3 秒进配置 |
 | fc2club、freejavbt、airav、avsox | 已套契约（经桥） | `metadata_amane.py` | amane 的十六档 reason 经 `AMANE_REASONS` 一对一翻成契约细档，先套进 `SiteRecord` 再投影；`SITE_CONFIGS` 只持有站名、界面名与档位，主域与 Cookie 由 amane 管 |
 | makers、prestige、faleno、dahlia、mgstage | 已套契约（经桥） | `metadata_amane.py` | 档位 `official`（`OFFICIAL_SITES`）；`http_error` 带 401/403 经 `contract_reason` 归 `auth_required`；prestige 的 `release` 进 `extra['delivery_date']` |
 | AVBase | 已套契约 | `sources/avbase.py` | 搜索页一跳，从 `__NEXT_DATA__` 里挑出本作与它自己的商品条目；搜索无命中归 `not_found`，Cloudflare 验证页归 `cloudflare_challenge`，别的结构对不上归 `parse_error`；不给时长，`runtime` 留空 |
@@ -452,6 +452,8 @@ minnano-av 也在 Cloudflare 后面，但对 HTTP 客户端是间歇拦截：202
   `apidd.spthgb.com`。一个主机连不上、回非 200 或回的不是 JSON，就只冷却这一个（403/429 冷却 15 分钟，其余
   60 秒），同一请求交给下一家；三家都在冷却才整源停。签名常量从网页前端读不到时改用 App 那一套签名与请求参数，
   一小时后再回头读网页前端。
+- 接口冷却或未取得（2026-11-10 起三家主机都回 `JWTVerificationError` 要求登录）时，刮削那一问改读 javdb.com
+  搜索页与详情页（ADR-0160），按下一条详情页的主机间隔排队，每部片两页；缺失、歧义与预算仍按接口的结论。
 - 详情页那一路（视频预览）的主机间隔由用户定：`library_processing.SOURCE_INTERVALS` 里 `javdb.com` 与
   `jdbstatic.com` 都是 3 秒，两个主机要一起改。这份间隔由 `SOURCE_LIMITER` 整个进程共用，问同一主机仍按一条队排；
   补女优资料取 javdb 女优页、详情页视频预告和订阅源也排在这条队里，几条同时跑合计仍是每分钟 20 页。

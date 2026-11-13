@@ -58,6 +58,7 @@ import {
   type TableRow as SourceTableRow,
 } from './follow-manage';
 import { AuthorAvatar, ErrorLine, SourceIcon, SourceLink, StatusBadge } from './source-view';
+import { jobText } from '../../core/server-text';
 import { joinList, t } from '../../i18n';
 
 const sourceTableFeatures = tableFeatures({
@@ -274,7 +275,7 @@ export function SourceList(props: SourceListProps) {
     onError: (cause) => setProblem(errorMessage(cause)),
     onFinish: (state) => {
       void reloadFollowManage();
-      toast(state.status === 'failed' ? (state.error || t('follow:followCheck.checkFailed')) : checkReceipt(state));
+      toast(state.status === 'failed' ? (jobText(state, 'error') || t('follow:followCheck.checkFailed')) : checkReceipt(state));
     },
   });
 
@@ -575,7 +576,7 @@ export function SourceList(props: SourceListProps) {
 
       {/* 这一趟在后台跑，关掉页面还在继续，所以状态留在页面上而不是只让按钮转一下。 */}
       <div aria-live="polite" className="flex flex-col gap-3 empty:hidden">
-        {running ? <TaskProgress embedded label={job?.message || (job?.total
+        {running ? <TaskProgress embedded label={jobText(job) || (job?.total
           ? t(job.older ? 'follow:sourceList.backfillProgress' : 'follow:sourceList.checkProgress', { checked: job.checked || 0, count: job.total })
           : t('follow:sourceList.preparingCheck'))} value={job?.checked} total={job?.total} /> : null}
         {problem ? <Note tone="error" title={t('follow:shared.actionFailed')}>{problem}</Note> : null}

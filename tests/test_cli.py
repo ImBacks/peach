@@ -111,6 +111,23 @@ class StatusCommandTests(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertIn("数据库不存在", output)
         self.assertFalse(missing.exists())
+        # 命令行跟系统语言走（ADR-0159 第三条）：英文系统看到的是英文。
+        with mock.patch.dict(os.environ, {"PEACH_LANGUAGE": "en"}):
+            _code, english = self._run(["status", "--db", str(missing), "--shared-db", str(self.shared)])
+        self.assertIn(f"Database not found: {missing}", english)
+
+
+class CommandLanguageTests(unittest.TestCase):
+    def test_peach_language_wins_then_the_system_display_language_decides(self):
+        from peach.interface_text import local_language
+        with mock.patch("peach.system_language.system_language", return_value="zh-CN"):
+            self.assertEqual(local_language({"PEACH_LANGUAGE": "en"}), "en")
+            self.assertEqual(local_language({"PEACH_LANGUAGE": "zh_CN.UTF-8"}), "zh-CN")
+            self.assertEqual(local_language({}), "zh-CN")
+            # 没有译文的写法不算指定，照旧跟系统。
+            self.assertEqual(local_language({"PEACH_LANGUAGE": "ja"}), "zh-CN")
+        with mock.patch("peach.system_language.system_language", return_value=None):
+            self.assertEqual(local_language({}), "en")
 
 
 class InitCommandTests(unittest.TestCase):
@@ -536,6 +553,15 @@ class ScanCommandTests(unittest.TestCase):
         self.assertIn("local", str(caught.exception))
         self.assertEqual(self._count(), 0)
 
+    def test_a_refused_scan_target_is_said_in_the_command_language(self):
+        refused = cli.scan.ScanTargetError("errors.scan.unknownSourceNoneDeclared", {"location": "nas"})
+        with mock.patch.object(cli.scan, "scan_location", side_effect=refused), \
+                mock.patch.dict(os.environ, {"PEACH_LANGUAGE": "en"}), \
+                self.assertRaises(SystemExit) as caught:
+            self._run(["scan", "local", "--db", str(self.db)])
+        self.assertEqual(str(caught.exception),
+                         "✗ Undeclared storage nas; known in [media.locations]: (none in the settings file)")
+
     def test_a_missing_ledger_points_at_init(self):
         code, output = self._run(["scan", "local", "--db", str(self.root / "nope.db")])
         self.assertEqual(code, 4)
@@ -591,7 +617,7 @@ class ProcessCommandTests(unittest.TestCase):
     def test_user_cancel_returns_a_cancelled_receipt_without_dispatching_followups(self):
         from peach.jobs import JobCancelled
         from contextlib import closing
-        with mock.patch('peach.library_processing.process_library',side_effect=JobCancelled('用户停止任务')), \
+        with mock.patch('peach.library_processing.process_library',side_effect=JobCancelled('errors.processingControl.userStopped')), \
                 redirect_stdout(io.StringIO()) as output:
             code=cli.main(['process','--db',str(self.db)])
         with closing(sqlite3.connect(self.db)) as connection:
@@ -649,8 +675,8 @@ class BrokenSettingsTests(unittest.TestCase):
     """设置文件读不出来时，命令必须响亮地失败，而不是拿默认值跑出个假状态。"""
 
     def test_commands_refuse_to_run_and_name_the_file(self):
-        broken = settings_file.SettingsFileError(
-            "设置文件读不出来：/tmp/peach-data/config.toml：TOML 语法错误")
+        broken = settings_file.SettingsFileError("errors.settingsFile.tomlSyntax", {
+            "path": "/tmp/peach-data/config.toml", "error": "Expected '=' (at line 1, column 5)"})
         with mock.patch.object(cli, "SETTINGS_ERROR", broken):
             with self.assertRaises(SystemExit) as caught:
                 cli.main(["status", "--db", "/tmp/nope.db"])

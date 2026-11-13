@@ -21,6 +21,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from .catalog_rules import normalise_code_key, release_code_from_text
 from .entities import normalize_entity_name
+from .user_messages import UserValueError
 
 #: JavDB 演员页当伪 Feed 抓。它按发行日排在前面，所以「还没发行的作品」会先出现。
 KIND_JAVDB_ACTOR = "javdb-actor"
@@ -251,7 +252,7 @@ def parse_dmm_actress(works) -> ParsedFeed:
 
 def dmm_actress_url(actress_id: str) -> str:
     if not _DMM_ACTRESS_ID.match(str(actress_id or "")):
-        raise ValueError("DMM 女优编号只认数字")
+        raise UserValueError("errors.feeds.dmmActressIdDigits")
     return DMM_ACTRESS_PAGE.format(id=actress_id)
 
 
@@ -287,7 +288,7 @@ def normalize_url(value: object) -> str:
     """
     url = str(value or "").strip()
     if not url.startswith("https://"):
-        raise ValueError("订阅地址必须以 https:// 开头")
+        raise UserValueError("errors.feeds.httpsRequired")
     return url
 
 
@@ -301,7 +302,7 @@ def add_source(connection: sqlite3.Connection, *, url: str, name: str = "",
     """登记一条订阅，类型按地址认。地址重复直接拒绝——同一个源订两遍只会让同一条新作出现两次。"""
     address = normalize_url(url)
     if connection.execute("SELECT 1 FROM feed_source WHERE url=?", (address,)).fetchone():
-        raise ValueError("这个订阅地址已经在列表里了")
+        raise UserValueError("errors.feeds.duplicateUrl")
     cursor = connection.execute(
         "INSERT INTO feed_source(kind,name,url,entity_id,enabled,interval_minutes,"
         "created_at) VALUES(?,?,?,?,1,?,?)",

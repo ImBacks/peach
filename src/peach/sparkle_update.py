@@ -128,7 +128,7 @@ class Updater:
             from .automatic_updates import AutomaticUpdates
             preferences = AutomaticUpdates(state_dir, available=True).read()
         except Exception:
-            LOGGER.exception("读取自动更新偏好失败")
+            LOGGER.exception("Failed to read the automatic update preference")
             return
 
         def apply() -> None:
@@ -136,7 +136,7 @@ class Updater:
             try:
                 self.apply(preferences)
             except Exception:
-                LOGGER.exception("同步自动更新偏好到 Sparkle 失败")
+                LOGGER.exception("Failed to sync the automatic update preference to Sparkle")
 
         NSOperationQueue.mainQueue().addOperationWithBlock_(apply)
 
@@ -154,7 +154,7 @@ def start(*, config: Callable[[], object], stop_services: Callable[[], None],
             .initWithStartingUpdater_updaterDelegate_userDriverDelegate_(True, delegate, delegate)
         return Updater(controller, delegate)
     except Exception:
-        LOGGER.exception("Sparkle 更新器初始化失败，菜单栏改用版本检查")
+        LOGGER.exception("Sparkle updater failed to initialize; the menu bar falls back to version checks")
         return None
 
 
@@ -175,7 +175,7 @@ def _delegate_class():
                 heads = [item.propertiesDictionary().get(MIGRATION_HEAD) for item in appcast.items()]
                 reason = install_blocker(heads, self._config())
             except Exception as exc:
-                LOGGER.exception("核对更新的账本迁移失败")
+                LOGGER.exception("Ledger migration check for the update failed")
                 reason = f"未能核对账本迁移：{exc}"
             if reason is None:
                 return None
@@ -188,14 +188,14 @@ def _delegate_class():
                 prepare_install(self._config().directory("database") / "ledger.db", self._stop)
             except Exception:
                 # 预约失败（例如另一个安装在进行）时任务来不及保存进度；服务仍要停，否则新版本抢不到端口。
-                LOGGER.exception("安装前保存任务进度失败")
+                LOGGER.exception("Failed to save task progress before installing")
                 self._stop()
 
         def updaterWillRelaunchApplication_(self, _updater):
             try:
                 self._stop()
             except Exception:
-                LOGGER.exception("重开前停止服务失败")
+                LOGGER.exception("Failed to stop services before relaunching")
 
         @objc.typedSelector(b"Z@:")
         def supportsGentleScheduledUpdateReminders(self):

@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from peach import performer_profile_followup as profiles  # noqa: E402
+from peach import task_outcomes  # noqa: E402
 from peach.followups import Attempts, attempts_root  # noqa: E402
 from peach.migrations import sqlite_backup  # noqa: E402
 from peach.scripting import (BACKUP_REQUIRED, add_ledger_write_args, open_readonly,  # noqa: E402
@@ -58,11 +59,11 @@ def sweep(contract, items, run_id: str, *, out=sys.stdout,
             summary = profiles.run(contract, item.key, handle)
         except Exception as error:  # 一位出错只算她自己，接着跑下一位。
             summary = {"outcome": f"出错：{type(error).__name__}: {error}"}
-        outcome = str(summary.get("outcome", ""))
+        outcome = str(task_outcomes.rendered(summary).get("outcome", ""))
         head = outcome.split("；")[0] or "无结论"
         tally[head] = tally.get(head, 0) + 1
         print(f"{index}/{len(items)} {summary.get('name', item.label)}：{outcome}", file=out, flush=True)
-        streak = streak + 1 if outcome == profiles.UNFETCHED else 0
+        streak = streak + 1 if task_outcomes.is_outcome(summary, "unfetched") else 0
         if streak >= stop_after:
             print(f"连续 {streak} 位未取得，停下：多半是站点冷却或网络断了，稍后原样重跑即可接着来",
                   file=out, flush=True)

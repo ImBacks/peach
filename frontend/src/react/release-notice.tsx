@@ -12,6 +12,7 @@ import {
 } from '@remixicon/react';
 import { Button } from '@/components/base/buttons/button';
 import { apiGet, apiSend } from '../api';
+import { serverLabel } from '../core/server-text';
 import { ModalFrame } from './components/modal-frame';
 import { Note } from './components/note';
 import { SettingsDialogClose } from './components/settings-dialog-close';
@@ -30,6 +31,28 @@ interface ReleaseNoticeSnapshot {
 }
 
 export const RELEASE_NOTICE_EVENT = 'peach:release-notice';
+
+/** 一版公告在 `server` 命名空间里的键：版本号里的点会被 i18next 当成层级，换成连字符。 */
+export const releaseNoteKey = (version: string) => `releaseNotes.v${version.replaceAll('.', '-')}`;
+
+/** 公告的标题与各条按版本和条目 id 取当前界面语言；没有译文的照用服务端的中文。 */
+function localizeNotice(data: ReleaseNoticeSnapshot): ReleaseNoticeSnapshot {
+  const items = (version: string, rows: NoticeItem[]) => rows.map((item) => ({
+    ...item,
+    title: serverLabel(item.id ? `${releaseNoteKey(version)}.items.${item.id}.title` : '', item.title),
+    body: serverLabel(item.id ? `${releaseNoteKey(version)}.items.${item.id}.body` : '', item.body),
+  }));
+  const headline = (version: string, text: string) => serverLabel(`${releaseNoteKey(version)}.headline`, text);
+  return {
+    ...data,
+    missed: data.missed.map((row) => ({ ...row, headline: headline(row.version, row.headline), features: items(row.version, row.features) })),
+    ...(data.notice ? { notice: {
+      ...data.notice, headline: headline(data.current, data.notice.headline),
+      features: items(data.current, data.notice.features), automatic: items(data.current, data.notice.automatic),
+      attention: items(data.current, data.notice.attention),
+    } } : {}),
+  };
+}
 const ICONS: Record<string, RemixiconComponentType> = {
   storage: RiHardDrive3Line, reorder: RiDraggable, library: RiFolderLine, select: RiCheckboxMultipleLine,
   resize: RiAspectRatioLine, server: RiServerLine, person: RiUserLine, shield: RiShieldCheckLine,
@@ -71,7 +94,7 @@ export function ReleaseNotice({ navigate }: { navigate(path: string): void }) {
 
   useEffect(() => {
     let disposed = false;
-    const load = (reopen: boolean) => apiGet<ReleaseNoticeSnapshot>('/api/release-notice').then(next => {
+    const load = (reopen: boolean) => apiGet<ReleaseNoticeSnapshot>('/api/release-notice').then(localizeNotice).then(next => {
       if (disposed) return;
       setData(next);
       if (reopen) { setOpen(Boolean(next.notice)); return }

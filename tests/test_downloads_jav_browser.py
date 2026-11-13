@@ -101,7 +101,7 @@ class BrowserTests(unittest.TestCase):
         self.downloads.clock = lambda: now[0]
         task = self.downloads.store.save(dl.DownloadTask(id=0, info_hash=HASH, provider='115', source_uri=MAGNET,
             display_name='ABC-123', target='/115/Movies', state=dl.INGESTED, postprocess_state=dl.POSTPROCESS_PENDING))
-        self.downloads.store.fail_postprocess(task.id, TimeoutError('暂时超时'), now=now[0])
+        self.downloads.store.fail_postprocess(task.id, TimeoutError('timed out'), now=now[0])
         restored = dl.DownloadStore(self.downloads.store.database)
         self.assertEqual(restored.pending_postprocess(now[0]), [])
         self.assertEqual(self.downloads.poll_once(), 0)
@@ -378,7 +378,7 @@ class BrowserTests(unittest.TestCase):
         def ask(cid):
             asked.append(cid)
             if cid == "broken00001v":
-                raise OSError("DMM 未取得")
+                raise OSError("connection refused")
             return cid == "1sdjs00304v"
         probe._ask = ask
         self.assertTrue(probe("1sdjs00304"))
@@ -406,7 +406,7 @@ class BrowserTests(unittest.TestCase):
         other = f"magnet:?xt=urn:btih:{other_hash}&dn=ABC-123"
         self.service.search.return_value = {"items": [{"name": "ABC-123 1080p", "uri": MAGNET},
                                                       {"name": "ABC-123 720p", "uri": other}]}
-        self.remote.submit.side_effect = dl.DownloadError("no_source", "没有可用下载源")
+        self.remote.submit.side_effect = dl.DownloadError("no_source", "errors.downloads.noSeeders", {"hours": 24})
         self.add()
         self.service.process_one()
         failed = self.status().json()
@@ -462,13 +462,13 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(dispatch.call_args.args[0].id, task.id)
 
     def test_cloud_failure_is_visible_and_a_manual_retry_uses_existing_task(self):
-        self.remote.submit.side_effect = dl.DownloadError("config", "请更新网盘账号")
+        self.remote.submit.side_effect = dl.DownloadError("config", "errors.downloadsClouddrive.tokenMissing")
         self.add()
         self.service.process_one()
         failed = self.status().json()
         self.assertEqual(failed["state"], "failed")
         self.assertEqual((failed["failure"], failed["cause"]), ("config", "cloud"))
-        self.assertEqual(failed["message"], "请更新网盘账号")
+        self.assertEqual(failed["message"], "还没有填 CloudDrive2 的 API 令牌")
         self.remote.submit.side_effect = None
         self.add()
         self.service.process_one()
@@ -502,7 +502,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual((status['state'], status['task_id'], status['download']['postprocess_state']),
                          ('ingested', task.id, dl.POSTPROCESS_FAILED))
         self.assertEqual(self.service.active()['items'][0]['download']['postprocess_state'], dl.POSTPROCESS_FAILED)
-        self.downloads.store.fail_postprocess(task.id, TimeoutError('暂时断开'))
+        self.downloads.store.fail_postprocess(task.id, TimeoutError('connection dropped'))
         self.assertEqual(self.status().json()['retry_attempt'], 1)
         self.downloads.store.postprocess(task.id, dl.POSTPROCESS_COMPLETE)
         self.assertEqual(self.status().json()['state'], 'owned')

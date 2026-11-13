@@ -378,6 +378,8 @@ class SubtitleApiTests(unittest.TestCase):
         self.assertTrue(tracks[0]["playable"])
         self.assertEqual(tracks[1]["note"], "不在正片所在目录")
         self.assertEqual(tracks[2]["note"], "编码未识别")
+        self.assertEqual([track["note_code"] for track in tracks],
+                         ["", "labels.routesMedia.subtitle.outsideFolder", "labels.routesMedia.subtitle.encodingUnknown"])
         self.assertFalse(tracks[1]["playable"] or tracks[2]["playable"])
 
     def test_a_track_comes_back_as_webvtt(self):

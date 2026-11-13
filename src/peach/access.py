@@ -21,6 +21,7 @@ from filelock import FileLock
 from itsdangerous import BadData, URLSafeSerializer
 
 from .fsutil import atomic_write_text
+from .user_messages import UserValueError
 
 COOKIE = "peach_session"
 SESSIONS = "browser-sessions.json"
@@ -49,9 +50,9 @@ def load(path: Path | None) -> dict:
 
 def validate_password(password: str, confirmation: str) -> None:
     if password != confirmation:
-        raise ValueError("两次输入的密码不一致")
+        raise UserValueError("errors.access.passwordMismatch")
     if password and not 8 <= len(password) <= 256:
-        raise ValueError("访问密码需为 8–256 个字符")
+        raise UserValueError("errors.access.passwordLength")
 
 
 def _digest(password: str, salt: str) -> str:
@@ -113,7 +114,7 @@ def issue(policy: dict, days: int, sessions: Sessions | None = None, *,
           device: str = "", network: str = "", remote: bool = False) -> tuple[str, int | None]:
     """签发令牌并登记这台设备；记录写不进去时抛 OSError，不发一个校验不过的令牌。"""
     if type(days) is not int or not 0 <= days <= 365:
-        raise ValueError("请选择有效的保持登录时间")
+        raise UserValueError("errors.access.invalidRememberDays")
     seconds = days * 86400 if days else 43200
     expires = int(time.time()) + seconds
     # 随机 `id` 让同一秒、同一时长的两次登录也各得一个令牌，记录里才是两行。

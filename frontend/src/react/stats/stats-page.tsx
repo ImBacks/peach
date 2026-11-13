@@ -41,6 +41,7 @@ import {
   reachedShare, replayRows, STATS_KEY, watchedShare, watchNote,
   type Attribution, type Count, type RecentPlay, type StatsData, type StorageVolume, type TagSource, type TopTag,
 } from './stats';
+import { codedText } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /** 空馆藏与没有存储来源时「添加媒体」去的那一栏设置。 */
@@ -190,10 +191,11 @@ function CoverageDetail({ attribution }: { attribution: Attribution }) {
 function VolumeRow({ volume }: { volume: StorageVolume }) {
   const total = volume.total;
   const used = volume.used ?? 0;
+  const label = codedText(volume, 'label');
   return (
     <article className="flex min-w-0 flex-col gap-1.5 border-b border-separator-border py-3 last:border-b-0">
       <header className="flex items-baseline justify-between gap-3 text-body-2-regular text-text-primary">
-        <h3 className="min-w-0 break-words">{volume.label}</h3>
+        <h3 className="min-w-0 break-words">{label}</h3>
         {total != null ? (
           <b className="whitespace-nowrap tabular-nums">
             {fmtSize(used)}
@@ -202,7 +204,7 @@ function VolumeRow({ volume }: { volume: StorageVolume }) {
         ) : volume.online ? <StatusLabel>{t('manage:stats.capacityNotFound')}</StatusLabel> : <ConnectionStatus online={false} />}
       </header>
       {total != null
-        ? <Progress meter label={t('manage:stats.volumeUsage', { volume: volume.label })} value={within(used, Math.max(total, 1))} max={Math.max(total, 1)} />
+        ? <Progress meter label={t('manage:stats.volumeUsage', { volume: label })} value={within(used, Math.max(total, 1))} max={Math.max(total, 1)} />
         : null}
       <p className="flex justify-between gap-3 text-caption-1-regular text-text-secondary">
         <span className="min-w-0 break-words">{volume.root ?? t('manage:stats.notMapped')}</span>

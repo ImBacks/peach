@@ -15,6 +15,7 @@ import { ProcessingLine } from './processing-line';
 import { CollapseChevron, CollapseRegion } from '../components/collapse-region';
 import { TrafficProgress } from './processing-traffic';
 import { t } from '../../i18n';
+import { jobText, stageText } from '../../core/server-text';
 
 const COLLAPSE_KEY = 'peach.library-processing.collapsed';
 function expandedFor(jobId?: string): boolean {
@@ -140,9 +141,9 @@ export function ProcessingNoticePanel({ state, problem = '', measure = false, on
           {step.status === 'complete' ? <s className="wrap-anywhere">{step.label}</s> : <span className="wrap-anywhere">{step.label}</span>}
         </li>)}
       </ol> : null}
-      <p className="text-body-2-regular wrap-anywhere">{problem || (failed || partial ? state?.error || t('manage:processingNotice.reviewUnfinished') : <ProcessingLine state={state!} />)}</p>
+      <p className="text-body-2-regular wrap-anywhere">{problem || (failed || partial ? jobText(state, 'error') || t('manage:processingNotice.reviewUnfinished') : <ProcessingLine state={state!} />)}</p>
       {partial ? <p className="text-body-2-regular wrap-anywhere">{PARTIAL_RESULT_TEXT}</p> : null}
-      {active && state?.stage && !state.steps?.length ? <p className="text-caption-1-regular text-text-tertiary">{t('manage:processingNotice.currentStageName', { stage: state.stage })}</p> : null}
+      {active && state?.stage && !state.steps?.length ? <p className="text-caption-1-regular text-text-tertiary">{t('manage:processingNotice.currentStageName', { stage: stageText(state) })}</p> : null}
       {state?.stalled && !problem && !slow ? <p className="text-caption-1-regular">{t('manage:processingNotice.stalled')}</p> : null}
     </div>
     <div className="flex flex-wrap items-center justify-between gap-2 pt-3">

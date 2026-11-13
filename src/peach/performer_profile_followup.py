@@ -57,6 +57,8 @@ from urllib.parse import quote
 from . import avwikidb, entry_links, javdb, minnano_av
 from . import performer_alias_followup as alias
 from .followups import Attempts, Followup, FollowupType, attempts_root, register
+from .task_outcomes import joined, outcome_parts, part, said
+from .task_runs import item_progress
 from .performer_profiles import fetched_at as profile_fetched_at, read_profile, write_profile
 from .scripting import HostLimiter
 from .sources import avbase
@@ -101,7 +103,7 @@ def followup_key(entity_id: int) -> str:
 def parse_key(key: str) -> int:
     prefix, _, raw = str(key).partition(":")
     if prefix != TASK_KEY or not raw.isdigit():
-        raise ValueError(f"认不出这条补女优资料后继：{key}")
+        raise ValueError(f"unrecognized actress profile followup key: {key}")
     return int(raw)
 
 
@@ -141,8 +143,8 @@ def fingerprint(connection: sqlite3.Connection, entity_id: int) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _label(name: str) -> str:
-    return f"{TASK_LABEL}：{name}" if name else TASK_LABEL
+def _label(name: str) -> dict:
+    return item_progress(TASK_KEY, name)
 
 
 def plan(connection: sqlite3.Connection, *, since_entity_id: int) -> list[Followup]:
@@ -154,7 +156,7 @@ def plan(connection: sqlite3.Connection, *, since_entity_id: int) -> list[Follow
         (int(since_entity_id),)).fetchall()
     found = sorted(((int(row[2] or 0), int(row[0]), str(row[1] or "")) for row in rows
                     if has_entry(connection, int(row[0]))), key=lambda item: (-item[0], item[1]))
-    return [Followup(key=followup_key(entity_id), task_key=TASK_KEY, label=_label(name))
+    return [Followup.coded(followup_key(entity_id), TASK_KEY, _label(name))
             for _works, entity_id, name in found]
 
 
@@ -176,7 +178,7 @@ def stock(connection: sqlite3.Connection, attempts, *, limit: int, skip=()) -> l
             continue
         if attempts.settled(key, fingerprint(connection, entity_id)):
             continue
-        found.append(Followup(key=key, task_key=TASK_KEY, label=_label(str(row[1] or ""))))
+        found.append(Followup.coded(key, TASK_KEY, _label(str(row[1] or ""))))
         if len(found) >= limit:
             break
     return found
@@ -324,17 +326,28 @@ def run(contract, key: str, handle) -> dict:
     summary = _run(contract, key, handle)
     with contract.database.read_connection() as connection:
         current = fingerprint(connection, parse_key(key))
-    outcome = str(summary.get("outcome", ""))
-    reports = summary.get("sites") or {}
-    if any(str(report).startswith(UNFETCHED) for report in reports.values()):
+    reports = summary.get("sites")
+    if isinstance(reports, _SiteReports) and reports.unfetched:
         retry = RETRY_UNFETCHED
     elif summary.get("landed"):
         retry = REFRESH
     else:
         retry = None
-    Attempts(attempts_root(contract.candidate_root)).record(key, current, outcome,
+    Attempts(attempts_root(contract.candidate_root)).record(key, current, outcome_parts(summary),
                                                             retry_after=retry)
     return summary
+
+
+class _SiteReports(dict):
+    """每站一句结论（站名 → 结论）。结论是「未取得」的站另记在 `unfetched` 里，判断按它，不看结论的字。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.unfetched: set[str] = set()
+
+    def unfetched_at(self, site: str, detail: object) -> None:
+        self[site] = f"{UNFETCHED}：{detail}"
+        self.unfetched.add(site)
 
 
 def _run(contract, key: str, handle) -> dict:
@@ -350,13 +363,13 @@ def _run(contract, key: str, handle) -> dict:
                  "fetched": None if _avbase_row(read_profile(connection, entity_id))
                  else profile_fetched_at(connection, entity_id)}
     if names is None:
-        return {"outcome": "档案已不存在"}
+        return said("gone")
     canonical = names[0]
     if handle is not None:
-        handle.progress(label=_label(canonical), throttle=0)
+        handle.progress(**_label(canonical), throttle=0)
     base = {"entity_id": entity_id, "canonical_name": canonical, "batch": ""}
     sites = open_sites(contract)
-    reports: dict[str, str] = {}
+    reports = _SiteReports()
     rows: list[dict] = []
     try:
         _visit_minnano(contract, sites[MINNANO], entity_id, names, state, batch, base, reports, rows)
@@ -373,16 +386,17 @@ def _run(contract, key: str, handle) -> dict:
     if rows:
         _record_review(contract.candidate_root, entity_id, rows)
     landed = [row for row in rows if row["action"] in (WRITE, BIND, FRESH)]
-    done = [f"{row['site']} {row['action']}" for row in rows if row["action"] in (WRITE, BIND)]
+    done = [part("siteSaved" if row["action"] == WRITE else "siteLinked", site=row["site"])
+            for row in rows if row["action"] in (WRITE, BIND)]
     if done:
-        outcome = "；".join(done)
+        outcome = joined(done)
     elif landed:
-        outcome = "资料未过期"
-    elif any(report.startswith(UNFETCHED) for report in reports.values()):
-        outcome = UNFETCHED
+        outcome = [part("stillCurrent")]
+    elif reports.unfetched:
+        outcome = [part("unfetched")]
     else:
-        outcome = "哪一站都没对上她"
-    summary = {"name": canonical, "outcome": outcome, "sites": reports, "landed": bool(landed)}
+        outcome = [part("noMatch")]
+    summary = {"name": canonical, **said(outcome), "sites": reports, "landed": bool(landed)}
     if conflict_count:
         summary["conflicts"] = conflict_count
     return summary
@@ -405,7 +419,7 @@ def _visit_minnano(contract, pages, entity_id: int, names, state: dict, batch: s
     try:
         found, note = alias.minnano_profile_pages(pages, keys[:alias.MAX_KEYS], refs)
     except (alias.Blocked, alias.Unavailable) as error:
-        reports[MINNANO] = f"{UNFETCHED}：{error}"
+        reports.unfetched_at(MINNANO, error)
         return
     anchored = []
     for url, html in found:
@@ -464,7 +478,7 @@ def _visit_avbase(contract, pages, entity_id: int, names, state: dict, batch: st
         detail = "；".join(notes)
         if not asked:
             # 一个写法都没问成：站那天没让进或页面认不出，不是站上没有她，不结算指纹。
-            reports[AVBASE] = f"{UNFETCHED}：{detail}"
+            reports.unfetched_at(AVBASE, detail)
             return 0
         reports[AVBASE] = f"{MISS}：{detail}"
         rows.append({**base, "site": AVBASE, "page": "", "action": MISS, "detail": detail})
@@ -555,7 +569,7 @@ def _visit_avwikidb(contract, pages, entity_id: int, names, state: dict, batch: 
     except (alias.Blocked, alias.Unavailable) as error:
         if refs:
             # 已绑的编号只为重取资料而来：没取到就留着上一次的资料，不拿一份空的顶掉。
-            reports[AVWIKIDB] = f"{UNFETCHED}：{error}"
+            reports.unfetched_at(AVWIKIDB, error)
             return 0
         actor = {}
     if actor and actor.get("id") != actor_ref:
@@ -595,7 +609,7 @@ def _locate_actor(pages, names, state: dict, profile: dict | None, base: dict, r
     try:
         actor_ref, work, note = _find_in_cast(pages, state["codes"], mine, romaji)
     except (alias.Blocked, alias.Unavailable) as error:
-        reports[AVWIKIDB] = f"{UNFETCHED}：{error}"
+        reports.unfetched_at(AVWIKIDB, error)
         return None
     if not actor_ref:
         reports[AVWIKIDB] = f"{MISS}：{note}"
@@ -662,7 +676,7 @@ def _visit_javdb(contract, pages, entity_id: int, names, batch: str, base: dict,
         try:
             _final, html = pages.get(url)
         except alias.Blocked as error:
-            reports[JAVDB] = f"{UNFETCHED}：{error}"
+            reports.unfetched_at(JAVDB, error)
             return
         except alias.Unavailable as error:
             notes.append(f"{key} {error}")
@@ -682,7 +696,7 @@ def _visit_javdb(contract, pages, entity_id: int, names, batch: str, base: dict,
         detail = "；".join(notes)
         if not searched:
             # 一个写法都没搜成：站那天没让进，不是她不在站上，不结算指纹。
-            reports[JAVDB] = f"{UNFETCHED}：{detail}"
+            reports.unfetched_at(JAVDB, detail)
             return
         reports[JAVDB] = f"{MISS}：{detail}"
         rows.append({**base, "site": JAVDB, "page": "", "action": MISS, "detail": detail})

@@ -13,6 +13,8 @@ from itertools import islice
 from pathlib import Path
 
 from . import error_reporting
+from .task_stages import stage as stage_fields
+from .user_messages import UserOSError
 
 LOG_NAMES = ("tray.log", "tray-lifecycle.log", "tray-setup.err.log", "tray-setup.out.log",
              "tray-http.err.log", "tray-http.out.log", "tray-https.err.log", "tray-https.out.log",
@@ -242,7 +244,7 @@ def _archive_scraping(archive, config, entries, *, progress, cancelled, include_
                         with details.open(item) as source, archive.open('scraping/' + item.filename, 'w', force_zip64=True) as target:
                             while chunk := source.read(256 * 1024):
                                 if cancelled():
-                                    raise ExportCancelled('导出已取消')
+                                    raise ExportCancelled()
                                 target.write(chunk)
                 index['detail'] = '详细刮削记录已包含在 scraping/ 目录'
             else:
@@ -308,8 +310,8 @@ def bundle_to(destination, *, report: dict | None = None, config=None, browser: 
         for index, directory in enumerate(dict.fromkeys(directories)):
             if cancelled():
                 from .scraping_diagnostics import ExportCancelled
-                raise ExportCancelled('导出已取消')
-            progress(stage='整理诊断日志', done=index, total=len(directories))
+                raise ExportCancelled()
+            progress(**stage_fields('diagnostics.collectLogs'), done=index, total=len(directories))
             try:
                 candidates = _log_candidates(directory, entries)
                 _archive_files(archive, directory, candidates, f'logs/{index}', entries)
@@ -359,7 +361,7 @@ def save_bundle(destination: Path | None = None) -> Path:
             return target
         except OSError:
             continue
-    raise OSError("诊断报告无法写入数据目录或临时目录")
+    raise UserOSError("errors.supportBundle.notWritable")
 
 
 def main(argv=None) -> int:

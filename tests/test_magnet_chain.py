@@ -109,7 +109,7 @@ class MagnetChainTests(unittest.TestCase):
     def test_javdb_identity_ambiguity_is_reported_with_source_ids(self):
         from peach.javdb_public import PublicIdentityAmbiguous
         from peach.magnet_chain import Fetcher, search
-        ambiguous = PublicIdentityAmbiguous('同番号对应多个作品，请核对来源身份：Aa1、Bb2')
+        ambiguous = PublicIdentityAmbiguous('errors.javdbPublic.identityAmbiguous', {'identities': 'Aa1、Bb2'})
         with patch.object(Fetcher, 'manko', return_value=[]), patch.object(Fetcher, 'sukebei', return_value=[]), \
                 patch('peach.magnet_chain.PUBLIC_API.movie', side_effect=ambiguous):
             result = search(Path('.'), 'ABC-123', transport=object(), stop_on_preferred=False)

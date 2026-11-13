@@ -30,9 +30,16 @@ from peach.library_processing import process_library
 from peach.review_csv import read_rows
 from peach.settings_file import PeachConfig
 from peach.metadata_auto_apply import _apply_metadata_candidate
-from support.conditions import windows_ledger_roots
+from support.conditions import windows_ledger_roots, without_capacity_reserve
 from support.ledger import fresh_ledger
 from support.demo import seed_metadata_cache
+
+
+def setUpModule():
+    # 这些用例不测容量闸；不让本机磁盘余量决定它们红不红（见 `without_capacity_reserve`）。
+    reserve = without_capacity_reserve()
+    reserve.start()
+    unittest.addModuleCleanup(reserve.stop)
 
 ROOT = Path(__file__).resolve().parents[1]
 

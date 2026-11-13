@@ -31,6 +31,7 @@ from .catalog_rules import (
 from .downloads import parse_magnet
 from .follow_secrets import CredentialError, CredentialStore
 from .feeds import scan_code
+from .user_messages import UserValueError
 
 CREDENTIAL = "resource-indexers"
 MAX_INDEXERS = 4
@@ -49,11 +50,11 @@ def endpoint(value: object) -> str:
         url = urlsplit(text)
         port = url.port
     except ValueError:
-        raise ValueError("索引器地址格式不正确") from None
+        raise UserValueError("errors.resourceSearch.invalidEndpoint") from None
     if (len(text) > 2048 or url.scheme not in ("http", "https") or not url.hostname
             or url.username is not None or url.password is not None or url.query or url.fragment
             or any(char.isspace() for char in text) or port == 0):
-        raise ValueError("填写 HTTP 或 HTTPS API 地址；API key 单独填写，地址不带查询参数")
+        raise UserValueError("errors.resourceSearch.endpointFormat")
     return text
 
 
@@ -75,7 +76,7 @@ class Indexers:
                 endpoint(row.get("url"))
             return rows
         except (CredentialError, ValueError, TypeError):
-            raise ValueError("索引器配置读不出来，请在本机「配置 → 下载」中重新保存") from None
+            raise UserValueError("errors.resourceSearch.unreadableConfig") from None
 
     def public(self) -> dict:
         return {"indexers": [
@@ -86,26 +87,26 @@ class Indexers:
     def save(self, body: dict) -> dict:
         rows = body.get("indexers") if isinstance(body, dict) else None
         if not isinstance(rows, list) or len(rows) > MAX_INDEXERS:
-            raise ValueError(f"最多配置 {MAX_INDEXERS} 个索引器")
+            raise UserValueError("errors.resourceSearch.tooManyIndexers", {"max": MAX_INDEXERS})
         previous = {row["key"]: row for row in self.load()}
         saved: list[dict] = []
         keys: set[str] = set()
         for row in rows:
             if not isinstance(row, dict):
-                raise ValueError("索引器配置必须是对象")
+                raise UserValueError("errors.resourceSearch.indexerNotObject")
             key = str(row.get("key") or "")
             name = str(row.get("name") or "").strip()
             if not re.fullmatch(r"[a-zA-Z0-9_-]{1,48}", key) or key in keys:
-                raise ValueError("索引器编号为空或重复")
+                raise UserValueError("errors.resourceSearch.invalidIndexerKey")
             if not name or len(name) > 80:
-                raise ValueError("索引器名称须为 1 到 80 个字符")
+                raise UserValueError("errors.resourceSearch.invalidIndexerName")
             address = endpoint(row.get("url"))
             old = previous.get(key, {})
             secret = str(row.get("api_key") or "").strip()
             if not secret and not row.get("clear_api_key") and old.get("url") == address:
                 secret = old.get("api_key", "")
             if len(secret) > 512 or any(char.isspace() for char in secret):
-                raise ValueError("API key 格式不正确")
+                raise UserValueError("errors.resourceSearch.invalidApiKey")
             saved.append(dict(key=key, name=name, url=address, api_key=secret,
                               enabled=row.get("enabled") is True))
             keys.add(key)
@@ -121,9 +122,9 @@ class Filters:
 
     def __post_init__(self):
         if not 0 <= self.min_size <= self.max_size <= 1024 ** 4:
-            raise ValueError("体积区间须在 0 到 1 TiB 之间，下限不能大于上限")
+            raise UserValueError("errors.resourceSearch.invalidSizeRange")
         if self.goal not in ("quality", "chinese", "uncensored"):
-            raise ValueError("质量目标只能是高清、中字或无码")
+            raise UserValueError("errors.resourceSearch.invalidGoal")
 
 
 def qualities(title: str, tags: list[str], code: str) -> dict:
@@ -149,7 +150,7 @@ def torrent_info_hash(data: bytes) -> str:
     meta = bencode2.bdecode(data)
     info = meta.get(b"info") if isinstance(meta, dict) else None
     if not isinstance(info, dict):
-        raise ValueError("种子文件缺少 info 字典")
+        raise ValueError("torrent file has no info dictionary")
     return hashlib.sha1(bencode2.bencode(info)).hexdigest()
 
 
@@ -200,22 +201,22 @@ def _xml(client: httpx.Client, indexer: dict, params: dict, deadline: float) -> 
     params = {**params, "apikey": indexer.get("api_key", "")}
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise TimeoutError("索引器查询超时")
+        raise TimeoutError("indexer query timed out")
     with client.stream("GET", indexer["url"], params=params, timeout=min(10, remaining)) as response:
         if response.status_code != 200:
-            raise httpx.HTTPStatusError(f"索引器返回 HTTP {response.status_code}", request=response.request, response=response)
+            raise httpx.HTTPStatusError(f"indexer returned HTTP {response.status_code}", request=response.request, response=response)
         content = bytearray()
         for chunk in response.iter_bytes(chunk_size=16384):
             if time.monotonic() > deadline:
-                raise TimeoutError("索引器查询超时")
+                raise TimeoutError("indexer query timed out")
             content.extend(chunk)
             if len(content) > MAX_BYTES:
-                raise ValueError("索引器响应超过 2 MiB")
+                raise UserValueError("errors.resourceSearch.responseTooLarge")
     text = bytes(content).decode("utf-8")
     if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
-        raise ValueError("索引器 XML 含不支持的实体声明")
+        raise UserValueError("errors.resourceSearch.xmlEntities")
     if fromstring(text).tag not in ("caps", "rss", "error"):
-        raise ValueError("索引器没有返回 Torznab XML")
+        raise UserValueError("errors.resourceSearch.notTorznab")
     return text
 
 
@@ -260,10 +261,10 @@ class Search:
     def run(self, indexers: list[dict], code: str, filters: Filters, blocked=()) -> dict:
         code = normalise_code_key(code)
         if not code or len(code) > 80 or not same_release_code(release_code_from_text(code), code):
-            raise ValueError("请输入可识别的作品番号")
+            raise UserValueError("errors.resourceSearch.invalidCode")
         active = [row for row in indexers if row.get("enabled")]
         if len(active) > MAX_INDEXERS:
-            raise ValueError("索引器数量超过上限")
+            raise UserValueError("errors.resourceSearch.indexerLimitExceeded")
         if not active:
             return {"ok": True, "state": "unavailable", "items": [], "warnings": [],
                     "error": "请在本机「配置 → 下载」中添加并启用索引器"}
@@ -301,7 +302,7 @@ class Search:
                     caps = parse_capabilities(_xml(client, indexer, {"t": "caps"}, deadline))
                     search = caps.searching.search if caps.searching else None
                     if not search or not search.available or "q" not in search.supported_params:
-                        raise ValueError("索引器没有声明番号搜索能力")
+                        raise UserValueError("errors.resourceSearch.noCodeSearch")
                     limit = min(MAX_ITEMS, max(1, caps.limits.max or MAX_ITEMS)) if caps.limits else MAX_ITEMS
                     items = parse_torznab(_xml(client, indexer, {
                         "t": "search", "q": query, "cat": "6000", "limit": str(limit)}, deadline))

@@ -14,8 +14,10 @@ from typing import Mapping
 
 from bs4 import BeautifulSoup
 
+from .user_messages import UserFacingError
 
-class FanboxContentError(ValueError):
+
+class FanboxContentError(UserFacingError, ValueError):
     """A public post used an invalid or unsupported FANBOX body shape."""
 
 
@@ -132,10 +134,12 @@ def normalize_fanbox_post(post: Mapping[str, object]) -> FanboxContent:
     """Return ordered text, links and playable media from one public post."""
     post_type = str(post.get("type") or "image").casefold()
     if post_type not in _SUPPORTED_TYPES:
-        raise FanboxContentError(f"FANBOX 正文类型不受支持：{post_type or '空'}")
+        if not post_type:
+            raise FanboxContentError("errors.fanbox.emptyPostType")
+        raise FanboxContentError("errors.fanbox.unsupportedPostType", {"type": post_type})
     body = post.get("body")
     if not isinstance(body, Mapping):
-        raise FanboxContentError("FANBOX 公开正文缺少 body")
+        raise FanboxContentError("errors.fanbox.missingBody")
 
     text_parts: list[str] = []
     links: list[str] = []

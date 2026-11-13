@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
+import { useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { Popover, VisuallyHidden } from 'react-aria-components';
 import { MENU_POPOVER_SURFACE } from '@/components/base/dropdown/menu-styles';
 import { Button } from '@/components/base/buttons/button';
@@ -16,6 +16,7 @@ import { MenuDialog } from './menu-dialog';
 import { BoardTabs, type BoardTabsProps } from './board-tabs';
 import { spriteGlyph } from './sprite-glyph';
 import { useLibraryTints } from './library-tint';
+import { LibraryLabel } from './library-label';
 import { orderLibraries } from '../../library-catalog';
 import { t } from '../../i18n';
 import './navigation-order.css';
@@ -82,8 +83,10 @@ export function NavigationOrderMenu({ order }: { order: NavigationOrder }) {
   </>;
 }
 
-export function NavigationOrderRows({ order, labels, fixed = [], reset = true }: {
+export function NavigationOrderRows({ order, labels, render, fixed = [], reset = true }: {
   order: NavigationOrder; labels: Readonly<Record<string, string>>; fixed?: readonly string[]; reset?: boolean;
+  /** 行内显示的内容；缺省只写名字。读屏与按钮说明仍用 `labels`。 */
+  render?: (key: string) => ReactNode;
 }) {
   const list = useRef<HTMLDivElement>(null);
   const reorder = useSidebarReorder(list, order.keys, order.commit, () => {}, 'y', 'tab', fixed);
@@ -104,7 +107,7 @@ export function NavigationOrderRows({ order, labels, fixed = [], reset = true }:
           '--navigation-picked-offset': `${reorder.picked?.offset || 0}px`,
           '--sidebar-nudge': `${reorder.nudge(key).distance}px`, '--sidebar-delay': `${reorder.nudge(key).delay}ms` } as CSSProperties}
         {...reorder.bindings(key)}>
-        <Grip aria-hidden="true" /><span>{labels[key]}</span>
+        <Grip aria-hidden="true" /><span>{render ? render(key) : labels[key]}</span>
         <button type="button" data-order-step="" aria-label={t('shell:navigationOrder.moveUp', { name: labels[key] })}
           disabled={index === 0 || fixed.includes(key) || fixed.includes(order.keys[index - 1])}
           onClick={() => move(index, -1)}><Up /></button>
@@ -157,7 +160,8 @@ function LibraryOrderPreferences() {
   };
   return <>
     <NavigationOrderRows order={{ label: t('shell:shared.library'), keys: orderLibraries(libraries, store.value.libraryOrder, row => row.id).map(row => row.id),
-      defaults: libraries.map(row => row.id), commit }} labels={Object.fromEntries(libraries.map(row => [row.id, row.name]))} />
+      defaults: libraries.map(row => row.id), commit }} labels={Object.fromEntries(libraries.map(row => [row.id, row.name]))}
+      render={key => { const library = libraries.find(row => row.id === key); return library ? <LibraryLabel library={library} /> : key }} />
     {save.isError ? <p role="alert">{t('shell:navigationOrder.librarySyncFailed', { error: errorMessage(save.error) })}</p> : null}
   </>;
 }

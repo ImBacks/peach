@@ -5,6 +5,8 @@ import { LinkButton } from '@/components/base/buttons/link-button';
 import { fmtDur, fmtSize, LOC } from '@peach/legacy/core';
 import { DataTable, type DataColumn } from '../components/data-table';
 import { EmptyState } from '../components/empty-state';
+import { ItemLibrary } from '../components/library-label';
+import { useLibraryTints } from '../components/library-tint';
 import { Note } from '../components/note';
 import { Disclosure, Stack } from '../settings/section';
 import { busyProps, useAction } from '../settings/use-action';
@@ -12,9 +14,9 @@ import type { LibraryGroup, LibraryItem } from './diagnostics';
 import { t } from '../../i18n';
 
 const identity = (item: LibraryItem) => item.title || item.name || item.code || t('manage:healthList.videoFallback', { id: item.id });
-const listText = (items: LibraryItem[]) => [
+const listText = (items: LibraryItem[], libraryName: (item: LibraryItem) => string) => [
   [t('manage:shared.video'), t('manage:shared.code'), t('manage:shared.fileName'), t('manage:shared.library'), t('manage:shared.path'), t('manage:healthList.durationSeconds'), t('manage:healthList.sizeBytes')],
-  ...items.map(item => [identity(item), item.code ?? '', item.name, LOC[item.location] || item.location,
+  ...items.map(item => [identity(item), item.code ?? '', item.name, libraryName(item),
     item.path, item.duration ?? '', item.size ?? '']),
 ].map(row => row.map(value => String(value ?? '').replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n');
 
@@ -23,19 +25,23 @@ export function HealthList({ group, openItem, receipt }: {
 }) {
   const action = useAction();
   const [selected, setSelected] = useState<string[]>([]);
+  const tints = useLibraryTints({ names: true });
+  const libraryName = (item: LibraryItem) => tints.get(item.library_id || '')?.name || LOC[item.location] || item.location;
   const copy = (items: LibraryItem[]) => void action.run('copy',
-    () => navigator.clipboard.writeText(listText(items)), () => receipt(t('manage:healthList.copied')));
+    () => navigator.clipboard.writeText(listText(items, libraryName)), () => receipt(t('manage:healthList.copied')));
   const columns: DataColumn<LibraryItem>[] = [
+    /* 标题与作品列表同一个截法：从头读起，长了折到第二行再截尾，全名在悬停提示里。 */
     { id: 'title', label: t('manage:shared.video'), value: identity, render: item => <span className="flex min-w-0 flex-col gap-1">
-      <LinkButton variant="primary" className="justify-start whitespace-normal text-left"
-        onClick={() => openItem(item.id)}>{identity(item)}</LinkButton>
+      <LinkButton variant="primary" title={identity(item)} data-health-title=""
+        className="max-w-full justify-start whitespace-normal text-left"
+        onClick={() => openItem(item.id)}><span className="line-clamp-2 wrap-anywhere">{identity(item)}</span></LinkButton>
       {item.name && item.name !== identity(item)
         ? <span data-middle-truncate title={item.name} className="block min-w-0 text-caption-1-regular text-text-secondary">{item.name}</span> : null}
     </span> },
     { id: 'code', label: t('manage:shared.code'), width: 144, value: item => item.code || '',
       render: item => <span className="whitespace-nowrap">{item.code || t('manage:shared.unrecognized')}</span> },
-    { id: 'location', label: t('manage:shared.library'), width: 128, value: item => LOC[item.location] || item.location,
-      render: item => LOC[item.location] || item.location || t('manage:shared.notFound') },
+    { id: 'location', label: t('manage:shared.library'), width: 160, value: libraryName,
+      render: item => <ItemLibrary libraryId={item.library_id} location={item.location} fallback={t('manage:shared.notFound')} /> },
     { id: 'path', label: t('manage:healthList.filePath'), width: 320, min: 180, value: item => item.path,
       render: item => <span data-middle-truncate title={item.path}
         className="block min-w-0 w-full text-body-2-regular text-text-secondary">{item.path || t('manage:shared.notFound')}</span> },

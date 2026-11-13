@@ -17,14 +17,18 @@ from pathlib import Path
 
 from . import seed_pack, seed_corrections, seed_validation
 from .followups import Followup, FollowupType, register
+from .task_outcomes import joined, part, said
+from .task_runs import item_progress
+from .user_messages import UserValueError
 
 TASK_KEY = "seed-import"
 TASK_LABEL = "初始资料导入"
 REVIEW_FILE = "seed-landing.csv"
 FIELDS = ("kind", "entity", "field", "ours", "source", "theirs", "detail", "batch", "withdrawal_id", "evidence")
-#: 活动页摘要里的计数键与它们的中文名，按这个顺序拼结论。
-SUMMARY_LABELS = (("aliases", "别名"), ("refs", "编号"), ("links", "链接"), ("profiles", "资料"),
-                  ("memberships", "归属"), ("makers", "片商"), ("refreshed", "换新"), ("withdrawn", "撤销"), ("names", "中文名"))
+#: 活动页摘要里的计数键与它们在结论里的 code（`task_outcomes`），按这个顺序拼结论。
+SUMMARY_LABELS = (("aliases", "seedAliases"), ("refs", "seedRefs"), ("links", "seedLinks"),
+                  ("profiles", "seedProfiles"), ("memberships", "seedMemberships"), ("makers", "seedMakers"),
+                  ("refreshed", "seedRefreshed"), ("withdrawn", "seedWithdrawn"), ("names", "seedNames"))
 
 
 def followup_key(version: str, content_hash: str = "") -> str:
@@ -82,7 +86,7 @@ def plan(connection: sqlite3.Connection, *, since_entity_id: int, pack_path: Pat
     key = followup_key(version, digest)
     if landed(connection, key) and not _new_entities(connection, since_entity_id):
         return []
-    return [Followup(key=key, task_key=TASK_KEY, label=f"{TASK_LABEL}：{version}")]
+    return [Followup.item(key, TASK_KEY, version)]
 
 
 def _rows(report: dict) -> list[dict]:
@@ -109,24 +113,23 @@ def record_review(root: Path, report: dict) -> Path:
     return path
 
 
-def outcome(report: dict) -> str:
-    parts = [f"{label} {report[key]}" for key, label in SUMMARY_LABELS if report.get(key)]
-    if report["conflicts"]:
-        parts.append(f"不一致 {len(report['conflicts'])}")
-    if report["duplicates"]:
-        parts.append(f"重复身份 {len(report['duplicates'])}")
-    if report.get("withdrawal_conflicts"):
-        parts.append(f"撤销待复核 {len(report['withdrawal_conflicts'])}")
-    return "、".join(parts) if parts else f"没有可补的（对上 {report['matched']} 位）"
+def outcome(report: dict) -> list[dict]:
+    """活动页上那一行的段落（`task_outcomes`）：各类补了几条，以及要人看的几类。"""
+    counts = [part(code, count=report[key]) for key, code in SUMMARY_LABELS if report.get(key)]
+    for key, code in (("conflicts", "seedConflicts"), ("duplicates", "seedDuplicates"),
+                      ("withdrawal_conflicts", "seedWithdrawalConflicts")):
+        if report.get(key):
+            counts.append(part(code, count=len(report[key])))
+    return joined(counts, "listComma") if counts else [part("seedNothing", count=report["matched"])]
 
 
 def run(contract, key: str, handle) -> dict:
     """将随应用分发的种子包补进账本；测试使用临时种子包。"""
     pack = seed_pack.load(seed_pack.DEFAULT_PACK)
     if key != followup_key(pack["version"], seed_validation.digest(pack)):
-        raise ValueError("种子内容与排队任务的摘要不一致，请重新派发")
+        raise UserValueError("errors.seedFollowup.digestMismatch")
     if handle is not None:
-        handle.progress(label=f"{TASK_LABEL}：{pack['version']}", throttle=0)
+        handle.progress(**item_progress(TASK_KEY, pack['version']), throttle=0)
     with contract.database.read_connection() as connection:
         rename = bool(seed_pack.plan(connection, pack).get("names"))
     if rename:
@@ -139,7 +142,7 @@ def run(contract, key: str, handle) -> dict:
     if seed_pack.written(report):
         contract.cache_bust()
     record_review(contract.candidate_root, report)
-    return {"outcome": outcome(report), "version": report["version"], "matched": report["matched"],
+    return {**said(outcome(report)), "version": report["version"], "matched": report["matched"],
             "unmatched": report["unmatched"], **{key: report.get(key, 0) for key, _label in SUMMARY_LABELS},
             "conflicts": len(report["conflicts"]), "duplicates": len(report["duplicates"]),
             "withdrawal_conflicts": len(report.get("withdrawal_conflicts", []))}

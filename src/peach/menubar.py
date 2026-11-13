@@ -67,7 +67,7 @@ class _Target(AppKit.NSObject):
         try:
             handler()
         except Exception:
-            LOGGER.exception("菜单项处理失败")
+            LOGGER.exception("Menu item handler failed")
 
     def invoke_(self, sender) -> None:
         self._dispatch(sender)
@@ -171,7 +171,7 @@ class MenuBarApp:
         看着像「没放上去」其实只是早了一步。
         """
         def report() -> None:
-            LOGGER.info("菜单栏状态项位置：%s", self.placement())
+            LOGGER.info("Menu bar status item position: %s", self.placement())
 
         AppKit.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
             1.0, False, lambda _timer: report())

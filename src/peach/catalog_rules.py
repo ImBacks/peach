@@ -965,8 +965,17 @@ def _tokyo_hot_from_text(text: str) -> str:
     return ""
 
 
+class CodePatternError(ValueError):
+    """番号识别规则写错了。`code`、`params` 是给用户看的那句的语言资源键与参数，调用方据此转成带 code 的报错
+    （本模块是最底层的纯规则，不依赖 Peach 的其他模块）。"""
+
+    def __init__(self, code: str, params: dict | None = None) -> None:
+        self.code, self.params = code, dict(params or {})
+        super().__init__(f"invalid code pattern ({code})")
+
+
 def compile_code_patterns(raw) -> tuple[re.Pattern, ...]:
-    """把用户写的番号识别规则编译成正则；写错的规则抛 `ValueError`，消息给用户看。
+    """把用户写的番号识别规则编译成正则；写错的规则抛 `CodePatternError`（`ValueError`），带给用户看的 code。
 
     每条规则是一个对完整文件名做搜索的正则。番号取命名组 `code`，没有就取第一个
     括号，再没有就取整段匹配。`(?<code>…)` 是多数在线正则工具的写法，Python 写作
@@ -975,18 +984,20 @@ def compile_code_patterns(raw) -> tuple[re.Pattern, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, (list, tuple)):
-        raise ValueError("番号识别规则要写成一组正则表达式")
+        raise CodePatternError("errors.catalogRules.codePatternsNotList")
     rules = [str(rule).strip() for rule in raw if str(rule or "").strip()]
     if len(rules) > CODE_PATTERN_LIMIT:
-        raise ValueError(f"番号识别规则最多 {CODE_PATTERN_LIMIT} 条")
+        raise CodePatternError("errors.catalogRules.codePatternsTooMany", {"limit": CODE_PATTERN_LIMIT})
     compiled = []
     for index, rule in enumerate(rules, 1):
         if len(rule) > CODE_PATTERN_MAX_LENGTH:
-            raise ValueError(f"第 {index} 条规则超过 {CODE_PATTERN_MAX_LENGTH} 个字符")
+            raise CodePatternError("errors.catalogRules.codePatternTooLong",
+                                   {"index": index, "limit": CODE_PATTERN_MAX_LENGTH})
         try:
             compiled.append(re.compile(_PCRE_NAMED_GROUP.sub("(?P<", rule), re.I))
         except re.error as error:
-            raise ValueError(f"第 {index} 条规则不是有效的正则表达式：{error}") from None
+            raise CodePatternError("errors.catalogRules.codePatternInvalid",
+                                   {"index": index, "error": str(error)}) from None
     return tuple(compiled)
 
 

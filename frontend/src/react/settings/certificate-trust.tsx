@@ -42,7 +42,7 @@ export function QrCode({ rows, label }: { rows: string[]; label: string }) {
 }
 
 const STEPS: readonly [string, string][] = [
-  ['iPhone／iPad', t('settings:certificateTrust.iosSteps')],
+  [t('settings:certificateTrust.iosDevices'), t('settings:certificateTrust.iosSteps')],
   ['Android', t('settings:certificateTrust.androidSteps')],
   [t('settings:certificateTrust.computer'), t('settings:certificateTrust.computerSteps')],
 ];

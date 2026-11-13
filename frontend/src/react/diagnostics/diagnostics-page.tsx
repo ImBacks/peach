@@ -15,7 +15,7 @@ import { busyProps, useAction } from '../settings/use-action';
 import { DIAGNOSTICS_KEY, fetchDiagnostics, type DiagnosticCheck } from './diagnostics';
 import { HealthList } from './health-list';
 import { DiagnosticExportAction, ScrapingExport } from './scraping-export';
-import { t } from '../../i18n';
+import { interfaceLanguage, t } from '../../i18n';
 
 const STATUS: Record<string, string> = { ok: t('manage:diagnostics.statusOk'), warning: t('manage:diagnostics.statusWarning'), failed: t('manage:diagnostics.statusFailed'), unknown: t('manage:shared.notFound'), disabled: t('manage:diagnostics.statusDisabled'),
   stale: t('manage:diagnostics.statusStale'), unchecked: t('manage:diagnostics.statusUnchecked') };
@@ -27,7 +27,7 @@ const SECTIONS = [
   [t('manage:diagnostics.groupConfig'), ['configured', 'security', 'port', 'version']],
   [t('manage:diagnostics.groupTasks'), ['tasks']],
 ] as const;
-const moment = (value: string) => new Date(value).toLocaleString();
+const moment = (value: string) => new Date(value).toLocaleString(interfaceLanguage);
 
 function DiagnosticStatus({ status }: { status: string }) {
   return <Chip variant="caption" data-diagnostic-status={status}

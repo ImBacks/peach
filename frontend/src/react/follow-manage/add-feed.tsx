@@ -21,6 +21,7 @@ import { ExternalLink, FieldLabel, Help } from '../settings/section';
 import { busyProps, useAction } from '../settings/use-action';
 import { composingKey } from '../components/ime';
 import { followFeedByName, followFeedEntity, lookupFeedActor, type FeedCandidate, type FeedLookup } from './follow-manage';
+import { serverLabel } from '../../core/server-text';
 import { joinList, t } from '../../i18n';
 
 const PLACEHOLDER = t('follow:addJavFeed.placeholder');
@@ -127,7 +128,7 @@ export function AddFeed({ readOnly, toast, onAdded }: AddFeedProps) {
 
       {result ? (
         <div className="flex flex-col gap-3">
-          {result.unavailable ? <Note tone="warning" title={t('follow:addJavFeed.javdbSearchFailed')}>{result.unavailable}</Note> : null}
+          {result.unavailable ? <Note tone="warning" title={t('follow:addJavFeed.javdbSearchFailed')}>{serverLabel(result.unavailable_code ?? '', result.unavailable, result.unavailable_params)}</Note> : null}
           <FieldLabel>{t('follow:addJavFeed.javdbCards')}</FieldLabel>
           {result.candidates.length ? result.candidates.map((card) => (
             <CandidateRow key={card.id} card={card} picked={picked.has(card.id)}

@@ -42,12 +42,13 @@ def doctor_endpoint(config):
 
 
 def configuration(config, configured, *, validate=True):
-    try:
-        if validate:
+    unreadable = not validate and settings_file.error() is not None
+    if validate:
+        try:
             settings_file.load_config(environ=dict(os.environ, PEACH_DATA_ROOT=str(config.data_root)))
-        elif settings_file.error():
-            raise settings_file.SettingsFileError("配置文件无法读取")
-    except settings_file.SettingsFileError:
+        except settings_file.SettingsFileError:
+            unreadable = True
+    if unreadable:
         return item("配置", "failed", "配置文件无法读取", action="在本机修复配置文件")
     if not configured:
         return item("配置", "failed", "尚未完成首次配置", action="完成首次配置", target="/settings/library")

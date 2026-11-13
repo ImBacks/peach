@@ -30,7 +30,7 @@ def _part(name, read):
     try:
         return read()
     except Exception:  # noqa: BLE001 - 一组取不到只缺那一组，原因记日志
-        LOGGER.exception("搜索推荐的「%s」一组未取得", name)
+        LOGGER.exception("Search suggestions group \"%s\" unavailable", name)
         return None
 
 

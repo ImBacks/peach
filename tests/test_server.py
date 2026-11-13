@@ -190,6 +190,12 @@ class ServerTests(unittest.TestCase):
                 self.assertEqual(server.supervise("0.0.0.0", 8900, stopping), 0)
         self.assertEqual([arguments[:2] for arguments in launched], [("serve", "--setup"), ("serve", "--host")])
 
+    def test_the_container_log_line_follows_the_command_line_language(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = settings_file.load_config(environ={"PEACH_DATA_ROOT": str(Path(directory).resolve())})
+            with patch.dict(server.os.environ, {server.ACCESS_PASSWORD_ENV: "container-secret", "PEACH_LANGUAGE": "en"}):
+                self.assertEqual(server.seed_access_password(config), "Access password set from PEACH_ACCESS_PASSWORD.")
+
     def test_access_password_from_the_environment_is_written_once_and_never_echoed(self):
         from peach import access
         with tempfile.TemporaryDirectory() as directory:

@@ -388,7 +388,7 @@ class EntityThumbnailTests(unittest.TestCase):
         destination = self.service.thumbnail(self.KEY, self.source)
         original = self.source.read_bytes()
         def deny():
-            raise DiskSpaceDenied('capacity')
+            raise DiskSpaceDenied('errors.storageBudget.cacheWritesStopped', {'reasons': '缓存超限'})
         self.service.capacity_guard = SimpleNamespace(check=deny)
         self.assertEqual(self.service.thumbnail(self.KEY, self.source), destination)
         destination.unlink()

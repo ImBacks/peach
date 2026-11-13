@@ -16,6 +16,7 @@ import httpx
 
 from .fsutil import atomic_write_text
 from .http import HttpRequest
+from .user_messages import UserOSError, UserValueError
 
 REPOSITORY = "longmeidao/peach"
 REGISTRY = "https://registry-1.docker.io"
@@ -35,7 +36,6 @@ TOKEN_NAME = "watchtower-token"
 #: compose 把 `${PEACH_VERSION:-edge}` 传进来。Watchtower 只换同一标签的新镜像，钉了版本号就换不动。
 IMAGE_TAG_ENV = "PEACH_IMAGE_TAG"
 ROLLING_TAG = "edge"
-RESTART_WATCHTOWER = "在 compose.yaml 所在目录运行 docker compose restart watchtower 后重试"
 
 
 def image_tag() -> str:
@@ -69,10 +69,10 @@ def _digest(transport, tag: str, token: str) -> str | None:
     if response.status == 404:
         return None
     if response.status != 200:
-        raise OSError(f"Docker Hub 返回 HTTP {response.status}")
+        raise OSError(f"Docker Hub returned HTTP {response.status}")
     digest = {key.lower(): value for key, value in response.headers.items()}.get("docker-content-digest", "")
     if not _DIGEST.fullmatch(digest):
-        raise ValueError("Docker Hub 返回的镜像摘要无效")
+        raise ValueError("Docker Hub returned an invalid image digest")
     return digest
 
 
@@ -81,11 +81,11 @@ def published(transport, version: str) -> bool:
     response = transport(HttpRequest("GET", REGISTRY_AUTH + "?service=registry.docker.io&scope=repository:"
                                      + REPOSITORY + ":pull", {"Accept": "application/json"}), 12.0, 64_000)
     if response.status != 200:
-        raise OSError(f"Docker Hub 令牌请求返回 HTTP {response.status}")
+        raise OSError(f"Docker Hub token request returned HTTP {response.status}")
     body = json.loads(response.body)
     token = body.get("token") or body.get("access_token") if isinstance(body, dict) else None
     if not isinstance(token, str) or not token:
-        raise ValueError("Docker Hub 没有返回匿名令牌")
+        raise ValueError("Docker Hub did not return an anonymous token")
     target = _digest(transport, version, token)
     return target is not None and target == _digest(transport, ROLLING_TAG, token)
 
@@ -120,17 +120,19 @@ def trigger(*, transport: httpx.BaseTransport | None = None) -> dict:
     """
     state = status(transport=transport)
     if not state["available"]:
-        raise ValueError(state["reason"] or "没有检测到 Watchtower，请用 compose 的 watchtower profile 启动")
+        if not state["reason"]:
+            raise UserValueError("errors.dockerUpdate.watchtowerMissing")
+        raise ValueError(state["reason"])
     try:
         with _client(transport, 15.0) as client:
             response = client.post(WATCHTOWER_URL + "/v1/update", params={"async": "true"},
                                    headers={"Authorization": f"Bearer {_token()}"})
     except httpx.HTTPError as error:
-        raise OSError(f"连不上 Watchtower（{type(error).__name__}），请稍后重试") from error
+        raise UserOSError("errors.dockerUpdate.unreachable", {"error": type(error).__name__}) from error
     if response.status_code == 202:
         return {"state": "updating", "message": "Watchtower 正在拉取新镜像并重建容器。"}
     if response.status_code == 401:
-        raise ValueError(f"Watchtower 读到的令牌与 Peach 不一致；{RESTART_WATCHTOWER}")
+        raise UserValueError("errors.dockerUpdate.tokenMismatch")
     if response.status_code == 429:
-        raise ValueError("Watchtower 正在执行另一次更新，请稍后再试")
-    raise OSError(f"Watchtower 返回 HTTP {response.status_code}")
+        raise UserValueError("errors.dockerUpdate.busy")
+    raise UserOSError("errors.dockerUpdate.httpStatus", {"status": response.status_code})

@@ -18,10 +18,12 @@ import { Disclosure } from '../settings/section';
 import { ShellActionsContext } from '../router/router';
 import { PURPOSES, type FolderPurpose, type FolderRule, type MediaFolder } from './catalog-folders';
 import { t } from '../../i18n';
+import { serverLabel } from '../../core/server-text';
 
 interface Preview {
   plan_version: string; total: number; applicable: number; withdrawn: number;
-  conflicts: { id: number; name: string; reason: string }[];
+  /** `reason` 是服务端按 zh-CN 渲染的原因，`reason_code` 给当前语言取译文。 */
+  conflicts: { id: number; name: string; reason: string; reason_code?: string }[];
   sample: { id: number; name: string }[];
 }
 
@@ -88,7 +90,7 @@ export function FolderRuleDialog({ folder, rule, revision, close }: {
             {preview.sample.map(item => <li className="wrap-anywhere" key={item.id}>{item.name}</li>)}
           </ul> : null}
           {preview.conflicts.length ? <Note tone="warning" extra={<Disclosure summary={t('catalog:catalogFolders.viewConflicts')}>
-            <ul className="mt-2 flex flex-col gap-2">{preview.conflicts.slice(0, 30).map(item => <li className="wrap-anywhere" key={item.id}>{item.name}：{item.reason}</li>)}</ul>
+            <ul className="mt-2 flex flex-col gap-2">{preview.conflicts.slice(0, 30).map(item => <li className="wrap-anywhere" key={item.id}>{t('shell:format.labelValue', { label: item.name, value: serverLabel(item.reason_code ?? '', item.reason) })}</li>)}</ul>
           </Disclosure>}>{t('catalog:folderRule.conflictNote')}</Note> : null}
         </section> : null}
         {action.error ? <Note tone="error">{action.error}</Note> : null}

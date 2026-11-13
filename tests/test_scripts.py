@@ -24,6 +24,8 @@ from peach import follow_image_dims, scripting
 from peach.follow_sources import FollowCandidate, SourceFetch
 from peach.follow_store import FollowStore
 from peach.http import HttpResponse
+from peach.metadata import relayed
+from peach.user_messages import UserOSError
 from peach.migrations import upgrade
 from peach.scan import medium_of
 from support.ledger import fresh_ledger
@@ -68,19 +70,19 @@ class ProjectBoardTests(unittest.TestCase):
     def test_待补模板关闭两小时内不移动随后补齐保持原位置(self):
         issue = self.issue(state="CLOSED", stateReason="NOT_PLANNED", closedAt="2026-11-06T02:00:00Z",
                            labels={"nodes": [{"name": "status:needs-template"}]})
-        current = {"Status": "待评估"}
-        for hour, minute, expected in ((2, 0, "待评估"), (3, 59, "待评估"), (4, 0, "已取消")):
+        current = {"Status": "Needs triage"}
+        for hour, minute, expected in ((2, 0, "Needs triage"), (3, 59, "Needs triage"), (4, 0, "Canceled")):
             with self.subTest(hour=hour, minute=minute):
                 with mock.patch.object(self.script, "datetime") as clock:
                     clock.now.return_value = datetime(2026, 11, 6, hour, minute, tzinfo=timezone.utc)
                     clock.fromisoformat.side_effect = datetime.fromisoformat
                     self.assertEqual(self.script.decision(issue, current, [], None)["Status"], expected)
         reopened = {**issue, "state": "OPEN", "closedAt": None, "labels": {"nodes": []}}
-        self.assertEqual(self.script.decision(reopened, current, [], None)["Status"], "待评估")
+        self.assertEqual(self.script.decision(reopened, current, [], None)["Status"], "Needs triage")
 
     def test_普通关闭不等待补模板缓冲(self):
         issue = self.issue(state="CLOSED", stateReason="NOT_PLANNED", closedAt="2026-11-06T02:00:00Z")
-        self.assertEqual(self.script.decision(issue, {"Status": "待评估"}, [], None)["Status"], "已取消")
+        self.assertEqual(self.script.decision(issue, {"Status": "Needs triage"}, [], None)["Status"], "Canceled")
 
     def test_看板新条目先按模板校验并保留维护者豁免(self):
         invalid = self.issue(id="invalid", number=444, body="nas中docker无法自动更新", issueType={"name": "Feature"})
@@ -98,11 +100,11 @@ class ProjectBoardTests(unittest.TestCase):
     def test_整体同步在缓冲期不写状态到期只移动一次(self):
         issue = self.issue(id="issue", number=444, title="更新失败", state="CLOSED", stateReason="NOT_PLANNED",
                            closedAt="2026-11-06T02:00:00Z", labels={"nodes": [{"name": "status:needs-template"}]})
-        current = {"Status": "待评估", "交付进度": "未关联实现"}
+        current = {"Status": "Needs triage", "Delivery": "No linked work"}
         item = {"id": "item", "content": issue, "isArchived": False}
-        fields = {name: {"id": name} for name in ("发布版本", "发布说明", "实现关联")}
-        fields["Status"] = {"id": "Status", "options": [{"id": name, "name": name} for name in ("待评估", "已取消")]}
-        fields["交付进度"] = {"id": "交付进度", "options": [{"id": "未关联实现", "name": "未关联实现"}]}
+        fields = {name: {"id": name} for name in ("Release", "Release notes", "Implementation")}
+        fields["Status"] = {"id": "Status", "options": [{"id": name, "name": name} for name in ("Needs triage", "Canceled")]}
+        fields["Delivery"] = {"id": "Delivery", "options": [{"id": "No linked work", "name": "No linked work"}]}
         config = {"repository": "peach-mitao/peach", "project_id": "public"}
         def update(query, **variables):
             current[variables["field"]] = variables["value"]["singleSelectOptionId"]
@@ -123,85 +125,94 @@ class ProjectBoardTests(unittest.TestCase):
             issue.update(state="CLOSED", closedAt="2026-11-06T02:00:00Z",
                          labels={"nodes": [{"name": "status:needs-template"}]})
             changes = self.script.reconcile(config, apply=True)
-            self.assertEqual([(change["field"], change["value"]) for change in changes], [("Status", "已取消")])
+            self.assertEqual([(change["field"], change["value"]) for change in changes], [("Status", "Canceled")])
             self.assertEqual(self.script.reconcile(config, apply=True), [])
             api.assert_called_once()
 
     def test_merge_and_publication_keep_open_issue_waiting_for_acceptance(self):
         release = {"tag_name": "v1.2.0", "html_url": "https://example.test/release"}
-        result = self.script.decision(self.issue(), {"Status": "进行中"}, [{"merged": True}], release)
-        self.assertEqual(result["Status"], "待验证")
-        self.assertEqual(result["交付进度"], "已发布")
-        self.assertEqual(result["发布版本"], "v1.2.0")
+        result = self.script.decision(self.issue(), {"Status": "In progress"}, [{"merged": True}], release)
+        self.assertEqual(result["Status"], "Needs verification")
+        self.assertEqual(result["Delivery"], "Released")
+        self.assertEqual(result["Release"], "v1.2.0")
 
     def test_closed_not_planned_is_cancelled_and_reopened_returns_to_queue(self):
         result = self.script.decision(self.issue(state="CLOSED", stateReason="NOT_PLANNED"), {}, [], None)
-        self.assertEqual(result["Status"], "已取消")
-        result = self.script.decision(self.issue(), {"Status": "已取消"}, [], None)
-        self.assertEqual(result["Status"], "待安排")
+        self.assertEqual(result["Status"], "Canceled")
+        result = self.script.decision(self.issue(), {"Status": "Canceled"}, [], None)
+        self.assertEqual(result["Status"], "Backlog")
 
     def test_manual_priority_and_queue_are_not_replaced_by_unrelated_activity(self):
-        result = self.script.decision(self.issue(), {"Status": "待安排", "Priority": "P1"}, [], None)
-        self.assertEqual(result["Status"], "待安排")
+        result = self.script.decision(self.issue(), {"Status": "Backlog", "Priority": "P1"}, [], None)
+        self.assertEqual(result["Status"], "Backlog")
         self.assertNotIn("Priority", result)
         waiting = self.issue(labels={"nodes": [{"name": "status:needs-info"}]})
-        self.assertEqual(self.script.decision(waiting, {}, [{"merged": True}], None)["Status"], "待评估")
+        self.assertEqual(self.script.decision(waiting, {}, [{"merged": True}], None)["Status"], "Needs triage")
 
     def test_reference_lines_exclude_other_repositories_and_casual_mentions(self):
         body = "参考 #64 的讨论\nRefs #65, peach-mitao/peach#66, other/repo#67\nCloses #68"
         self.assertEqual(self.script.references(body, "peach-mitao/peach"),
                          {f"peach-mitao/peach#{number}" for number in (65, 66, 68)})
 
-    def test_migrated_references_deduplicate_without_cross_repository_number_collision(self):
+    def test_transferred_issue_keeps_old_references_without_number_collision(self):
         main, planning = "peach-mitao/peach", "peach-mitao/peach-roadmap"
-        config = {"repository": main, "issue_repositories": [main, planning],
-                  "issue_aliases": {f"{main}#70": f"{planning}#1"}}
+        config = {"repository": main, "issue_repositories": [main],
+                  "issue_aliases": {f"{main}#70": f"{planning}#1", f"{planning}#1": f"{main}#555"}}
         pr = {"state": "MERGED", "merged": True, "mergeCommit": {"oid": "a" * 40}, "url": "https://example.test/pr",
               "body": f"Refs #70, {planning}#1, other/repo#1\nRefs https://github.com/{planning}/issues/1",
-              "closingIssuesReferences": {"nodes": [self.issue(number=1, repository={"nameWithOwner": planning}),
-                                                       self.issue(number=1, repository={"nameWithOwner": "other/repo"})]}}
+              "closingIssuesReferences": {"nodes": [self.issue(number=1, repository={"nameWithOwner": "other/repo"})]}}
         linked = self.script.issue_links([pr], config)
-        self.assertEqual(linked, {f"{planning}#1": [pr]})
+        self.assertEqual(linked, {f"{main}#555": [pr]})
         config["implementation_commits"] = {f"{main}#1": ["b" * 40]}
         with mock.patch.object(self.script, "ancestor") as ancestry:
             untouched = self.script.delivery_fields(config, self.issue(number=1, repository={"nameWithOwner": planning}), {}, {}, [])
-        self.assertEqual(untouched["交付进度"], "未关联实现")
+        self.assertEqual(untouched["Delivery"], "No linked work")
         ancestry.assert_not_called()
         release = {"tag_name": "v1.0", "html_url": "https://example.test/v1.0"}
         with mock.patch.object(self.script, "ancestor", return_value=True) as ancestry:
-            result = self.script.delivery_fields(config, self.issue(number=1, repository={"nameWithOwner": planning}), {}, linked, [release])
-        self.assertEqual(result["发布版本"], "v1.0")
-        self.assertEqual(result["实现关联"], pr["url"])
+            result = self.script.delivery_fields(config, self.issue(number=555), {}, linked, [release])
+        self.assertEqual(result["Release"], "v1.0")
+        self.assertEqual(result["Implementation"], pr["url"])
         self.assertTrue(all(call.args[0] == "a" * 40 for call in ancestry.call_args_list))
         with mock.patch.object(self.script, "ancestor") as ancestry:
             result = self.script.delivery_fields(config, self.issue(number=1), {}, linked, [])
-        self.assertEqual(result["交付进度"], "已合入待发布")
+        self.assertEqual(result["Delivery"], "Merged")
         ancestry.assert_called_once_with("b" * 40, "origin/master")
 
-    def test_planning_poll_includes_closed_issues_and_alias_cycles_fail(self):
-        main, planning = "peach-mitao/peach", "peach-mitao/peach-roadmap"
-        closed = self.issue(id="closed", state="CLOSED")
-        with mock.patch.object(self.script, "connection", side_effect=[[], [closed]]) as read:
-            result = self.script.incoming_issues({"repository": main, "planning_repository": planning,
-                                                  "issue_repositories": [main, planning]})
-        self.assertEqual(result, [closed])
-        self.assertEqual(read.call_args_list[0].kwargs["states"], ["OPEN"])
-        self.assertIsNone(read.call_args_list[1].kwargs["states"])
+    def test_poll_reads_open_issues_and_alias_cycles_fail(self):
+        with mock.patch.object(self.script, "connection", return_value=[]) as read:
+            self.script.incoming_issues({"repository": "peach-mitao/peach", "issue_repositories": ["peach-mitao/peach"]})
+        self.assertEqual(read.call_args.kwargs["states"], ["OPEN"])
         with self.assertRaisesRegex(ValueError, "循环"):
             self.script.canonical("a", {"a": "b", "b": "a"})
 
+    def test_reply_state_follows_the_last_human_speaker(self):
+        def said(*associations, bot_last=False):
+            nodes = [{"authorAssociation": a, "author": {"__typename": "User"}} for a in associations]
+            if bot_last:
+                nodes.append({"authorAssociation": "NONE", "author": {"__typename": "Bot"}})
+            return {"nodes": nodes}
+        self.assertEqual(self.script.reply_state(self.issue(comments=said())), "Needs reply")
+        self.assertEqual(self.script.reply_state(self.issue(comments=said("MEMBER"))), "Replied")
+        self.assertEqual(self.script.reply_state(self.issue(comments=said("OWNER", "NONE"))), "Needs reply")
+        self.assertEqual(self.script.reply_state(self.issue(comments=said("MEMBER", bot_last=True))), "Replied")
+        own = self.issue(authorAssociation="MEMBER", comments=said("MEMBER"))
+        self.assertEqual(self.script.reply_state(own), "")
+        self.assertEqual(self.script.reply_state({**own, "comments": said("CONTRIBUTOR")}), "Needs reply")
+        self.assertEqual(self.script.reply_state(self.issue(state="CLOSED", comments=said())), "")
+
     def test_pr_closure_is_distinct_from_merge(self):
         pr = {"__typename": "PullRequest", "state": "CLOSED", "merged": False}
-        self.assertEqual(self.script.decision(pr, {}, [], None)["Status"], "已关闭未合入")
+        self.assertEqual(self.script.decision(pr, {}, [], None)["Status"], "Closed unmerged")
         pr["merged"] = True
-        self.assertEqual(self.script.decision(pr, {}, [], None)["交付进度"], "已合入待发布")
+        self.assertEqual(self.script.decision(pr, {}, [], None)["Delivery"], "Merged")
 
     def test_reconcile_uses_published_assets_and_keeps_archived_items_untouched(self):
         commit = "a" * 40
-        fields = [{"id": name, "name": name} for name in ("发布版本", "发布说明", "实现关联")]
-        fields += [{"id": "status", "name": "Status", "options": [{"id": "verify", "name": "待验证"}]},
-                   {"id": "delivery", "name": "交付进度", "options": [{"id": "published", "name": "已发布"}]},
-                   {"id": "source", "name": "来源", "options": [{"id": "feedback", "name": "用户反馈"}, {"id": "plan", "name": "维护者待办"}]}]
+        fields = [{"id": name, "name": name} for name in ("Release", "Release notes", "Implementation")]
+        fields += [{"id": "status", "name": "Status", "options": [{"id": "verify", "name": "Needs verification"}]},
+                   {"id": "delivery", "name": "Delivery", "options": [{"id": "published", "name": "Released"}]},
+                   {"id": "source", "name": "Source", "options": [{"id": "feedback", "name": "Community"}, {"id": "plan", "name": "Maintainer"}]}]
         issue = self.issue(id="issue", number=65, title="历史导入", author={"login": "visitor"}, url="https://github.com/peach-mitao/peach/issues/65")
         item = {"id": "item", "content": issue, "isArchived": False, "fieldValues": {"nodes": []}}
         archived = {**item, "id": "archive", "isArchived": True, "content": {**issue, "id": "old", "number": 90}}
@@ -231,16 +242,16 @@ class ProjectBoardTests(unittest.TestCase):
                 mock.patch.object(self.script, "ancestor", return_value=True):
             changes = self.script.reconcile({"project_id": "project", "repository": "peach-mitao/peach",
                                               "implementation_commits": {"peach-mitao/peach#65": [commit]}}, apply=True)
+            issue["authorAssociation"] = "MEMBER"
             maintained = self.script.reconcile({"project_id": "project", "repository": "peach-mitao/peach",
-                                                "planning_repository": "peach-mitao/peach",
                                                 "implementation_commits": {"peach-mitao/peach#65": [commit]}}, apply=False)
         self.assertEqual({change["number"] for change in changes}, {65})
         actual = {change["field"]: change["value"] for change in changes}
-        self.assertEqual(actual["发布版本"], "v0.43.0")
-        self.assertEqual(actual["Status"], "待验证")
-        self.assertEqual(actual["来源"], "用户反馈")
-        self.assertEqual(next(change["value"] for change in maintained if change["field"]=="来源"), "维护者待办")
-        self.assertTrue(actual["实现关联"].endswith(commit))
+        self.assertEqual(actual["Release"], "v0.43.0")
+        self.assertEqual(actual["Status"], "Needs verification")
+        self.assertEqual(actual["Source"], "Community")
+        self.assertEqual(next(change["value"] for change in maintained if change["field"]=="Source"), "Maintainer")
+        self.assertTrue(actual["Implementation"].endswith(commit))
 
     def test_ancestor_uses_actual_commit_graph_and_rejects_unmerged_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -365,7 +376,7 @@ class DesktopSmokeTests(unittest.TestCase):
                 self.script.assert_public_resources(application)
 
     def test_cleanup_waits_for_a_released_windows_directory(self):
-        error = PermissionError('目录仍被占用')
+        error = PermissionError('The process cannot access the file because it is being used by another process')
         error.winerror = 32
         directory = mock.Mock()
         directory.cleanup.side_effect = [error, None]
@@ -376,7 +387,7 @@ class DesktopSmokeTests(unittest.TestCase):
     def test_cleanup_preserves_persistent_or_unrelated_failures(self):
         for winerror in (32, 5):
             with self.subTest(winerror=winerror):
-                error = PermissionError('无法清理')
+                error = PermissionError('Access is denied')
                 error.winerror = winerror
                 directory = mock.Mock()
                 directory.cleanup.side_effect = error
@@ -1153,7 +1164,7 @@ class LibraryDirectoryTests(unittest.TestCase):
                     if outcomes[index]:
                         receipt['entries'].append(dict(key=op['key'],status='committed'))
                         return None
-                    error=OSError('不支持该请求');error.winerror=50
+                    error=OSError('The request is not supported');error.winerror=50
                     receipt['failures'].append(dict(key=op['key'],source=op['source'],error=str(error)))
                     return error
                 with mock.patch.object(script,'DATABASE_PATH',ledger),mock.patch.object(script,'OUT',root), \
@@ -1218,7 +1229,7 @@ class LibraryDirectoryTests(unittest.TestCase):
         from peach.organize_clouddrive import MoveNotExecuted
         script = self.script
         def reject(source):
-            raise MoveNotExecuted('官方接口拒绝')
+            raise MoveNotExecuted('errors.organizeClouddrive.moveNotExecuted')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             ledger, translate, calls, operations, patches = self._provider_batch(root, reject)
@@ -1582,7 +1593,7 @@ class OperationalScriptTests(unittest.TestCase):
                 def __init__(self): self.calls = []
                 def query(self, code, source):
                     self.calls.append(code)
-                    raise error("timeout", kind="unavailable",
+                    raise error(*relayed("timeout"), kind="unavailable",
                                 retryable=True, temporary=True)
 
             provider = Flaky()
@@ -1652,7 +1663,7 @@ class OperationalScriptTests(unittest.TestCase):
                     self.calls.append((source, code))
                     if source == "javbus":
                         raise auth_error("javbus", "来源返回 403", status_code=403)
-                    raise error("no such code", kind="not_found")
+                    raise error(*relayed("no such code"), kind="not_found")
 
             provider = Walled()
             health = root / "health.csv"
@@ -3853,7 +3864,7 @@ class OperationalScriptTests(unittest.TestCase):
                     self.calls.append((code, source))
                     if source == "javbus" and code == "DEF-002":
                         raise self_error(
-                            "rate limited", kind="rate_limited", status_code=429,
+                            *relayed("rate limited"), kind="rate_limited", status_code=429,
                             retryable=True, temporary=True,
                         )
                     if source == "javbus":
@@ -3913,7 +3924,7 @@ class OperationalScriptTests(unittest.TestCase):
                 def query(self, code, source):
                     self.calls.append((code, source))
                     if code == "LUXU-1642":
-                        raise self_error("status 404", kind="not_found",
+                        raise self_error(*relayed("status 404"), kind="not_found",
                                          status_code=404, retryable=False, temporary=False)
                     return {"source": source, "id": "259LUXU-1642", "maker": "Maan Sha"}
 
@@ -4045,7 +4056,7 @@ class OperationalScriptTests(unittest.TestCase):
                     self.calls.append((code, source))
                     # DEF-002 在 r18.dev 与它兜底的 DMM 都没有，链才走到综合索引那一档。
                     if source == "makers" or (code == "DEF-002" and source in ("r18dev", "dmm")):
-                        raise self_error("status 404", kind="not_found", status_code=404)
+                        raise self_error(*relayed("status 404"), kind="not_found", status_code=404)
                     if code == "DEF-002":
                         return {"source": source, "id": code, "maker": "Studio B"}
                     return OperationalScriptTests._full_payload(code, source)
@@ -4179,17 +4190,17 @@ class OperationalScriptTests(unittest.TestCase):
         from peach.jav_cover_fetch import DeadlineExceeded, NotFound, Unavailable
         from peach.scraping_access import SourcePaused
         translate = self.scrape_codes.translate_failure
-        self.assertEqual((translate("javdb", NotFound("没有")).kind,
-                          translate("javdb", NotFound("没有")).retryable), ("not_found", False))
-        paused = translate("javdb", SourcePaused("来源正在冷却"))
+        self.assertEqual((translate("javdb", NotFound("errors.javdb.notFound")).kind,
+                          translate("javdb", NotFound("errors.javdb.notFound")).retryable), ("not_found", False))
+        paused = translate("javdb", SourcePaused("errors.scrapingAccess.coolingDown"))
         self.assertEqual((paused.kind, paused.status_code, paused.retryable), ("rate_limited", 429, True))
-        walled = translate("javdb", SourcePaused("javdb 返回 403，已冷却"))
+        walled = translate("javdb", SourcePaused(*relayed("HTTP 403")))
         self.assertEqual((walled.kind, walled.status_code, walled.retryable), ("auth", 403, False))
-        self.assertEqual(translate("fc2", DeadlineExceeded("预算用尽")).kind, "timeout")
-        flaky = translate("fc2", Unavailable("HTTP 503 upstream"))
+        self.assertEqual(translate("fc2", DeadlineExceeded("errors.javCoverFetch.deadline")).kind, "timeout")
+        flaky = translate("fc2", Unavailable(*relayed("HTTP 503")))
         self.assertEqual((flaky.kind, flaky.status_code, flaky.temporary), ("unavailable", 503, True))
         # 已经是本脚本分档的错误原样返回，不再套一层。
-        own = self.scrape_codes.MetadataProviderError("x", kind="identity_mismatch")
+        own = self.scrape_codes.MetadataProviderError("errors.base.codeMismatch", kind="identity_mismatch")
         self.assertIs(translate("javdb", own), own)
 
     def test_creator_tag_review_queue_requires_approval_and_backup(self):
@@ -5576,7 +5587,7 @@ class MainlineScopeTests(unittest.TestCase):
         self.git(root, "checkout", "-q", "master")
 
         def unavailable(_environ):
-            raise OSError("外部请求未取得（ConnectError）")
+            raise UserOSError("errors.peachProxy.requestFailed", {"kind": "ConnectError"})
         for name, pipelines in (("首次推送", []), ("强推后旧提交不是祖先", [{"sha": rewritten, "status": "success"}]),
                                 ("克隆里没有这个提交", [{"sha": "f" * 40, "status": "success"}]),
                                 ("只有本提交自己", [{"sha": head, "status": "success"}]),

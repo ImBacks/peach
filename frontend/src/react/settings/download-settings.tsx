@@ -34,6 +34,7 @@ import {
 import { busyProps, useAction } from './use-action';
 import { JavBrowserSettings } from './jav-browser-settings';
 import { CLOUD_LOCATIONS } from '../../core/media-sources';
+import { jobText, serverLabel } from '../../core/server-text';
 import { t } from '../../i18n';
 
 export const DOWNLOADS_URL = '/api/configuration/downloads';
@@ -44,6 +45,17 @@ const LOGOUT_URL = '/api/configuration/downloads/pikpak/logout';
 const BROWSER_URL = '/api/configuration/downloads/pikpak/browser-login';
 const POLL_MS = 2000;
 const PikPakIcon = providerIcon('pikpak');
+
+/** 设置块与检查报告里的问题：`problems` 是服务端按 zh-CN 渲染的原句，`problem_codes` 与之一一对应，
+ *  有译文用译文；缺 code 的旧原句照原文显示。 */
+const problemTexts = (body: Pick<DownloadSettingsState, 'problems' | 'problem_codes'>): string[] =>
+  (body.problems ?? []).map((problem, index) => {
+    const coded = body.problem_codes?.[index];
+    return coded?.code ? serverLabel(coded.code, problem, coded.params) : problem;
+  });
+/** 检查报告里缺的离线权限，`missing_codes` 与 `missing` 一一对应。 */
+const missingTexts = (report: DownloadCheckReport): string[] =>
+  report.missing.map((label, index) => serverLabel(report.missing_codes?.[index] ?? '', label));
 
 /** 「下载渠道」分组：CloudDrive2 与 PikPak 账号。 */
 export function DownloadGroup({ initial, receipt, panel, issues }: {
@@ -194,7 +206,7 @@ function DownloadForm({ state, settle, receipt, pikpakAccount }: CardProps & { p
 
   return (
     <Section guide="download" title={t('settings:cloudDownload.title')} onSubmit={submit}>
-      {state.problems?.length ? <Stack><Note tone="error" title={t('settings:cloudDownload.needsAttention')}>{state.problems.join('\n')}</Note></Stack> : null}
+      {state.problems?.length ? <Stack><Note tone="error" title={t('settings:cloudDownload.needsAttention')}>{problemTexts(state).join('\n')}</Note></Stack> : null}
       <Stack>
         <Input label={t('settings:cloudDownload.cloudDriveUrl')} placeholder={t('settings:cloudDownload.addressPlaceholder')} autoComplete="off" maxLength={200}
           value={config.clouddrive_address} isDisabled={!state.available}
@@ -286,7 +298,7 @@ function CheckReport({ report, detected, suggested, create, creating }: {
         {report.permissions.length ? (
           <Fact term={t('settings:cloudDownload.offlinePermissions')}>
             {report.missing.length
-              ? report.missing.map(permission => <Chip key={permission} variant="caption" color="yellow">{t('settings:cloudDownload.missingPermission', { permission })}</Chip>)
+              ? missingTexts(report).map(permission => <Chip key={permission} variant="caption" color="yellow">{t('settings:cloudDownload.missingPermission', { permission })}</Chip>)
               : <Chip variant="caption" color="lime">{t('settings:cloudDownload.permissionsComplete')}</Chip>}
           </Fact>
         ) : null}
@@ -297,7 +309,7 @@ function CheckReport({ report, detected, suggested, create, creating }: {
           <Fact term={<SourceLabel source="115" label={t('settings:cloudDownload.quota115')} />}>{t('settings:cloudDownload.quotaLeft', { count: report.quota.left, total: report.quota.total })}</Fact>
         ) : null}
       </FactList> : null}
-      {report.problems.map((problem) => <ErrorText key={problem}>{problem}</ErrorText>)}
+      {problemTexts(report).map((problem) => <ErrorText key={problem}>{problem}</ErrorText>)}
     </Stack>
   );
 }
@@ -330,7 +342,7 @@ function PikPakAccount({ state, settle, receipt, username, setUsername }: CardPr
         if (controller.signal.aborted) return;
         settle(next);
         if (next.pikpak_browser.state === 'done') receipt(t('settings:pikpakAccount.signedInReceipt'));
-        else if (next.pikpak_browser.state !== 'waiting') setOutcome(next.pikpak_browser.message);
+        else if (next.pikpak_browser.state !== 'waiting') setOutcome(jobText(next.pikpak_browser));
         if (next.pikpak_browser.state !== 'waiting') return;
       } catch (cause) {
         if (controller.signal.aborted) return;
@@ -350,7 +362,7 @@ function PikPakAccount({ state, settle, receipt, username, setUsername }: CardPr
 
   const cancelBrowser = () => {
     void action.run('cancel', (signal) => apiSend<DownloadSettingsState>(`${BROWSER_URL}/cancel`, {}, 'POST', signal),
-      (next) => { settle(next); setFailure(''); setOutcome(next.pikpak_browser.message); },
+      (next) => { settle(next); setFailure(''); setOutcome(jobText(next.pikpak_browser)); },
       (cause) => setFailure(errorMessage(cause)));
   };
 
@@ -421,7 +433,7 @@ function PikPakAccount({ state, settle, receipt, username, setUsername }: CardPr
       )}
       {failure || action.error ? <Stack divided><ErrorText>{failure || action.error}</ErrorText></Stack> : null}
       <Footer status={!account.logged_in && waiting
-        ? <LoadingDots label={browser.message || t('settings:pikpakAccount.waitingBrowser')} /> : null}>
+        ? <LoadingDots label={jobText(browser) || t('settings:pikpakAccount.waitingBrowser')} /> : null}>
         {account.logged_in ? (
           <Button variant="secondary" onClick={logout} disabled={!state.available} {...busyProps(action.busy === 'logout')}>{t('settings:shared.signOut')}</Button>
         ) : <>{!browser.available ? null : waiting ? (

@@ -29,6 +29,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import distribution
+from .project_root import PROJECT_ROOT, _project_root  # noqa: F401  # 调用方仍从这里导入
+from .user_messages import UserFacingError
 
 #: 设置文件名。位置固定为 Peach 数据目录下，不做多候选路径搜索。
 SETTINGS_FILENAME = "config.toml"
@@ -55,25 +57,13 @@ _LOCATIONS_KEY = "locations"
 _MOUNTS_KEY = "mounts"
 
 
-class SettingsFileError(RuntimeError):
+class SettingsFileError(UserFacingError, RuntimeError):
     """设置文件存在但读不出来。
 
     消息必须带文件路径；`tomllib` 的语法错误自带行列号，一并转述。Peach 数据目录的发现不看
     文件内容，所以出错后仍然知道账本在哪：调用方退回内建默认并显式拒绝提供服务，
     而不是拿一份半生不熟的配置去跑。
     """
-
-
-def _project_root(module_file: str = __file__, bundle_root: str | None = None) -> Path:
-    """资源来自源码树、wheel 内的资源目录或 PyInstaller 的 `_MEIPASS`。"""
-    packaged = Path(module_file).resolve().parent / "_resources"
-    if bundle_root is None and packaged.is_dir():
-        return packaged
-    return (Path(bundle_root) if bundle_root is not None
-            else Path(module_file).resolve().parents[2])
-
-
-PROJECT_ROOT = _project_root(bundle_root=getattr(sys, "_MEIPASS", None))
 
 
 def _search_anchor(
@@ -130,13 +120,14 @@ def _selected_data_root(root: Path) -> Path:
         except FileNotFoundError:
             return root
         except (OSError, UnicodeError) as exc:
-            raise SettingsFileError(f"无法读取数据目录位置：{locator}：{exc}") from exc
+            raise SettingsFileError("errors.settingsFile.locatorUnreadable",
+                                    {"locator": str(locator), "error": str(exc)}) from exc
         selected = Path(text)
         if not text or not selected.is_absolute() or selected in visited:
-            raise SettingsFileError(f"数据目录位置无效或循环：{locator}")
+            raise SettingsFileError("errors.settingsFile.locatorInvalid", {"locator": str(locator)})
         visited.add(selected)
         root = selected
-    raise SettingsFileError("数据目录位置的跳转次数超过八次")
+    raise SettingsFileError("errors.settingsFile.locatorTooDeep")
 
 
 def discover_data_root(
@@ -264,37 +255,38 @@ class PeachConfig:
 
 # --------------------------------------------------------------------------- 读取
 
-def _fail(path: Path, detail: str) -> SettingsFileError:
-    return SettingsFileError(f"设置文件读不出来：{path}：{detail}")
+def _fail(path: Path, code: str, **params: object) -> SettingsFileError:
+    """设置文件读不出来：每条原因一个 code，模板都以「设置文件读不出来：{{path}}：」开头。"""
+    return SettingsFileError(code, {"path": str(path), **params})
 
 
 def _read_document(path: Path) -> dict:
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        raise _fail(path, str(exc)) from exc
+        raise _fail(path, "errors.settingsFile.unreadable", error=str(exc)) from exc
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise _fail(path, f"不是 UTF-8 编码（{exc}）") from exc
+        raise _fail(path, "errors.settingsFile.notUtf8", error=str(exc)) from exc
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         # tomllib 的消息自带 `at line N, column M`，直接转述比自己数行可靠。
-        raise _fail(path, f"TOML 语法错误：{exc}") from exc
+        raise _fail(path, "errors.settingsFile.tomlSyntax", error=str(exc)) from exc
 
 
 def _table(document: dict, key: str, path: Path) -> dict:
     value = document.get(key, {})
     if not isinstance(value, dict):
-        raise _fail(path, f"`{key}` 必须是一个表（[{key}]）")
+        raise _fail(path, "errors.settingsFile.notTable", key=key)
     return value
 
 
 def _string(table: dict, key: str, default: str, path: Path, prefix: str) -> str:
     value = table.get(key, default)
     if not isinstance(value, str):
-        raise _fail(path, f"`{prefix}{key}` 必须是字符串")
+        raise _fail(path, "errors.settingsFile.notString", key=prefix + key)
     return value
 
 
@@ -302,14 +294,14 @@ def _integer(table: dict, key: str, default: int, path: Path, prefix: str) -> in
     value = table.get(key, default)
     # bool 是 int 的子类，端口写成 true 必须报错而不是静默变成 1。
     if isinstance(value, bool) or not isinstance(value, int):
-        raise _fail(path, f"`{prefix}{key}` 必须是整数")
+        raise _fail(path, "errors.settingsFile.notInteger", key=prefix + key)
     return value
 
 
 def _boolean(table: dict, key: str, default: bool, path: Path, prefix: str) -> bool:
     value = table.get(key, default)
     if not isinstance(value, bool):
-        raise _fail(path, f"`{prefix}{key}` 必须是 true 或 false")
+        raise _fail(path, "errors.settingsFile.notBoolean", key=prefix + key)
     return value
 
 
@@ -317,7 +309,7 @@ def _string_map(table: dict, path: Path, prefix: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for key, value in table.items():
         if not isinstance(value, str):
-            raise _fail(path, f"`{prefix}{key}` 必须是字符串")
+            raise _fail(path, "errors.settingsFile.notString", key=prefix + key)
         result[key] = value
     return result
 
@@ -334,12 +326,12 @@ def _root_map(table: dict, path: Path, prefix: str, *, allow_empty: bool = False
             result[key] = (value,) if value else ()
             continue
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-            raise _fail(path, f"`{prefix}{key}` 必须是字符串，或者字符串数组")
+            raise _fail(path, "errors.settingsFile.notStringOrArray", key=prefix + key)
         if not allow_empty and any(not item for item in value):
-            raise _fail(path, f"`{prefix}{key}` 的数组里不能有空串")
+            raise _fail(path, "errors.settingsFile.emptyArrayItem", key=prefix + key)
         filled = [item for item in value if item] if allow_empty else value
         if len(set(filled)) != len(filled):
-            raise _fail(path, f"`{prefix}{key}` 的数组里有重复的路径")
+            raise _fail(path, "errors.settingsFile.duplicatePaths", key=prefix + key)
         result[key] = tuple(value)
     return result
 
@@ -352,44 +344,32 @@ def _merge(
         _table(document, "directories", path), path, "directories.")
     unknown = sorted(set(directories) - set(DIRECTORY_KEYS))
     if unknown:
-        raise _fail(path, "`directories` 里有不认识的键：" + "、".join(unknown))
+        raise _fail(path, "errors.settingsFile.unknownDirectories", keys="、".join(unknown))
 
     media = _table(document, "media", path)
     stray = sorted(set(media) - {_LOCATIONS_KEY, _MOUNTS_KEY, "libraries", "library_icons", "costs", "library_catalog", "storage_roots"})
     if stray:
         # 第一阶段的 `[media] R = '/Volumes/Media'`。键空间从盘符换成了 location ID，
         # 把它当未知键忽略等于「所有来源都没挂」——整台机器安静地进脱盘模式。
-        raise _fail(path, (
-            "`[media]` 下不再接受盘符键：" + "、".join(stray)
-            + "。改写成 `[media.mounts] <location-id> = <本机路径>`，"
-            "ID 取 `[media.locations]` 中已配置的来源键，"
-            "路径填写该来源的本机媒体目录，例如 "
-            "`local = '/mnt/media'`"
-        ))
+        raise _fail(path, "errors.settingsFile.driveLetterKeys", keys="、".join(stray))
     # 来源只取用户声明；未填写路径表时没有媒体目录。
     if _LOCATIONS_KEY in media:
         locations = _root_map(_table(media, _LOCATIONS_KEY, path), path, "media.locations.")
         empty = sorted(key for key, roots in locations.items() if not roots)
         if empty:
-            raise _fail(path, "`[media.locations]` 中这些媒体来源没有配置目录前缀：" + "、".join(empty))
+            raise _fail(path, "errors.settingsFile.locationsWithoutPrefix", keys="、".join(empty))
     else:
         locations = dict(DEFAULT_LOCATION_ROOTS)
     mounts = _root_map(_table(media, _MOUNTS_KEY, path), path, "media.mounts.", allow_empty="storage_roots" in media)
     unknown_mounts = sorted(set(mounts) - set(locations))
     if unknown_mounts:
         # 打错一个 ID 却静默忽略，同样是安静地脱盘。
-        raise _fail(path, (
-            "`[media.mounts]` 里有没在 `[media.locations]` 声明过的来源："
-            + "、".join(unknown_mounts)
-        ))
+        raise _fail(path, "errors.settingsFile.undeclaredMounts", keys="、".join(unknown_mounts))
     for key, points in mounts.items():
         # 媒体目录按顺序对应数据库路径前缀，数目不一致时拒绝保存。
         if points and len(points) != len(locations[key]):
-            raise _fail(path, (
-                f"`[media.mounts] {key}` 配置了 {len(points)} 个媒体目录，"
-                f"但 `[media.locations] {key}` 配置了 {len(locations[key])} 个数据库路径前缀；"
-                "两边按顺序一一对应，要么数目相同，要么整项留空"
-            ))
+            raise _fail(path, "errors.settingsFile.mountCountMismatch", key=key, mounts=len(points),
+                        prefixes=len(locations[key]))
 
     server_table = _table(document, "server", path)
     fallback = ServerSettings()
@@ -438,7 +418,7 @@ def _merge(
 
     media_costs = _string_map(_table(media, "costs", path), path, "media.costs.")
     if any(cost not in {"free", "metered"} for cost in media_costs.values()):
-        raise _fail(path, "`[media.costs]` 只接受 free 或 metered")
+        raise _fail(path, "errors.settingsFile.costInvalid")
     config = PeachConfig(
         data_root=data_root, path=path, present=present, data_root_found=found,
         directories=directories, mounts=mounts, locations=locations,
@@ -457,7 +437,7 @@ def _merge(
             media_identity.validate_catalog(libraries, roots)
             config = media_identity.project(config, libraries, roots)
         except (ValueError, TypeError, AttributeError) as exc:
-            raise _fail(path, f"媒体库身份配置无效：{exc}") from exc
+            raise _fail(path, "errors.settingsFile.identityInvalid", error=str(exc)) from exc
     return _apply_environment(config, environ)
 
 
@@ -599,7 +579,7 @@ def render(config: PeachConfig) -> str:
     try:
         media_identity.validate_catalog(libraries, roots)
     except ValueError as exc:
-        raise SettingsFileError(f"媒体库身份配置无效：{exc}") from exc
+        raise SettingsFileError("errors.settingsFile.identityInvalidOnSave", {"error": str(exc)}) from exc
     lines = [
         "# Peach 设置文件。优先级：环境变量 > 本文件 > 程序默认值；手动修改后重启服务生效。",
         "# 本文件保存在 Peach 数据目录中；该目录由 PEACH_DATA_ROOT 或项目旁的 peach-data 决定。",
@@ -714,7 +694,7 @@ def write(config: PeachConfig, *, force: bool = False) -> Path:
     """把设置写到 `config.path`。已存在且没给 `force` 就拒绝，不悄悄覆盖。"""
     path = config.path
     if path.exists() and not force:
-        raise SettingsFileError(f"设置文件已存在，加 --force 才覆盖：{path}")
+        raise SettingsFileError("errors.settingsFile.fileExists", {"path": str(path)})
     path.parent.mkdir(parents=True, exist_ok=True)
     keep_pre_identity_backup(path)
     path.write_text(render(config), encoding="utf-8")
@@ -750,7 +730,7 @@ def upgrade_media_identity(config: PeachConfig, *, apply: bool = False) -> Peach
     media_identity.validate_catalog(prepared.library_catalog, prepared.storage_roots)
     if apply and not config.storage_roots:
         if not config.present:
-            raise SettingsFileError("请先完成首次设置")
+            raise SettingsFileError("api.configuration.setupRequired")
         backup = config.path.with_suffix(".pre-media-identity.toml")
         # 排他备份防止覆盖上一次升级前的配置。
         with backup.open("xb") as target:

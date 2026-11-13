@@ -349,7 +349,7 @@ Windows 复用 FFmpeg 的 D3D11VA 解码与 `h264_amf`、`h264_qsv` 编码，沿
 
 ## GitHub 项目看板
 
-用户反馈归属应用仓库 `peach-mitao/peach`，维护者项目任务归属 `peach-mitao/peach-roadmap`，共同使用一个公开 Project。集中在应用仓库处理 PR、主线与发布事件，每小时同步两仓 Issue，不逐次响应 Issue 的编辑、标签与开闭事件，凭据仅保留在应用仓库。应用仓库的新 Issue 复用 `issue_intake.verdict` 的模板准入判定；已有条目因待补模板关闭时，以 GitHub `closedAt` 为起点保留 2 小时修改窗口，再按当前状态同步。Issue 关联使用仓库名与编号，迁移映射兼容已存在的关联行；交付版本始终按应用仓库的主线提交和发布制品核验。
+用户反馈和维护者任务都在应用仓库 `peach-mitao/peach`，共用一个公开 Project；原规划仓库已归档，旧编号由迁移映射接到转移后的 Issue。集中在应用仓库处理 PR、主线与发布事件，每小时同步 Issue，不逐次响应 Issue 的编辑、标签与开闭事件，凭据仅保留在应用仓库。应用仓库的新 Issue 复用 `issue_intake.verdict` 的模板准入判定；已有条目因待补模板关闭时，以 GitHub `closedAt` 为起点保留 2 小时修改窗口，再按当前状态同步。Issue 关联使用仓库名与编号，迁移映射兼容已存在的关联行；交付版本始终按应用仓库的主线提交和发布制品核验。
 
 看板同步复用 GitHub CLI 的已登录认证、GraphQL Projects API 和 Git 的提交祖先校验；不新增 Python 依赖。官方 [Projects Actions 自动化](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/automating-projects-using-actions)支持独立项目凭据，仓库默认令牌不能写组织 Project。项目原生状态工作流没有发布标签与制品归属判定；通用自动加卡 Action 也不覆盖验收和发布的分别记录，因此由 `scripts/project_board.py` 保留 Peach 的状态规则，传输与认证交给系统已安装的 `gh`。运行依赖是官方维护、MIT 许可的 GitHub CLI 和 GPL-2.0 Git，使用 GitHub 托管 runner 内置版本；本机只读 GraphQL 与标签祖先验证后再应用。无生产服务、ledger 或媒体写入。
 
@@ -552,6 +552,8 @@ Windows 连接清理复用 [CPython 3.14.7 的 Proactor 对象协议](https://gi
 馆藏与口味群体研究复用 `LedgerDatabase.read_connection`、规范编号、`entities.male_performer_ids`、`taste_evidence.era/length_band`、实体收藏快照、`error_reporting.redact` 与固定版 Sentry 内存附件 API。`library_research` 负责本机去重、用户信号、手动标签和分组评分直方图，这是 Peach 的领域投影；不读取浏览历史或写入偏好缓存。JSON 使用 Python 3.14 标准库 `gzip`（PSF，无新增依赖），固定文件名，gzip 头不含源文件名或生成时间。万条作品投影逐字节还原，真实 SDK 的内存传输验证最终附件、白名单与同意门槛。Sentry 附件接收复用官方 SDK（MIT）；没有引入匿名中继或独立聚合服务，本契约保留逐份投影并披露关联风险。字段、体积上限和验收见[馆藏与口味群体研究](DIAGNOSTICS.md#馆藏与口味群体研究)。
 
 代码展示统一复用 `frontend/src/react/components/code-block.tsx`：BoardUI 已固定版本的 Button、语义颜色、排版与圆角，加现有覆盖式滚动条；包含语言标识、完整原文复制、可聚焦滚动区、剪贴板失败反馈与可选的屏幕截断。用于馆藏上传 JSON、CloudDrive2 TOML 和自定义来源 JSON。2026-10-19 核对 [BoardUI 官方目录](https://www.boardui.com/components) 与 `boardui list`，公开注册表没有独立 Code Block，故以现有原语组合 Peach 包装件；无需引入只为只读文本服务的语法解析依赖，也不复制 Pro 模板。组件测试覆盖原文复制与 HTML 文本安全，布局通过桌面和窄屏浏览器验证。无新增依赖，vendored 上游源文件保持原样。
+
+研究附件归档复用标准库 SQLite 事务、gzip、SHA-256 与现有 `library_research.valid_projection`、容量字段校验和 `fsutil.atomic_write_text`，通过 `scripts/research_archive.py` 导入、汇总、清理及按实例删除。当前上传标签复用 `genre_taxonomy.CONTENT_GENRES` 的规范名称。诊断随机实例与研究实例分别保存在各自选择文件，日联系和快照回执沿用已有传输闸门。方案见 [ADR-0157](adr/0157-diagnostic-instances-and-research-receipts.md)。
 
 实体收藏复用 `profiles.read_settings` 与 `library_favorites.favorite_entities`，集中处理规范身份、重定向、标签选择、数量上限与去重，供页面和群体研究共用。命名筛选及 HTTP 展示由网页层负责；数据层不依赖网页模块。
 
@@ -761,6 +763,7 @@ SFW 开关键可在偏好设置的「内容显示」里改。主键按 `Keyboard
 - [JavDB Web UI 实证](reference-snapshots/javdb-web-ui-poc.md)：库外作品详情复用舞台、人物身份、想要、`WantMagnets` 与云下载组件；`javdb_public.PublicAPI` 复用 `HttpxTransport`（httpx 0.28.1，BSD-3-Clause）、`HostLimiter`、Pillow 12.3.0 与标准库 MD5/XOR，独立映射公开协议。匿名详情、两页评论、6 条样本资源、封面与预览图像素已取得；全站完整性和不限流未证明。请求串行、0.5 秒间隔、6 小时有界缓存，评论最多 8 页，失败保留资料并冷却；发现复用持久资料边车和固定集合补齐，传输层预算由 `ContextVar` 隔离。未新增依赖或写入 ledger。
 - JavDB 刮削（ADR-0144）复用同一个 `PUBLIC_API`、`SiteRecord` 契约、`maker_writing`、`genre_taxonomy` 与社区封面印证，只新增接口资料投影和类别 id 对照。对照表由 `generate_javdb_genres.py` 把已有详情页快照与接口资料按位置对齐生成，沿用 `generate_genre_simplified.py` 的源码区块写法；未新增依赖或写入 ledger。
 - JavDB 接口主机与签名备援（ADR-0148）沿用 `PUBLIC_API` 的传输、`HostLimiter`、请求预算与冷却字段，只把冷却范围细到主机。镜像主机名与 App 签名格式是 javmoe（GPL-3.0）移植 MDCx 的协议事实，经 2026-11-05 本机实测核对，不复制其代码；未新增依赖或写入 ledger。
+- JavDB 接口要求登录时的网页后备（ADR-0160 第四条）：`sources.javdb.page_reader` 照搬视频预览 `javdb_preview` 的取页组合（`SourceTransport` 带 Cookie、`HostLimitedTransport` 与 `SOURCE_LIMITER`、`JavDBSource._page` 的登录页判断与 `holding` 冷却）；`page_movie` 复用详情页解析已有的面板、封面与演员正则和 `maker_writing`，只把字段投影成接口同名字段。评论、磁链、图片校验与快照缓存沿用 `PUBLIC_API`；未新增依赖或写入 ledger。MDCx、javmoe 一直读网页、miyabi 改为要求账号登录，作为取舍参照，不复制代码。
 - 公开签名材料按请求头调用与签名计算式定位，不依赖压缩器生成的变量名，不执行来源脚本；常量长度、唯一赋值与组合结构均核对，格式不匹配或网页前端不可达时改用 App 签名材料（ADR-0148）。FC2 搜索使用来源接受的商品号，返回资料仍按原始规范番号及作品 ID 严格核验；其他番号沿用原查询写法。
 - 馆藏和库外样图共用 `SourcePicture` 与浏览器图片缓存。组件按作品保持身份，缓存命中在布局阶段揭示，网络图片经原生 `HTMLImageElement.decode()` 就绪后显示；等待时保留已显示的图片，晚到结果按当前地址核对。失败和重试仍按图片地址隔离，无新增依赖。
 - 后台诊断导出复用 `BackgroundJob`、本机访问与同源检查、`BufferedFileResponse`，使用 Python 标准库 `zipfile`、`TemporaryFile` 和 `JSONEncoder.iterencode` 分块生成。取消使用线程事件，任务身份核对、同一管理器互斥和未完成文件回收由导出模块负责；不登记 ledger 任务，不新增依赖。普通诊断按压缩字节数决定是否合并刮削详情。

@@ -32,6 +32,7 @@ import {
   type EntityHeroActions, type EntityHeroData, type EntityHeroHelpers, type EntityHeroProps,
   type HeroCostar, type HeroFollow, type LinkMark, type LinkView,
 } from './entity-hero';
+import { serverLabels } from '../../core/server-text';
 import { interfaceLanguage, t } from '../../i18n';
 
 /** 译文里数字的占位记号：`{{num}}` 先代入它，再按它切开放进 `<b>`。 */
@@ -297,7 +298,7 @@ function IdentityMeta({ entity }: { entity: EntityHeroData }) {
   if (!entity.identity_labels?.length) return null;
   return (
     <span data-meta-item="classification" data-identity-classification="">
-      <Glyph name="user-round" /><span>{entity.identity_labels.join(' · ')}</span>
+      <Glyph name="user-round" /><span>{serverLabels('identity.category', entity.identity_categories, entity.identity_labels).join(' · ')}</span>
     </span>
   );
 }

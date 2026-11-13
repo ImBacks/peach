@@ -327,7 +327,7 @@ def promo_name_rules() -> tuple[dict, ...]:
         names = frozenset(re.sub(r"\s", "", name).casefold() for name in entry.get("names", ()))
         patterns = tuple(re.compile(pattern, re.I) for pattern in entry.get("patterns", ()))
         if not entry["reason"] or not (names or patterns) or int(entry["max_bytes"]) <= 0:
-            raise ValueError(f"推广附件命名规则不完整：{entry}")
+            raise ValueError(f"incomplete promotional attachment rule: {entry}")
         rules.append({
             "reason": str(entry["reason"]),
             "suffixes": frozenset(str(suffix).casefold() for suffix in entry["suffixes"]),
@@ -761,7 +761,7 @@ def isolate(database, *, asset_ids=None, roots=None, protected_ids=()) -> dict:
     扫描或人工操作在计算期间改变了资产时留待下一次判定。
     """
     if asset_ids is None and roots is None:
-        raise ValueError("自动垃圾检查必须指定资产或来源目录")
+        raise ValueError("automatic junk check needs asset ids or source roots")
     if not isinstance(database, LedgerDatabase):
         database = LedgerDatabase(database)
     scored, dismissed = scored_candidates(database, asset_ids=asset_ids, roots=roots)

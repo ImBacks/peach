@@ -90,7 +90,13 @@ export interface CoverJob {
   status: string;
   job_id?: string;
   result?: string;
-  error?: string;
+  /** `result` 与 `error` 的 code 和参数；有译文时显示译文。 */
+  result_code?: string;
+  result_params?: Record<string, unknown>;
+  error_code?: string;
+  error_params?: Record<string, unknown>;
+  /** 封面没取到时那句由几段拼成，每段一个 code。 */
+  error_parts?: { code: string; params?: Record<string, unknown> }[];
   width?: number;
   height?: number;
 }

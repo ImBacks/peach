@@ -466,7 +466,7 @@ class BrowserTransportTests(unittest.TestCase):
         started = self.clock.now
         with self.assertRaises(ChallengeUnsolved) as caught:
             transport(request, 10, 4096)
-        self.assertIn("不再弹", str(caught.exception))
+        self.assertIn("not shown again", str(caught.exception))
         self.assertLessEqual(self.clock.now - started, 56, "不弹窗就只等清 cookie 那 15 秒加自动时限，不再多等点击那 120 秒")
         self.assertEqual(window_shows(server), 1, "弹过一次没点过去，这次不弹")
         self.assertEqual(browser_transport.attention(), [])

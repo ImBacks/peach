@@ -8,6 +8,7 @@ import {
   centeredBox, frameWithin, isUsableSize, type CropBox, type CropSize,
 } from '../../crop-geometry';
 import { quoted, t } from '../../i18n';
+import { serverLabel } from '../../core/server-text';
 
 export const AVATAR_CHOICES_URL = '/api/avatar-choices';
 export const AVATAR_PICK_URL = '/api/avatar-pick';
@@ -39,6 +40,14 @@ export interface AvatarChoice {
   /** 封面那张底图的版本。封面会原地替换，预览地址带上它才不显示旧图，交框时回递它，
    *  服务端才认得出框是在哪一张上画的。别的底图不会原地变，是空串。 */
   version: string;
+  /** `label` 里来源名那一段的 code 与参数；空串表示 `label` 本身是内容（图库分类、番号、片名），原样显示。 */
+  label_code?: string;
+  label_params?: Record<string, unknown>;
+  /** 整张作品封面那一格的番号，接在来源名后面。 */
+  cover_code?: string;
+  /** `detail` 的 code 与参数；空串表示 `detail` 是内容（文件名、地址、片名）。 */
+  detail_code?: string;
+  detail_params?: Record<string, unknown>;
 }
 
 export interface AvatarChoices {
@@ -160,10 +169,22 @@ export function indexNote(data: AvatarChoices | undefined): string {
 /** 多人合演的作品：格子上标人数，框选时提醒先找到她自己的脸。 */
 export const sharedCast = (choice: AvatarChoice): boolean => choice.cast > 1;
 
+/** 格子的名字：来源名按 code 取当前语言，再接上「已裁剪」或番号；缺译文时用服务端的原文。 */
+export function choiceLabel(choice: AvatarChoice): string {
+  const source = choice.label_code ? serverLabel(choice.label_code, '', choice.label_params) : '';
+  if (!source) return choice.label;
+  if (choice.user_cropped) return serverLabel('labels.avatarPicker.cropped', choice.label, { label: source });
+  return choice.cover_code ? `${source} ${choice.cover_code}` : source;
+}
+
+/** 格子的说明：代表作画面那句按 code 取当前语言；其余是内容，原样显示。 */
+export const choiceDetailText = (choice: AvatarChoice): string =>
+  choice.detail_code ? serverLabel(choice.detail_code, choice.detail, choice.detail_params) : choice.detail;
+
 export const cropNote = (choice: AvatarChoice): string =>
   sharedCast(choice)
-    ? t('catalog:avatarPicker.cropNoteShared', { label: choice.label, count: choice.cast })
-    : t('catalog:avatarPicker.cropNote', { label: choice.label, detail: choice.source === 'social' && choice.detail ? ` · ${choice.detail}` : '' });
+    ? t('catalog:avatarPicker.cropNoteShared', { label: choiceLabel(choice), count: choice.cast })
+    : t('catalog:avatarPicker.cropNote', { label: choiceLabel(choice), detail: choice.source === 'social' && choice.detail ? ` · ${choice.detail}` : '' });
 
 const SOURCE_LABELS: Record<string, string> = {
   gfriends: t('catalog:avatarPicker.sourceGallery'), history: t('catalog:avatarPicker.sourceHistory'), asset: t('catalog:avatarPicker.sourceVideoStill'), code: t('catalog:avatarPicker.sourceCodeCover'),
@@ -186,8 +207,8 @@ export function baseLabel(ref: string): string {
 /** 一格的完整说明，进 `title`：哪儿来的、多大、按谁找到的。作品画面再接上服务端的说明：
  *  片名，账号没有本人身份依据时还有「代表作画面，非本人」。 */
 export const choiceDetail = (choice: AvatarChoice): string =>
-  `${SOURCE_LABELS[choice.source] || choice.source} · ${choice.label}`
+  `${SOURCE_LABELS[choice.source] || choice.source} · ${choiceLabel(choice)}`
   + (choice.width ? ` · ${choice.width}×${choice.height}` : '')
   + (sharedCast(choice) ? t('catalog:avatarPicker.castDetail', { count: choice.cast }) : '')
   + (choice.found_by ? t('catalog:avatarPicker.foundByDetail', { name: choice.found_by }) : '')
-  + (['asset', 'social', 'history'].includes(choice.source) && choice.detail && choice.detail !== choice.label ? ` · ${choice.detail}` : '');
+  + (['asset', 'social', 'history'].includes(choice.source) && choice.detail && choice.detail !== choice.label ? ` · ${choiceDetailText(choice)}` : '');

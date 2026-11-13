@@ -53,7 +53,7 @@ class LibraryDiagnosticsTests(unittest.TestCase):
                          {'identification': 1, 'metadata': 1, 'cover': 1, 'duration': 2})
         self.assertEqual(groups['duration']['items'][0], {
             'id': 2, 'code': None, 'name': 'private-name', 'title': 'private-name',
-            'location': 'local', 'path': 'R:/private/2', 'duration': 0, 'size': None})
+            'location': 'local', 'path': 'R:/private/2', 'duration': 0, 'size': None, 'library_id': ''})
         self.assertEqual([row['id'] for row in groups['cover']['items']], [3])
         self.assertEqual(groups['cover']['items'][0]['code'], 'DEF-456')
         self.assertIsNotNone(result['issue_at'])
@@ -72,6 +72,19 @@ class LibraryDiagnosticsTests(unittest.TestCase):
         self.assertIsNone(row['code'])
         self.assertEqual(row['size'], 1048576)
         self.assertEqual(before, self.db.read_bytes())
+
+    def test_library_items_carry_the_same_library_id_as_the_catalog(self):
+        from peach import media_identity, settings_file
+        (self.root / 'config.toml').write_text("[media.locations]\nlocal = ['R:\\Media']\n"
+                                               "[media.libraries]\n'R:\\Media' = '收藏'\n", encoding='utf-8')
+        config = settings_file.load_config(environ={'PEACH_DATA_ROOT': str(self.root)})
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute("UPDATE asset SET path='R:\\Media\\未识别文件.mp4' WHERE id=2")
+        items = {row['id']: row for row in diagnostics.library(self.settings, config)['groups']['duration']['items']}
+        expected = media_identity.ownership(config, 'R:\\Media\\未识别文件.mp4')['library_id']
+        self.assertTrue(expected)
+        self.assertEqual(items[2]['library_id'], expected)
+        self.assertEqual(items[3]['library_id'], '')
 
     def test_missing_database_and_broken_or_oversized_logs_are_unknown(self):
         self.db.unlink()

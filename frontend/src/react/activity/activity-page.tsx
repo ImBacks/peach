@@ -40,7 +40,7 @@ import { TaskResources } from './task-resources';
 import {
   elapsedText, fetchTasks, foldByKind, foldRoutine, followupDetail, followupTally, groupFollowups, isActive,
   hasResultProblems, isRoutine, latestOfKind, momentText, pollInterval, problemDestination, progressText,
-  readableErrorHeadline, statusLabel, summaryItems, taskIssues, taskSubject, TASKS_KEY, TRIGGER_LABELS, type FollowupCounts, type TaskControlState, type TaskRunPayload,
+  progressLabel, readableErrorHeadline, runError, statusLabel, summaryItems, taskIssues, taskName, taskSubject, TASKS_KEY, TRIGGER_LABELS, type FollowupCounts, type TaskControlState, type TaskRunPayload,
 } from './tasks';
 import { t } from '../../i18n';
 
@@ -93,7 +93,7 @@ function FollowupList({ rows }: { rows: TaskRunPayload[] }) {
               <div className="flex min-w-0 flex-1 basis-40 flex-wrap items-center gap-x-2 gap-y-1">
                 <TaskIcon taskKey={row.task_key} className="size-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 break-words text-caption-1-regular text-text-primary">
-                  {row.task_label}
+                  {taskName(row)}
                 </span>
                 <StatusBadge run={row} />
                 {detail
@@ -108,7 +108,7 @@ function FollowupList({ rows }: { rows: TaskRunPayload[] }) {
               ? <div className="w-full min-w-0">
                   <Disclosure summary={t('manage:taskCenter.technicalDetails')} contentClassName="pb-2.5">
                     <CodeBlock code={JSON.stringify(row.result_summary, null, 2)} language="json"
-                      label={t('manage:taskCenter.taskTechnicalDetails', { task: row.task_label })} />
+                      label={t('manage:taskCenter.taskTechnicalDetails', { task: taskName(row) })} />
                   </Disclosure>
                 </div>
               : null}
@@ -162,7 +162,7 @@ function RunCard(
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
             <TaskIcon taskKey={run.task_key} className="size-5 shrink-0 text-text-secondary" />
-            <strong className="min-w-0 break-words text-title-3-medium text-text-primary">{run.task_label}</strong>
+            <strong className="min-w-0 break-words text-title-3-medium text-text-primary">{taskName(run)}</strong>
             {badge ?? <StatusBadge run={run} />}
           </div>
           <TaskControls run={run} runs={controlled} />
@@ -183,7 +183,7 @@ function RunCard(
       {issues ? <div className="border-t border-separator-border">{issues}</div> : null}
       {errorHead && errorFull !== errorHead ? <div className="border-t border-separator-border">
         <Disclosure row summary={t('manage:taskCenter.errorDetails')} contentClassName="pb-5">
-          <ErrorDetails label={t('manage:taskCenter.taskErrorDetails', { task: run.task_label })}>{errorFull}</ErrorDetails>
+          <ErrorDetails label={t('manage:taskCenter.taskErrorDetails', { task: taskName(run) })}>{errorFull}</ErrorDetails>
         </Disclosure>
       </div> : null}
       {total ? <div className="border-t border-separator-border">
@@ -202,7 +202,7 @@ function RunCard(
         ? <div className="border-t border-separator-border">
         <Disclosure row summary={t('manage:taskCenter.technicalDetails')} contentClassName="pb-5">
           <CodeBlock code={JSON.stringify(run.result_summary, null, 2)} language="json"
-            label={t('manage:taskCenter.taskTechnicalDetails', { task: run.task_label })} />
+            label={t('manage:taskCenter.taskTechnicalDetails', { task: taskName(run) })} />
         </Disclosure>
       </div> : null}
     </li>
@@ -215,7 +215,7 @@ function RunningRun({ run, followups, followupTotal }:
   const current = run.progress_current || 0;
   const control = run.control?.state;
   const stopping = control && control !== 'running';
-  const label = stopping ? CONTROL_LABELS[control] : run.progress_label || t('manage:taskCenter.inProgress');
+  const label = stopping ? CONTROL_LABELS[control] : progressLabel(run) || t('manage:taskCenter.inProgress');
   const elapsed = elapsedText(run.elapsed_seconds);
   const meta = [TRIGGER_LABELS[run.trigger] || run.trigger, elapsed && t('manage:taskCenter.runningFor', { elapsed })]
     .filter(Boolean).join(' · ');
@@ -250,7 +250,7 @@ function SettledRun(
     // 作品链接已写出文件名，摘要不再列「名称」。
     : summaryItems(taskSubject(run) ? { ...run.result_summary, name: '' } : run.result_summary)
         // 结束原因由卡片单独写一行，摘要里同一句不再重复。
-        .filter((line) => line !== run.error && line !== readableErrorHeadline(run.error));
+        .filter((line) => line !== runError(run) && line !== readableErrorHeadline(runError(run)));
   const issues = taskIssues(run);
   const destination = problemDestination(run, latest);
   const elapsed = elapsedText(run.elapsed_seconds);
@@ -261,7 +261,7 @@ function SettledRun(
     : [TRIGGER_LABELS[run.trigger] || run.trigger, momentText(run.finished_at),
        elapsed && t('manage:taskCenter.took', { elapsed })]).filter(Boolean).join(' · ');
   return (
-    <RunCard run={run} meta={meta} error={run.error} followups={followups} followupTotal={followupTotal} controlled={runs}
+    <RunCard run={run} meta={meta} error={runError(run)} followups={followups} followupTotal={followupTotal} controlled={runs}
       issues={issues.length ? <Disclosure row summary={t('manage:taskCenter.issueDetailsCount', { count: issues.length })} contentClassName="pb-5">
         <ErrorDetails label={t('manage:taskCenter.issueDetails')}>
         {/* 与数据管理的问题清单同一种分层：名字一层，来源与问题类别跟在名字后面用次级色，原因再低一档。 */}
@@ -324,7 +324,7 @@ function WorkingRun(
     <RunCard run={run} meta={meta} followups={followups} followupTotal={total} resourceActive controlled={runs}
       badge={run.control ? <StatusBadge run={run} /> : <Chip color="blue">{t('manage:taskStatus.running')}</Chip>}>
       <div className="flex flex-col gap-1.5">
-        <Progress label={t('manage:taskCenter.taskProgress', { task: run.task_label })} value={settled} max={total} />
+        <Progress label={t('manage:taskCenter.taskProgress', { task: taskName(run) })} value={settled} max={total} />
         <p className="text-caption-1-regular text-text-secondary">
           {t('manage:taskCenter.processedProgress', { progress: progressText(settled, total) })}{failed ? t('manage:taskCenter.failedSuffix', { count: failed }) : ''}
         </p>

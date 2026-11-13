@@ -58,6 +58,7 @@ from peach.config import COVER_DIR, DATABASE_PATH, GENERATED_DIR, SOURCES_DIR
 from peach.http import HttpRequest, HttpTransport, HttpxTransport
 from peach.scripting import HostLimiter
 from peach.scraping_access import SOURCES, SourceBudgetExhausted, SourcePaused, SourceTransport, source_for
+from peach.metadata import RelayableError, relay_args, relayed
 from peach.config import SECRETS_DIR
 from peach.jobs import DiskGuard, JobPolicyError
 from peach.task_runs import TaskRunHandle, cli_run, inert_handle
@@ -105,6 +106,12 @@ PLACEHOLDER_REASON = f"来源给的是{PLACEHOLDER_MARK}"
 OFFICIAL_PLACEHOLDER_ONLY = f"官方封面地址只回{PLACEHOLDER_MARK}：未发售的新作是官方还没出图，旧作多半已从官方下架"
 #: 韩国 MIB 的编号不在 JAV 目录站上，封面来源一律不问；记进日志算确认落空，不重探。
 MIB_NOT_JAV = "韩国 MIB 不适用 JAV 封面来源"
+#: 上面几句作为异常抛出时的 code，zh-CN 文字与常量逐字相同；捕获方按 code 认是哪一句。
+NO_USABLE_OFFICIAL_CODES = ("errors.javCoverFetch.officialNoImage", "errors.javCoverFetch.officialTooSmall")
+PLACEHOLDER_CODE = "errors.javCoverFetch.placeholder"
+OFFICIAL_PLACEHOLDER_ONLY_CODE = "errors.javCoverFetch.officialPlaceholderOnly"
+MIB_NOT_JAV_CODE = "errors.javCoverFetch.mibNotJav"
+NO_CANDIDATES_CODE = "errors.javCoverFetch.noCandidates"
 #: 量尺寸只需要 JPEG 头部，别把整张 1 MB 的图拉下来。
 PROBE_BYTES = 64 * 1024
 # 瞬时 TLS EOF / 连接重置不能落成“官方没有封面”。按项目外网退避规则重试，
@@ -165,8 +172,8 @@ class MetadataEvidence:
     sources: frozenset[str] = frozenset()
 
 
-class Unavailable(RuntimeError):
-    pass
+class Unavailable(RelayableError, RuntimeError):
+    """这一次没取到：给人看的那句是 code 与参数，状态说明（`HTTP 503`）经 `relayed` 转述。"""
 
 
 class NotFound(Unavailable):
@@ -177,12 +184,13 @@ class NotFound(Unavailable):
     """
 
 
-class DeadlineExceeded(RuntimeError):
+class DeadlineExceeded(RelayableError, RuntimeError):
     """动作预算已用尽：调用方记录当前项目后继续下一项。"""
 
 
-#: 候选一张都没连上时的说法。
+#: 候选一张都没连上时的说法；抛出时用 `HOSTS_UNREACHABLE_CODE`，zh-CN 文字相同。
 HOSTS_UNREACHABLE = "官方图片主机都连不上"
+HOSTS_UNREACHABLE_CODE = "errors.javCoverFetch.hostsUnreachable"
 
 
 class CoverConnectError(Unavailable):
@@ -265,7 +273,7 @@ def _sleep_within(delay: float, deadline: float | None) -> None:
     """限速等待也服从截止时间，不让睡眠越过预算。"""
     remaining = _remaining(deadline)
     if remaining is not None and delay >= remaining:
-        raise DeadlineExceeded("动作预算已用尽")
+        raise DeadlineExceeded("errors.javCoverFetch.deadline")
     time.sleep(delay)
 
 
@@ -302,7 +310,7 @@ def _fetch(transport: HttpTransport, url: str, *, referer: str,
     for attempt in range(len(NETWORK_RETRY_DELAYS) + 1):
         remaining = _remaining(deadline)
         if remaining is not None and remaining <= 0:
-            raise DeadlineExceeded("动作预算已用尽")
+            raise DeadlineExceeded("errors.javCoverFetch.deadline")
         try:
             response = transport(request, request_timeout(url, remaining), limit)
             break
@@ -312,24 +320,24 @@ def _fetch(transport: HttpTransport, url: str, *, referer: str,
             _sleep_within(NETWORK_RETRY_DELAYS[attempt], deadline)
     final_url = getattr(response, "url", "")
     if isinstance(final_url, str) and PLACEHOLDER.search(final_url):
-        raise NotFound(PLACEHOLDER_REASON)
+        raise NotFound(PLACEHOLDER_CODE)
     if response.status == 404:
-        raise NotFound("HTTP 404")
+        raise NotFound(*relayed("HTTP 404"))
     if response.status not in (200, 206):
-        raise Unavailable(f"HTTP {response.status}")
+        raise Unavailable(*relayed(f"HTTP {response.status}"))
     return response.body
 
 
 def _probe_failure(error: Exception) -> str:
     """量尺寸失败记进诊断的哪一格：占位图单列，它是来源自己说没有图。"""
-    return "placeholder" if isinstance(error, NotFound) and str(error) == PLACEHOLDER_REASON else "probe_failed"
+    return "placeholder" if isinstance(error, NotFound) and error.code == PLACEHOLDER_CODE else "probe_failed"
 
 
 def _no_usable_official(diagnostics: dict) -> str:
-    """官方候选一张都量不出可用尺寸时的原因。"""
+    """官方候选一张都量不出可用尺寸时的原因（code）。"""
     if diagnostics.get("placeholder") and not diagnostics.get("too_small"):
-        return OFFICIAL_PLACEHOLDER_ONLY
-    return NO_USABLE_OFFICIAL[bool(diagnostics.get("too_small"))]
+        return OFFICIAL_PLACEHOLDER_ONLY_CODE
+    return NO_USABLE_OFFICIAL_CODES[bool(diagnostics.get("too_small"))]
 
 
 def code_variants(code: str) -> list[str]:
@@ -643,7 +651,7 @@ def dmm_evidence(transport: HttpTransport, code: str, *, deadline=None) -> Metad
     except SourceFailure as error:
         if error.kind == 'not_found':
             return MetadataEvidence()
-        raise Unavailable('DMM：' + str(error)) from error
+        raise Unavailable('errors.javCoverFetch.dmmFailed', {'error': str(error)}) from error
     found = [candidate for url in payload.get('cover_urls') or () for candidate in dmm_cdn_images(url)]
     found += content_id_images(str(payload.get('content_id') or ''))
     makers = frozenset(str(payload.get(field) or '').strip().casefold() for field in ('maker', 'label'))
@@ -829,11 +837,12 @@ def _site_candidates(transport: HttpTransport, code: str, evidence: MetadataEvid
     return candidates
 
 
-def _unanswered_error(diagnostics: dict, message: str) -> Exception:
+def _unanswered_error(diagnostics: dict, *said) -> Exception:
+    """没问成的那一趟交什么：没答复的全是冷却挡下的就交 `SourcePaused`，否则按 `said`（code 与参数）交 `Unavailable`。"""
     unanswered = sum(diagnostics.get(key, 0) for key in ('source_unanswered', 'unanswered', 'download_failed'))
     if unanswered and diagnostics.get('paused', 0) == unanswered:
-        return SourcePaused('封面来源正在冷却，请稍后重试；已有图片保留')
-    return Unavailable(message)
+        return SourcePaused('errors.javCoverFetch.coolingDown')
+    return Unavailable(*said)
 
 
 def best_cover(transport: HttpTransport, code: str, delay: float, *,
@@ -857,7 +866,7 @@ def best_cover(transport: HttpTransport, code: str, delay: float, *,
     # `HA-101`、`MY-102` 取回的都是那部日本片的封套，番号核验拦不住，因为番号本来
     # 就一样。所以不是「找不到」，是根本不该去找。
     if is_korean_mib_code(code):
-        raise Unavailable(MIB_NOT_JAV)
+        raise Unavailable(MIB_NOT_JAV_CODE)
     # 来源一律记主机名。缓存、构造路径和官方页常指向同一个主机，记成多个名字
     # 会让覆盖率统计凭空多出「渠道」。
     evidence = _joined_evidence(known, cached_metadata(metadata_root, code))
@@ -886,8 +895,8 @@ def best_cover(transport: HttpTransport, code: str, delay: float, *,
                                             deadline=deadline, record=record)])
     if not asked:
         if diagnostics.get('source_unanswered'):
-            raise _unanswered_error(diagnostics, '官方目录查询未完成，尚未取得封面候选')
-        raise NotFound("所有渠道都没有候选")
+            raise _unanswered_error(diagnostics, 'errors.javCoverFetch.catalogUnfinished')
+        raise NotFound(NO_CANDIDATES_CODE)
     measured = _measure(transport, asked, record, minimum_width=minimum_width,
                         delay=delay, deadline=deadline)
     if not measured:
@@ -903,7 +912,7 @@ def best_cover(transport: HttpTransport, code: str, delay: float, *,
     except Unavailable as error:
         if (diagnostics.get('source_unanswered') or diagnostics.get('unanswered')
                 or diagnostics.get('paused')):
-            raise _unanswered_error(diagnostics, str(error)) from error
+            raise _unanswered_error(diagnostics, *relay_args(error)) from error
         raise
 
 
@@ -952,10 +961,10 @@ def _measure(transport: HttpTransport, candidates, record, *, minimum_width: int
                 record("too_small")
     except DeadlineExceeded:
         if unreachable and not answered:
-            raise CoverConnectError(HOSTS_UNREACHABLE) from None
+            raise CoverConnectError(HOSTS_UNREACHABLE_CODE) from None
         raise
     if unreachable and not answered:
-        raise CoverConnectError(HOSTS_UNREACHABLE)
+        raise CoverConnectError(HOSTS_UNREACHABLE_CODE)
     return measured
 
 
@@ -1004,8 +1013,8 @@ def _download_best(transport: HttpTransport, measured, record, *, minimum_width:
             continue
         return winner, actual_size, data
     if animated == len(measured):
-        raise NotFound("官方候选都是动图")
-    raise Unavailable("可用候选完整下载都失败")
+        raise NotFound("errors.javCoverFetch.allAnimated")
+    raise Unavailable("errors.javCoverFetch.downloadsFailed")
 
 
 FIELDS = ("code", "result", "source", "width", "height", "kb", "url", "note", "outcome", "catalog_rules")
@@ -1080,7 +1089,8 @@ def restore_logged_successes(transport: HttpTransport, log: Path, root: Path,
                 image.verify()
             expected = (int(row["width"]), int(row["height"]))
             if size != expected or size[0] < MIN_WIDTH:
-                raise Unavailable(f"尺寸变化：日志 {expected[0]}x{expected[1]}，当前 {size[0]}x{size[1]}")
+                raise Unavailable("errors.javCoverFetch.sizeChanged", {"expectedWidth": expected[0], "expectedHeight": expected[1],
+                                                                     "width": size[0], "height": size[1]})
             temporary.write_bytes(data)
             temporary.replace(target)
             restored += 1

@@ -976,24 +976,6 @@ class GateAndFlakyRerunTests(unittest.TestCase):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             runner.main(['--rerun-failures'])
 
-    def test_only_the_integrating_parent_may_lend_its_full_suite_lock(self):
-        """集成入口持锁补验时，它直接派出的运行器沿用全量锁；别的进程冒用这个开关一律拒绝。"""
-        import argparse
-        from types import SimpleNamespace
-        args = SimpleNamespace(full_lock_held=True, lock_timeout=0)
-        with tempfile.TemporaryDirectory() as folder, \
-                patch.object(runner.test_evidence, 'evidence_dir', return_value=Path(folder)):
-            holder = runner.test_evidence.holder_path(Path(folder) / 'full-suite.lock')
-            holder.write_text(json.dumps({'pid': os.getppid()}), encoding='utf-8')
-            with runner.full_suite_guard(argparse.ArgumentParser(), args, ('full',)):
-                pass
-            holder.write_text(json.dumps({'pid': os.getppid() + 1}), encoding='utf-8')
-            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-                runner.full_suite_guard(argparse.ArgumentParser(), args, ('full',))
-            holder.unlink()
-            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-                runner.full_suite_guard(argparse.ArgumentParser(), args, ('full',))
-
     def test_the_gate_runs_first_and_a_red_gate_skips_the_other_shards(self):
         files = [runner.TESTS / name for name in ('test_script_policy.py', 'test_media.py', 'test_scan.py')]
         plans = []

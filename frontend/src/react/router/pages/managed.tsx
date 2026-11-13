@@ -25,7 +25,7 @@ import {
   cameFromSetup, configurationRequestedSection, pageOpens, state, subscribeShell, writeShell,
 } from '@peach/shell';
 
-import { pageNavigationReady } from '../../../history/page-navigation';
+import { pageNavigationReady, settlePageNavigation } from '../../../history/page-navigation';
 import { managementSkeletonHtml, paintManagementPlaceholder } from '../../../management-placeholder';
 import { isReviewCategory, reviewQueueOf } from '../../review/review';
 import { javLibraryPath, javTab } from '../../jav/jav';
@@ -164,7 +164,16 @@ export function ManagedMatch({ path }: { path: ManagedPath }) {
   wasCovered.current = covered;
   // 路径也进 key：认领的写地址从一页换到另一页（配置页改写到数据管理页）时代次不变，页面组在同一个位置换了路由。
   const group = isSettingsSectionPath(path) ? '/settings/configuration' : path;
-  return <ManagedPage key={`${group} ${opening.current ?? 'covered'}`} path={path} covered={opening.current === null} />;
+  const key = `${group} ${opening.current ?? 'covered'}`;
+  // 没重开的那几次（详情撤下露出这一页、页内改写地址）没有新首屏要等，导航时的锚定由这里放开；重开的由 `openPage` 放开。
+  const { seq } = peachHistory.navigation;
+  const settled = useRef({ key, seq });
+  useEffect(() => {
+    const previous = settled.current;
+    settled.current = { key, seq };
+    if (!covered && previous.key === key && previous.seq !== seq) settlePageNavigation();
+  }, [key, seq, covered]);
+  return <ManagedPage key={key} path={path} covered={opening.current === null} />;
 }
 
 function ManagedPage({ path, covered }: { path: ManagedPath; covered: boolean }) {

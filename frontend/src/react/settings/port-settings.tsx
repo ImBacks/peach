@@ -11,6 +11,7 @@ import { ConfigurationChoice, ConfigurationInput } from '../components/configura
 import { RESTART_REDIRECT_MS } from '../restart-redirect';
 import { ErrorText, Footer, Help, Section, Stack } from './section';
 import { busyProps, useAction } from './use-action';
+import { bodyFieldErrors } from '../../core/server-text';
 import { t } from '../../i18n';
 
 const HOST_OPTIONS = [
@@ -44,7 +45,7 @@ export function PortSettings({ data, receipt }: ConfigurationGroupProps) {
       setSaved({ url: new URL('/settings/network', result.url).href }); receipt(t('settings:shared.settingsSaved'));
     }, (cause) => {
       const fields = cause instanceof ApiError && cause.status === 400
-        ? (cause.body as { errors?: Partial<Record<'port' | 'host' | 'mdns_name', string>> } | null)?.errors : null;
+        ? bodyFieldErrors<Partial<Record<'port' | 'host' | 'mdns_name', string>>>(cause.body) : null;
       if (fields && (fields.port || fields.host || fields.mdns_name)) setFields(fields);
       else action.setError(errorMessage(cause));
     });

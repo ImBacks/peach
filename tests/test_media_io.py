@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from peach import media_io, library_processing
+from peach.user_messages import UserInterruptedError
 
 
 class MediaIoTests(unittest.TestCase):
@@ -78,7 +79,7 @@ class MediaIoTests(unittest.TestCase):
 
     def test_failed_directory_is_attempted_once_in_a_task(self):
         listing = library_processing._DirectoryIndex()
-        with patch.object(library_processing, 'directory_files', side_effect=TimeoutError('读取超时')) as read:
+        with patch.object(library_processing, 'directory_files', side_effect=TimeoutError('read timed out')) as read:
             for _ in range(3):
                 with self.assertRaises(TimeoutError):
                     listing.files(self.root)
@@ -92,7 +93,7 @@ class MediaIoTests(unittest.TestCase):
         (good / 'video.mp4').write_bytes(b'video')
         def read(path):
             if Path(path) == bad:
-                raise TimeoutError('目录读取超时')
+                raise TimeoutError('directory read timed out')
             return media_io.directory_entries(path)
         errors = []
         walked = list(_walk(self.root, read_directory=read, onerror=errors.append))
@@ -104,8 +105,8 @@ class MediaIoTests(unittest.TestCase):
         row = dict(id=1, name='video.mp4')
         issue = Mock()
         with patch('peach.local_poster.read_jpeg', return_value=(b'image', (20, 30))), \
-                patch('peach.cover_artwork.install_cover', side_effect=OSError('空间不足')), \
-                self.assertRaisesRegex(OSError, '空间不足'):
+                patch('peach.cover_artwork.install_cover', side_effect=OSError('No space left on device')), \
+                self.assertRaisesRegex(OSError, 'No space left on device'):
             library_processing._read_local_posters(
                 [(row, self.root / 'source.jpg', 'ABW-101', self.root / 'cover.jpg')],
                 dict(speed_mode='standard', covers=0), update=lambda **_: None, issue=issue)
@@ -113,7 +114,7 @@ class MediaIoTests(unittest.TestCase):
 
     def test_metadata_persistence_failure_propagates(self):
         remote = Mock()
-        remote._evidence.side_effect = PermissionError('证据目录无法写入')
+        remote._evidence.side_effect = PermissionError('Permission denied')
         result = library_processing._MetadataResults(remote, 'ABW-101', Mock())
         with self.assertRaises(library_processing._ProcessingPersistenceError) as caught:
             result.save([('r18dev', {'id': 'ABW-101'})])
@@ -122,7 +123,7 @@ class MediaIoTests(unittest.TestCase):
 
     def test_source_pause_request_is_not_a_file_failure(self):
         from peach.jobs import JobPaused
-        for error in (InterruptedError('停止'), JobPaused('暂停')):
+        for error in (UserInterruptedError('errors.processingControl.stopped'), JobPaused('errors.updateTasks.pausedForInstall')):
             with self.subTest(error=type(error)), self.assertRaises(type(error)):
                 library_processing._raise_task_failure(error)
 
@@ -133,7 +134,7 @@ class MediaIoTests(unittest.TestCase):
         listing.files.return_value = {video.name.casefold(): video}
         listing.sidecars.return_value = (video.with_suffix('.nfo'), [])
         issues = Mock()
-        with patch.object(library_processing, 'read_nfo', side_effect=TimeoutError('NFO 读取超时')):
+        with patch.object(library_processing, 'read_nfo', side_effect=TimeoutError('NFO read timed out')):
             result = library_processing._read_local_metadata(
                 Mock(), self.root / 'unused.db', row, self.root, listing,
                 dict(identified=0, covers=0), Mock(), issues, [])
@@ -166,7 +167,7 @@ class MediaIoTests(unittest.TestCase):
         issue, checkpoint = Mock(), Mock()
         with patch.object(library_processing, '_library_stages', return_value=lambda _: {'preview'}), \
                 patch.object(library_processing, 'metadata_only', return_value=False), \
-                patch.object(library_processing, '_generate_preview', side_effect=[TimeoutError('超时'), True]):
+                patch.object(library_processing, '_generate_preview', side_effect=[TimeoutError('timed out'), True]):
             made = library_processing._generate_previews(self.config, rows, Mock(), update=Mock(),
                 issue=issue, guard=Mock(), checkpoint=checkpoint)
         self.assertEqual(made, 1)
@@ -184,5 +185,5 @@ class MediaIoTests(unittest.TestCase):
                 patch.object(library_processing, '_generate_preview', side_effect=capture), \
                 self.assertRaises(library_processing._ProcessingPersistenceError):
             library_processing._generate_previews(self.config, [row], Mock(),
-                update=Mock(side_effect=[None, PermissionError('状态无法保存')]), issue=issue, guard=Mock())
+                update=Mock(side_effect=[None, PermissionError('Permission denied')]), issue=issue, guard=Mock())
         issue.assert_not_called()

@@ -10,17 +10,19 @@ import { CodeBlock } from '../components/code-block';
 import { StatusLabel, type StatusTone } from '../components/status-label';
 import { Disclosure, ErrorText, Fact, FactList, Footer, Help, Rows, Stack } from './section';
 import { busyProps, useAction } from './use-action';
-import { t } from '../../i18n';
+import { interfaceLanguage, t } from '../../i18n';
 
 export interface LibrarySharingState {
   enabled: boolean; available: boolean; schema: number; fields: string[]; notice: string;
   last_sent_at?: string | null;
-  last_attempt?: { period?: string; status?: string; reason?: string; attempted?: boolean };
+  last_attempt?: { period?: string; status?: string; reason?: string; attempted?: boolean;
+    snapshot_id?: string; raw_bytes?: number; compressed_bytes?: number };
   consent_state?: 'enabled' | 'disabled' | 'needs-consent' | 'not-selected';
   participation?: { status: string; pending_state?: 'enabled' | 'disabled' | null;
     state?: 'enabled' | 'disabled'; last_seen?: string; reason?: string };
 }
-interface Preview { data: { library: unknown[]; preferences: unknown; coverage: { uncoded_items: number } }; bytes: number; token: string; schema: number }
+interface Preview { data: { library: unknown[]; preferences: unknown; coverage: { uncoded_items: number } };
+  bytes: number; compressed_bytes: number; token: string; schema: number }
 
 export function LibrarySharingSettings({ initial, receipt }: {
   initial: LibrarySharingState; receipt(message: string): void;
@@ -75,7 +77,21 @@ export function LibrarySharingSettings({ initial, receipt }: {
         {participation.pending_state
         ? (participation.pending_state === 'disabled' ? t('settings:librarySharing.pendingOff') : t('settings:librarySharing.pendingOn'))
         : deliveryNames[participation.status] || t('settings:librarySharing.resultUnknown')}</StatusLabel></Fact></FactList>
-      {value.last_sent_at ? <Help>{t('settings:librarySharing.lastSentAt', { date: new Date(value.last_sent_at).toLocaleDateString() })}</Help> : null}
+      {value.last_sent_at ? <Help>{t('settings:librarySharing.lastSentAt', { date: new Date(value.last_sent_at).toLocaleDateString(interfaceLanguage) })}</Help> : null}
+    </Stack> : null}
+    {value.enabled && value.last_attempt?.snapshot_id ? <Stack divided>
+      <FactList>
+        <Fact term={t('settings:librarySharing.snapshot')}><StatusLabel
+          tone={participationTones[value.last_attempt.status || ''] || 'neutral'}>
+          {deliveryNames[value.last_attempt.status || ''] || t('settings:librarySharing.waitingData')}</StatusLabel></Fact>
+        <Fact term={t('settings:librarySharing.snapshotId')}>{value.last_attempt.snapshot_id}</Fact>
+      </FactList>
+      {value.last_attempt.raw_bytes !== undefined && value.last_attempt.compressed_bytes !== undefined
+        ? <Help>{t('settings:librarySharing.snapshotSizes', {
+          raw: (value.last_attempt.raw_bytes / 1024).toFixed(1),
+          compressed: (value.last_attempt.compressed_bytes / 1024).toFixed(1),
+        })}</Help> : null}
+      {value.last_attempt.status === 'accepted' ? <Help>{t('settings:librarySharing.acceptedHelp')}</Help> : null}
     </Stack> : null}
     {value.enabled && value.last_attempt?.status === 'failed'
       ? <Stack divided><span className="self-start"><StatusLabel tone={value.last_attempt.attempted ? 'error' : 'warning'}>{value.last_attempt.attempted ? t('settings:librarySharing.uploadFailed') : t('settings:librarySharing.retryPending')}</StatusLabel></span><ErrorText>{value.last_attempt.attempted
@@ -86,6 +102,9 @@ export function LibrarySharingSettings({ initial, receipt }: {
       ? <Stack divided><span className="self-start"><StatusLabel tone="warning">{t('settings:librarySharing.resultUnknown')}</StatusLabel></span><Help>{t('settings:librarySharing.resultUnknownHelp')}</Help></Stack> : null}
     {preview ? <Stack divided>
       <Help>{t('settings:librarySharing.previewSummary', { count: preview.data.library.length, uncoded: preview.data.coverage.uncoded_items, size: (preview.bytes / 1024).toFixed(1) })}</Help>
+      <Help>{t('settings:librarySharing.snapshotSizes', {
+        raw: (preview.bytes / 1024).toFixed(1), compressed: (preview.compressed_bytes / 1024).toFixed(1),
+      })}</Help>
       <Help>{t('settings:librarySharing.previewNotice')}</Help>
       <Disclosure summary={t('settings:librarySharing.previewData')} defaultOpen>
         <CodeBlock code={previewText} language="json" label={t('settings:librarySharing.previewLabel')} maxCharacters={24000} />

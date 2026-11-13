@@ -1,8 +1,8 @@
-"""后端发给界面的中文逐文件只减不增（ADR-0156 第五条）。
+"""后端源码里的中文字符串逐文件只减不增（ADR-0159 第六条）。
 
-计数的是还没带 `message_code` 的中文字符串：路由模块（`api.py`、`routes_*.py`、`web_*.py`）里的全部中文，
-加上所有模块里 `raise` 的中文消息。docstring、日志、命令行输出和比较、正则里的中文不算；
-写在带 `code=`／`message_code=` 的调用、`message_fields(...)` 或带 `message_code` 键的字典里的中文是回落原文，也不算。
+界面文字只在 `resources/locales/` 里，日志与命令行用英文，所以源码里的中文字符串都在计数之内：
+带不带 code、是报错、日志还是命令行输出都算。docstring 不算；内容数据文件（`CONTENT_FILES`：标签词表、
+汉字转换表、番号与标题规则的词表）整份不算。
 
 用法：
   python scripts/check_backend_copy.py          列出超过基线的文件，有就以 1 退出
@@ -20,18 +20,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "peach"
 BASELINE = ROOT / "scripts" / "backend-copy-baseline.json"
-SERVER_LOCALES = ROOT / "frontend" / "src" / "locales"
+SERVER_LOCALES = ROOT / "resources" / "locales"
 
 HAN = re.compile(r"[㐀-鿿]")
-ROUTE_MODULE = re.compile(r"^(api|routes_\w+|web_\w+)\.py$")
-LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
-CLI_CALLS = {"print", "echo", "secho", "write", "SystemExit", "exit", "add_argument", "ArgumentParser",
-             "add_parser", "add_subparsers", "add_argument_group", "add_mutually_exclusive_group"}
-MATCH_CALLS = {"startswith", "endswith", "replace", "split", "rsplit", "strip", "lstrip", "rstrip", "partition",
-               "rpartition", "find", "index", "count", "removeprefix", "removesuffix", "compile", "search", "match",
-               "fullmatch", "sub", "subn", "findall", "finditer"}
+#: 内容数据：词表与规则里的中文是数据本身，不是界面文字。
+CONTENT_FILES = {
+    "genre_taxonomy.py",  # 标签的中文规范名、别名与分组
+    "javdb_genres.py",    # JavDB 类别名到本地标签的对照
+    "kanji.py",           # 繁简与日文汉字转换表
+    "catalog_rules.py",   # 番号、标题、转载站与特典版的识别词
+}
 CODE_KEYWORDS = {"code", "message_code"}
-CODED_CALLS = {"message_fields"}
+CODED_CALLS = {"message_fields", "UserFacingError", "UserValueError", "UserRuntimeError", "UserPermissionError",
+               "UserOSError", "UserTimeoutError", "UserInterruptedError", "CodePatternError"}
 #: 一个 code 是用点分开的 camelCase 段，末段可以是带连字符的显示表 id。
 CODE_SHAPE = re.compile(r"^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$")
 
@@ -51,42 +52,12 @@ def _docstrings(tree: ast.AST) -> set[int]:
     return found
 
 
-def _coded(node: ast.AST) -> bool:
-    if isinstance(node, ast.Call):
-        return _call_name(node) in CODED_CALLS or any(kw.arg in CODE_KEYWORDS for kw in node.keywords)
-    if isinstance(node, ast.Dict):
-        return any(isinstance(key, ast.Constant) and key.value == "message_code" for key in node.keys)
-    return False
-
-
-def _context(node: ast.AST, parents: dict[int, ast.AST]) -> str | None:
-    """沿父节点往上看这句中文在哪：`raise`、`skip`（不计）或 `None`（普通字符串）。"""
-    child, current = node, parents.get(id(node))
-    while current is not None and not isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        if _coded(current):
-            return "skip"
-        if isinstance(current, ast.Call):
-            name = _call_name(current)
-            if (isinstance(current.func, ast.Attribute) and name in LOG_METHODS
-                    and re.search(r"log", ast.unparse(current.func.value), re.I)):
-                return "skip"
-            if name in CLI_CALLS or (name in MATCH_CALLS and child is not current.func):
-                return "skip"
-        elif isinstance(current, (ast.Compare, ast.Set)):
-            return "skip"
-        elif isinstance(current, ast.Raise):
-            return "raise"
-        if isinstance(current, ast.stmt) and not isinstance(current, ast.Raise):
-            return None
-        child, current = current, parents.get(id(current))
-    return None
-
-
 def count_literals(name: str, source: str) -> int:
-    """一个模块里还没带 code 的界面中文条数。"""
+    """一个模块里的中文字符串条数。f-string 整条算一处；内容数据文件记 0。"""
+    if Path(name).name in CONTENT_FILES:
+        return 0
     tree = ast.parse(source)
     parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    route = bool(ROUTE_MODULE.match(Path(name).name))
     skip = _docstrings(tree)
     total = 0
     for node in ast.walk(tree):
@@ -98,9 +69,7 @@ def count_literals(name: str, source: str) -> int:
                 continue
         else:
             continue
-        context = _context(node, parents)
-        if context == "raise" or (context is None and route):
-            total += 1
+        total += 1
     return total
 
 
@@ -116,15 +85,19 @@ def scan(root: Path = ROOT) -> dict[str, int]:
 
 
 def codes_in(source: str) -> set[str]:
-    """源码里写死的 message code：`code=`／`message_code=` 关键字、`message_fields` 的第二个参数、
+    """源码里写死的 message code：`code=`／`message_code=` 关键字、`message_fields`、`UserFacingError` 及其子类的第一个参数、
     字典里 `message_code` 键的值，以及名字以 `_CODE` 结尾的常量。"""
     found = set()
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    # 同一模块里继承 `UserFacingError` 的异常类，构造方式与它相同。
+    coded = CODED_CALLS | {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                           and any(isinstance(base, ast.Name) and base.id in CODED_CALLS for base in node.bases)}
+    for node in ast.walk(tree):
         values: list[ast.AST] = []
         if isinstance(node, ast.Call):
             values += [kw.value for kw in node.keywords if kw.arg in CODE_KEYWORDS]
-            if _call_name(node) in CODED_CALLS and len(node.args) > 1:
-                values.append(node.args[1])
+            if _call_name(node) in coded and node.args:
+                values.append(node.args[0])
         elif isinstance(node, ast.Dict):
             values += [value for key, value in zip(node.keys, node.values)
                        if isinstance(key, ast.Constant) and key.value == "message_code"]
@@ -148,12 +121,12 @@ def server_keys(language: str, root: Path = ROOT) -> set[str]:
         for key, value in tree.items():
             keys |= walk(value, f"{prefix}{key}.") if isinstance(value, dict) else {prefix + key}
         return keys
-    locales = SERVER_LOCALES if root == ROOT else root / "frontend" / "src" / "locales"
+    locales = SERVER_LOCALES if root == ROOT else root / "resources" / "locales"
     return walk(json.loads((locales / language / "server.json").read_text(encoding="utf-8")))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="后端界面中文逐文件只减不增")
+    parser = argparse.ArgumentParser(description="后端源码中文字符串逐文件只减不增")
     parser.add_argument("--write", action="store_true", help="按当前计数重写基线")
     args = parser.parse_args(argv)
     counts = scan()

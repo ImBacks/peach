@@ -53,7 +53,10 @@ from . import minnano_av
 from .entities import (is_short_single_name, merge_entity, name_chain, name_rank,
                        normalize_entity_name)
 from .followups import Attempts, Followup, FollowupType, attempts_root, register
+from .task_outcomes import is_outcome, outcome_parts, part, said
+from .task_runs import item_progress
 from .kanji import fold_glyphs
+from .metadata import RelayableError, relay_args, relayed
 from .metadata_alias_resolve import is_descriptive, is_planning_alias
 from .migrations import sqlite_backup
 from .scripting import HostLimiter
@@ -111,11 +114,11 @@ REVIEW_FILE = "performer-alias-landing.csv"
 FIELDS = ("entity_id", "canonical_name", "alias", "site", "page", "action", "detail", "batch")
 
 
-class Blocked(RuntimeError):
+class Blocked(RelayableError, RuntimeError):
     """这一站拒绝了请求或还在冷却：本轮不再问它。"""
 
 
-class Unavailable(RuntimeError):
+class Unavailable(RelayableError, RuntimeError):
     """这一页没取到（网络、非 200、本条请求数用完）。"""
 
 
@@ -186,7 +189,7 @@ def parse_key(key: str) -> int:
     """把后继 key 拆回女优 id。形状不对就抛——那说明排队的行不是这个版本写的。"""
     prefix, _, raw = str(key).partition(":")
     if prefix != TASK_KEY or not raw.isdigit():
-        raise ValueError(f"认不出这条补别名后继：{key}")
+        raise ValueError(f"unrecognized performer alias followup key: {key}")
     return int(raw)
 
 
@@ -283,8 +286,8 @@ def _stock_facts(connection: sqlite3.Connection):
     return aliases, refs, fc2
 
 
-def _label(name: str) -> str:
-    return f"{TASK_LABEL}：{name}" if name else TASK_LABEL
+def _label(name: str) -> dict:
+    return item_progress(TASK_KEY, name)
 
 
 def plan(connection: sqlite3.Connection, *, since_entity_id: int) -> list[Followup]:
@@ -296,7 +299,7 @@ def plan(connection: sqlite3.Connection, *, since_entity_id: int) -> list[Follow
         (int(since_entity_id),)).fetchall()
     found = sorted(((int(row[2] or 0), int(row[0]), str(row[1] or "")) for row in rows
                     if has_entry(connection, int(row[0]))), key=lambda item: (-item[0], item[1]))
-    return [Followup(key=followup_key(entity_id), task_key=TASK_KEY, label=_label(name))
+    return [Followup.coded(followup_key(entity_id), TASK_KEY, _label(name))
             for _assets, entity_id, name in found]
 
 
@@ -331,7 +334,7 @@ def stock(connection: sqlite3.Connection, attempts, *, limit: int, skip=(),
         others = [alias for alias, source in written if not _ours(source)]
         if attempts.settled(key, _fingerprint((canonical, others), numbers, has_fc2)):
             continue
-        found.append(Followup(key=key, task_key=TASK_KEY, label=_label(canonical)))
+        found.append(Followup.coded(key, TASK_KEY, _label(canonical)))
         if len(found) >= limit:
             break
     return found
@@ -381,28 +384,28 @@ class MinnanoPages:
         except (OSError, ValueError, KeyError, TypeError):
             pass
         if paused_until(self.cooldown_root, self.source):
-            raise Blocked("来源正在冷却")
+            raise Blocked("errors.performerAliasFollowup.coolingDown")
         if self.requests >= self.max_requests:
-            raise Unavailable("这一条的请求数用完了")
+            raise Unavailable("errors.performerAliasFollowup.requestsUsedUp")
         self.limiter.wait(url)
         self.requests += 1
         try:
             response = self.transport(HttpRequest("GET", url, {"Accept": "text/html"}),
                                       TIMEOUT, 4 << 20)
         except SourcePaused as error:
-            raise Blocked(str(error)) from None
+            raise Blocked(*relay_args(error)) from None
         except Exception as error:  # noqa: BLE001 - 网络层失败都是「这一页没取到」
-            raise Unavailable(f"网络请求失败：{type(error).__name__}") from None
+            raise Unavailable("errors.performerAliasFollowup.networkFailed", {"type": type(error).__name__}) from None
         body = response.body.decode("utf-8", "replace")
         if response.status == 429:
             self._hold(refused=False)
-            raise Blocked("来源限流（429）")
+            raise Blocked("errors.performerAliasFollowup.rateLimited")
         if response.status == 403 or challenge_page(body):
             self._hold(refused=True)
-            raise Blocked("来源拒绝访问或要求机器人验证")
+            raise Blocked("errors.performerAliasFollowup.refused")
         if response.status != 200:
             # avbase 女优页按名字拼地址，站上没有这个名字回 404：那是「问过、没有」，不是没取到。
-            raise (Missing if response.status == 404 else Unavailable)(f"HTTP {response.status}")
+            raise (Missing if response.status == 404 else Unavailable)(*relayed(f"HTTP {response.status}"))
         final_url = response.url or url
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"url": url, "final_url": final_url, "body": body},
@@ -458,10 +461,10 @@ class WikiSitePages:
         from .scraping_access import pause_source, paused_until
 
         if paused_until(self.cooldown_root, self.site):
-            raise Blocked("来源正在冷却")
+            raise Blocked("errors.performerAliasFollowup.coolingDown")
         missing = self._missing()
         if time.time() - float(missing.get(url, 0)) < self.MISSING_TTL:
-            raise Missing("站上没有这一页")
+            raise Missing("errors.performerAliasFollowup.pageMissing")
         try:
             return self.pages.get(url)
         except MetadataProviderError as error:
@@ -470,11 +473,12 @@ class WikiSitePages:
                     missing[url] = time.time()
                     self.missing_path.parent.mkdir(parents=True, exist_ok=True)
                     self.missing_path.write_text(json.dumps(missing), encoding="utf-8")
-                    raise Missing(str(error)) from None
-                raise Unavailable(str(error)) from None
+                    raise Missing(*relay_args(error)) from None
+                raise Unavailable(*relay_args(error)) from None
             limited = error.status_code == 429
             pause_source(self.cooldown_root, self.site, refused=not limited)
-            raise Blocked("来源限流（429）" if limited else "来源拒绝访问或要求机器人验证") from None
+            raise Blocked("errors.performerAliasFollowup.rateLimited" if limited
+                          else "errors.performerAliasFollowup.refused") from None
 
     def close(self) -> None:
         self.pages.close()
@@ -517,28 +521,28 @@ class Fc2cmadbPages:
         from .scraping_access import SourcePaused, pause_source, paused_until
 
         if paused_until(self.cooldown_root, FC2CMADB):
-            raise Blocked("来源正在冷却")
+            raise Blocked("errors.performerAliasFollowup.coolingDown")
         if self.requests >= self.max_requests:
-            raise Unavailable("这一条的请求数用完了")
+            raise Unavailable("errors.performerAliasFollowup.requestsUsedUp")
         self.limiter.wait(url)
         self.requests += 1
         try:
             response = self.transport(HttpRequest("GET", url, headers), TIMEOUT, 4 << 20)
         except SourcePaused as error:
-            raise Blocked(str(error)) from None
+            raise Blocked(*relay_args(error)) from None
         except Exception as error:  # noqa: BLE001 - 网络层失败都是「这一页没取到」
-            raise Unavailable(f"网络请求失败：{type(error).__name__}") from None
+            raise Unavailable("errors.performerAliasFollowup.networkFailed", {"type": type(error).__name__}) from None
         text = response.body[:4096].decode("utf-8", "replace")
         if response.status == 429:
             pause_source(self.cooldown_root, FC2CMADB)
-            raise Blocked("来源限流（429）")
+            raise Blocked("errors.performerAliasFollowup.rateLimited")
         if response.status == 403 or challenge_page(text):
             pause_source(self.cooldown_root, FC2CMADB, refused=True)
-            raise Blocked("来源拒绝访问或要求机器人验证")
+            raise Blocked("errors.performerAliasFollowup.refused")
         if response.status == 404:
             return None
         if response.status != 200:
-            raise Unavailable(f"HTTP {response.status}")
+            raise Unavailable(*relayed(f"HTTP {response.status}"))
         return response.body
 
     def close(self) -> None:
@@ -834,7 +838,7 @@ def merge_one_person(contract, entity_id: int, rows: list[dict], batch: str) -> 
         broken = [row for row in connection.execute("PRAGMA foreign_key_check")
                   if tuple(row) not in existing]
         if broken:
-            raise RuntimeError(f"合并实体 {source_id} 进 {target_id} 后外键校验有 {len(broken)} 条违规")
+            raise RuntimeError(f"foreign key check found {len(broken)} violations after merging entity {source_id} into {target_id}")
     contract.cache_bust()
     sites = "、".join(dict.fromkeys(row["site"] for row in taken))
     for row in taken:
@@ -853,9 +857,9 @@ def run(contract, key: str, handle) -> dict:
     summary = _run(contract, key, handle)
     with contract.database.read_connection() as connection:
         current = fingerprint(connection, parse_key(key))
-    outcome = str(summary.get("outcome", ""))
     Attempts(attempts_root(contract.candidate_root)).record(
-        key, current, outcome, retry_after=RETRY_UNFETCHED if outcome == "未取得" else None)
+        key, current, outcome_parts(summary),
+        retry_after=RETRY_UNFETCHED if is_outcome(summary, "unfetched") else None)
     return summary
 
 
@@ -867,15 +871,17 @@ def _run(contract, key: str, handle) -> dict:
         refs = _refs(connection, entity_id)
         codes = fc2_codes(connection, entity_id)
     if names is None:
-        return {"outcome": "档案已不存在"}
+        return said("gone")
     canonical = names[0]
     if handle is not None:
-        handle.progress(label=_label(canonical), throttle=0)
+        handle.progress(**_label(canonical), throttle=0)
     sites = open_sites(contract)
     try:
         reports: dict[str, str] = {}
-        rows = _visit_fc2cmadb(contract, sites, entity_id, canonical, codes, batch, reports)
-        more_reports, more_rows = _visit(contract, sites, entity_id, canonical, refs, batch)
+        #: 结论是「未取得」（`Blocked`／`Unavailable`）的站；一站一旦没取到，这一轮不再回头问它。
+        unfetched: set[str] = set()
+        rows = _visit_fc2cmadb(contract, sites, entity_id, canonical, codes, batch, reports, unfetched)
+        more_reports, more_rows = _visit(contract, sites, entity_id, canonical, refs, batch, unfetched)
         reports.update(more_reports)
         rows += more_rows
     finally:
@@ -889,16 +895,16 @@ def _run(contract, key: str, handle) -> dict:
         _record_review(contract.candidate_root, entity_id, rows)
     taken = sum(1 for row in rows if row["action"] == TAKEN)
     if merged:
-        outcome = f"{merged['absorbed']} 并入 {merged['kept']}"
+        outcome = part("merged", absorbed=merged['absorbed'], kept=merged['kept'])
     elif written:
-        outcome = f"登记 {len(written)} 个别名"
+        outcome = part("aliasesAdded", count=len(written))
     elif rows:
-        outcome = "没有新写法"
-    elif any(report.startswith("未取得") for report in reports.values()):
-        outcome = "未取得"
+        outcome = part("noNewAliases")
+    elif unfetched:
+        outcome = part("unfetched")
     else:
-        outcome = f"{'三' if codes else '两'}站都没对上她"
-    summary = {"name": canonical, "outcome": outcome, "sites": reports}
+        outcome = part("noMatchThree" if codes else "noMatchTwo")
+    summary = {"name": canonical, **said(outcome), "sites": reports}
     if written:
         summary["aliases"] = written[:12]
     if taken:
@@ -909,8 +915,9 @@ def _run(contract, key: str, handle) -> dict:
 
 
 def _visit_fc2cmadb(contract, sites: dict, entity_id: int, canonical: str, codes: list[str],
-                    batch: str, reports: dict[str, str]) -> list[dict]:
-    """先问 fc2cmadb：站上主名登记之后，另外两站这一轮就能拿它去搜。没有 FC2 作品就不问。"""
+                    batch: str, reports: dict[str, str], unfetched: set[str]) -> list[dict]:
+    """先问 fc2cmadb：站上主名登记之后，另外两站这一轮就能拿它去搜。没有 FC2 作品就不问。
+    没取到时站名记进 `unfetched`。"""
     if not codes or FC2CMADB not in sites:
         return []
     with contract.database.read_connection() as connection:
@@ -923,6 +930,7 @@ def _visit_fc2cmadb(contract, sites: dict, entity_id: int, canonical: str, codes
         pages, note = fc2cmadb_page(sites[FC2CMADB], codes, mine)
     except (Blocked, Unavailable) as error:
         reports[FC2CMADB] = f"未取得：{error}"
+        unfetched.add(FC2CMADB)
         return []
     if not pages:
         reports[FC2CMADB] = f"未命中：{note or '女优栏里没有她'}"
@@ -936,8 +944,8 @@ def _visit_fc2cmadb(contract, sites: dict, entity_id: int, canonical: str, codes
 
 
 def _visit(contract, sites: dict, entity_id: int, canonical: str, refs: list[str],
-           batch: str) -> tuple[dict[str, str], list[dict]]:
-    """两站各找她那一页，找到就当场落库。返回（每站一句结论, 每个写法一行判词）。
+           batch: str, unfetched: set[str]) -> tuple[dict[str, str], list[dict]]:
+    """两站各找她那一页，找到就当场落库。返回（每站一句结论, 每个写法一行判词）；没取到的站名记进 `unfetched`。
 
     走两圈：第一圈用账本里现有的名字；某一站没命中、而另一站登记了新写法时，第二圈拿新写法
     再搜那一站——`神山ももか` 在 av_neme 上搜得到 `雲母そら` 那一页，登记之后 minnano-av 才搜得到。
@@ -971,6 +979,7 @@ def _visit(contract, sites: dict, entity_id: int, canonical: str, refs: list[str
                     pages, note = av_neme_page(sites[site], keys, mine)
             except (Blocked, Unavailable) as error:
                 reports[site] = f"未取得：{error}"
+                unfetched.add(site)
                 continue
             pages = [(url, found) for url, found in pages
                      if url not in visited and _anchored(found, mine)]

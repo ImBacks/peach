@@ -11,7 +11,7 @@ import { Note } from '../components/note';
 import { busyProps } from '../settings/use-action';
 import { ProcessingMode } from '../library-processing/processing-effort';
 import type { ProcessingSpeed } from '../library-processing/library-processing';
-import { controlTask, setTaskSpeed, isActive, TASKS_KEY, type TaskControlAction, type TaskRunPayload } from './tasks';
+import { controlTask, setTaskSpeed, isActive, taskName, TASKS_KEY, type TaskControlAction, type TaskRunPayload } from './tasks';
 import { t } from '../../i18n';
 
 const CONTROL_KEY = ['task-control'] as const;
@@ -91,12 +91,12 @@ export function TaskControls({ run, runs = [run] }: { run: TaskRunPayload; runs?
   if (!actions.length && !canSetSpeed) return null;
 
   const submit = (action: TaskControlAction) => {
-    const command = { id: run.id, label: run.task_label, action, followups };
+    const command = { id: run.id, label: taskName(run), action, followups };
     if (action === 'cancel') {
       if (pending.current.cancel || pending.current.confirmation || cancellation.isSuccess) return;
       pending.current.confirmation = true;
       void confirmModal({
-        title: followups ? t('manage:taskControls.cancelFollowupsTitle', { task: run.task_label }) : t('manage:taskControls.cancelTaskTitle', { task: run.task_label }),
+        title: followups ? t('manage:taskControls.cancelFollowupsTitle', { task: taskName(run) }) : t('manage:taskControls.cancelTaskTitle', { task: taskName(run) }),
         body: !followups ? t('manage:taskControls.cancelTaskBody')
           : runs.length > 1 ? t('manage:taskControls.cancelBatchFollowupsBody', { count: runs.length })
           : t('manage:taskControls.cancelFollowupsBody'),
@@ -116,7 +116,7 @@ export function TaskControls({ run, runs = [run] }: { run: TaskRunPayload; runs?
 
   return (
     <div className="ml-auto min-w-0" data-task-controls={run.id}>
-      <div role="group" aria-label={t(followups ? 'manage:taskControls.followupsGroupLabel' : 'manage:taskControls.groupLabel', { task: run.task_label })}
+      <div role="group" aria-label={t(followups ? 'manage:taskControls.followupsGroupLabel' : 'manage:taskControls.groupLabel', { task: taskName(run) })}
         className="flex flex-wrap items-center justify-end gap-2">
         {canSetSpeed ? <ProcessingMode value={run.control!.speed_mode!}
           busy={speed.isPending || cancelling} animate={run.control?.state === 'running'}

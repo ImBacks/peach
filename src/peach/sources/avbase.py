@@ -35,6 +35,8 @@ AVBASE = SiteConfig(name="avbase", label="AVBase", provider="avbase-search",
 PRODUCT_ORDER = ("fanza", "mgstage", "duga")
 #: 页面结构对不上时的那一句。Cloudflare 验证页与站点改版都走这一句，细档分开记。
 UNRECOGNISED = "AVBase 页面结构未识别，可能在验证访问"
+#: 抛出时用的 code，zh-CN 文字与 `UNRECOGNISED` 相同；`UNRECOGNISED` 另被人物资料的备注拿去拼句。
+UNRECOGNISED_CODE = "errors.avbase.unrecognized"
 
 _NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
 _DATE = re.compile(r"^[A-Za-z]{3} ([A-Za-z]{3}) (\d{1,2}) (\d{4})")
@@ -103,11 +105,11 @@ class AVBaseSource(SiteSource):
             props = None
         if not isinstance(props, dict):
             reason = FailureReason.CLOUDFLARE_CHALLENGE if challenge_page(text) else FailureReason.PARSE_ERROR
-            raise SourceFailure(reason, UNRECOGNISED)
+            raise SourceFailure(reason, UNRECOGNISED_CODE)
         works = [work for work in props.get("works") or []
                  if isinstance(work, dict) and same_release_code(code, str(work.get("work_id") or ""))]
         if not works:
-            raise SourceFailure(FailureReason.NOT_FOUND, "AVBase 没有这个番号")
+            raise SourceFailure(FailureReason.NOT_FOUND, "errors.avbase.notFound")
         work = works[0]
         products = own_products(code, work)
         first = lambda pick: next((value for value in map(pick, products) if value), "")

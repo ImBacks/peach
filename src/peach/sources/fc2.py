@@ -39,8 +39,8 @@ USER_PATH = "/users/{slug}/"
 #: 内容分裂成两个厂牌实体。卖家是另一回事，它走 `label`：那是只作证据的目录字段，
 #: 归不归实体由复核页上的人判断，解析器不替他决定。
 STUDIO = "FC2-PPV"
-#: 番号认不出商品号时三站共用的那一句。
-UNRECOGNISED = "这个番号认不出 FC2 商品号"
+#: 番号认不出商品号时三站共用的那一句（code）。
+UNRECOGNISED = "errors.fc2.unrecognizedCode"
 
 _VIDEO_ID = re.compile(r"^FC2(?:[-_. ]?PPV)?[-_. ]?(\d{5,})$", re.I)
 #: `41:50` 与 `1:23:45` 两种都有。
@@ -163,7 +163,7 @@ class Fc2Source(SiteSource):
         soup = BeautifulSoup(page.text, "html.parser")
         product = _product(soup)
         if product is None or str(product.get("sku") or "").strip() != wanted:
-            raise SourceFailure(FailureReason.NOT_FOUND, f"{self.config.label} 上没有这个商品")
+            raise SourceFailure(FailureReason.NOT_FOUND, "errors.base.itemNotListed", {"label": self.config.label})
         image = product.get("image")
         #: 商品图有两处：正文那张是 `w276` 缩略图，Product 里这个是存储原件（实测
         #: 2350×2352）。取原件，缩略图连封面的最低宽度都过不了。

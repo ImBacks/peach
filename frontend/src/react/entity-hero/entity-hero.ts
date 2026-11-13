@@ -83,6 +83,8 @@ export interface EntityHeroData {
   pending_work?: PendingWorkItem[];
   company_profile?: Partial<Record<'legal_name' | 'founded' | 'launched' | 'country' | 'location' | 'operator' | 'parent' | 'group' | 'distributor', { value: string; source_url: string; evidence?: string }>>;
   identity_labels?: string[];
+  /** 与 `identity_labels` 一一对应的分类 id，按它取译文。 */
+  identity_categories?: string[];
   external_refs?: { provider: string; external_kind: string; external_id: string }[];
   related_identities?: { id: number; kind: string; canonical_name: string; relation: string }[];
   id: number;

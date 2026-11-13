@@ -23,6 +23,8 @@ from . import browser_transport, peach_proxy
 from .http import HttpRequest, HttpxTransport
 from .scripting import USER_AGENT, host_under, hostname_of
 from .fsutil import atomic_write_text
+from .metadata import RelayableError
+from .user_messages import UserValueError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +105,7 @@ _LOCK = threading.RLock()
 FIRST_BLOCKED_PAUSE = 900
 
 
-class SourcePaused(RuntimeError):
+class SourcePaused(RelayableError, RuntimeError):
     """来源冷却期内停止请求，保留已有图像。"""
 
 
@@ -111,11 +113,11 @@ class SourceBudgetExhausted(SourcePaused):
     """本趟采集预算耗尽，不能作为单个来源的冷却跳过。"""
 
 
-#: 整趟预算三项到顶时的说明，键是 `SourceTransport` 的三个上限。
+#: 整趟预算三项到顶时那一句的 code，键是 `SourceTransport` 的三个上限。
 BUDGET_SPENT = {
-    'requests': "本趟采集次数已用完，再跑一次接着采；已有图片保留",
-    'seconds': "本趟采集时间已用完，再跑一次接着采；已有图片保留",
-    'bytes': "本趟下载量已用完，再跑一次接着采；已有图片保留",
+    'requests': "errors.scrapingAccess.requestBudgetSpent",
+    'seconds': "errors.scrapingAccess.timeBudgetSpent",
+    'bytes': "errors.scrapingAccess.downloadBudgetSpent",
 }
 
 
@@ -125,8 +127,8 @@ class SourceRefused(SourcePaused):
     `reason` 是 `FailureReason` 的取值（`geo_restricted`／`ip_banned`），来源检查按它报细档。
     """
 
-    def __init__(self, message: str, reason: str) -> None:
-        super().__init__(message)
+    def __init__(self, code: str, params: dict, reason: str) -> None:
+        super().__init__(code, params)
         self.reason = reason
 
 
@@ -214,7 +216,7 @@ def _store(root: Path) -> CredentialStore:
 
 def values_for(root: Path, source: str) -> dict[str, str]:
     if source not in SOURCES:
-        raise ValueError("未知采集来源")
+        raise UserValueError("errors.scrapingAccess.unknownSource")
     credential = _store(root).load("scraping-" + source)
     return dict(credential.values) if credential else {}
 
@@ -268,7 +270,7 @@ def cookie_jar(values: dict[str, str], source: str) -> http.cookiejar.CookieJar:
                 handle.write(text)
             jar.load(path, ignore_discard=True, ignore_expires=False)
         except (OSError, http.cookiejar.LoadError) as exc:
-            raise ValueError("Cookie 文件须为 Netscape 文本格式") from exc
+            raise UserValueError("errors.scrapingAccess.cookieFileFormat") from exc
         finally:
             if path:
                 Path(path).unlink(missing_ok=True)
@@ -278,12 +280,12 @@ def cookie_jar(values: dict[str, str], source: str) -> http.cookiejar.CookieJar:
     elif values.get("cookie"):
         text = values["cookie"]
         if "\r" in text or "\n" in text:
-            raise ValueError("请粘贴一行 Cookie 请求头")
+            raise UserValueError("errors.scrapingAccess.cookieOneLine")
         parsed = SimpleCookie()
         try:
             parsed.load(text)
         except CookieError as exc:
-            raise ValueError("Cookie 请求头格式无效") from exc
+            raise UserValueError("errors.scrapingAccess.invalidCookieHeader") from exc
         for name, item in parsed.items():
             jar.set_cookie(http.cookiejar.Cookie(
                 0, name, item.value, None, False, domain, True, False,
@@ -297,7 +299,7 @@ def save(root: Path, source: str, body: dict) -> dict:
         previous_network = "direct" if values.get("network") == "direct" else "peach"
         mode = body.get("network", "direct" if values.get("network") == "direct" else "peach")
         if mode not in {"direct", "peach"}:
-            raise ValueError("请选择来源连接方式")
+            raise UserValueError("errors.scrapingAccess.chooseNetwork")
         if values.get("network") == "proxy" and mode == "peach":
             inherited = peach_proxy.values(root)
             peach_proxy.client_options(root)
@@ -309,14 +311,14 @@ def save(root: Path, source: str, body: dict) -> dict:
             values.pop("cookies_text", None)
         elif body.get("cookie") or body.get("cookies_text"):
             if not SOURCES[source].get("cookie"):
-                raise ValueError("此来源不接受登录 Cookie")
+                raise UserValueError("errors.scrapingAccess.cookieNotAccepted")
             if body.get("cookie") and body.get("cookies_text"):
-                raise ValueError("Cookie 粘贴与文件导入只选一种")
+                raise UserValueError("errors.scrapingAccess.cookieOneMethod")
             supplied = {name: str(body.get(name) or "") for name in ("cookie", "cookies_text")}
             if sum(map(len, supplied.values())) > 256 * 1024:
-                raise ValueError("Cookie 文本超过 256 KiB")
+                raise UserValueError("errors.scrapingAccess.cookieTooLarge")
             if not list(cookie_jar(supplied, source)):
-                raise ValueError("未找到该来源尚未过期的 Cookie")
+                raise UserValueError("errors.scrapingAccess.noValidCookie")
             values.update(supplied)
             # 新 Cookie 多半是为了解开 403 才换的；冷却记的是旧 Cookie 撞出来的账，别让它压着新的等到期。
             cooldown_path(root, source).unlink(missing_ok=True)
@@ -400,7 +402,7 @@ def record_source_check(root: Path, source: str, stage: str, record: dict) -> No
             atomic_write_text(Path(root) / f"source-check-{source}.json",
                               json.dumps(state, ensure_ascii=False), mode=0o600)
         except OSError:
-            LOGGER.warning("来源 %s 的诊断记录未保存", source)
+            LOGGER.warning("Diagnostics record for source %s was not saved", source)
 
 
 def browser_profile(root: Path) -> Path:
@@ -454,16 +456,16 @@ class SourceTransport:
                 return response
             target = urljoin(request.url, response.headers["location"])
             if urlsplit(target).scheme != "https":
-                raise ValueError("采集重定向必须使用 HTTPS")
+                raise UserValueError("errors.scrapingAccess.redirectNotHttps")
             cross_origin = urlsplit(target).netloc != urlsplit(request.url).netloc
             headers = {k: v for k, v in request.headers.items()
                        if not cross_origin or k.lower() not in {"cookie", "authorization", "host"}}
             request = HttpRequest("GET" if response.status == 303 else request.method,
                                   target, headers, None if response.status == 303 else request.body)
-        raise ValueError("采集重定向次数超过上限")
+        raise UserValueError("errors.scrapingAccess.tooManyRedirects")
 
     def exhausted(self) -> str:
-        """本趟预算到顶时返回那一句说明，没到顶返回空串。
+        """本趟预算到顶时返回那一句说明的 code（`BUDGET_SPENT` 的值），没到顶返回空串。
 
         到顶之后这个传输再也发不出请求，调用方据此整趟停下，不必逐项去撞同一句话。"""
         if self.max_requests and self.requests >= self.max_requests:
@@ -498,7 +500,7 @@ class SourceTransport:
         via = self._via(source)
         until, blocks = _state_for(self.root, key, via)
         if until > time.time():
-            raise SourcePaused("来源正在冷却，请稍后重试；已有图片保留")
+            raise SourcePaused("errors.scrapingAccess.coolingDown")
         if source not in self.transports:
             self.transports[source] = self._transport_for(source)
         self.requests += 1
@@ -510,8 +512,7 @@ class SourceTransport:
             blocks += 1
             _pause(cooldown, time.time() + min(FIRST_BLOCKED_PAUSE * 2 ** (blocks - 1),
                                                SOURCES[source]["blocked_pause"]), blocks, via)
-            raise SourcePaused("来源的人机验证没有在限时内通过，暂停向它请求一段时间；"
-                               "浏览器窗口再弹出时点一下验证即可；已有图片保留")
+            raise SourcePaused("errors.scrapingAccess.challengeTimedOut")
         if via == VIA_HTTP and source and SOURCES[source].get("browser_fallback") and _refused(response):
             verified = self._verify_in_browser(source, request, timeout, max_bytes)
             if verified is not None:
@@ -529,7 +530,7 @@ class SourceTransport:
                 except (ValueError, TypeError, OverflowError):
                     until = time.time() + 900
             _pause(cooldown, until, blocks, via)
-            raise SourcePaused("来源限流，已记录冷却时间；已有图片保留")
+            raise SourcePaused("errors.scrapingAccess.rateLimited")
         self._refuse(source, request.url, response, cooldown, blocks, via)
         blocked_pause = SOURCES.get(source or "", {}).get("blocked_pause")
         if response.status == 403 and blocked_pause:
@@ -537,9 +538,8 @@ class SourceTransport:
             _pause(cooldown, time.time()
                    + min(FIRST_BLOCKED_PAUSE * 2 ** (blocks - 1), blocked_pause), blocks, via)
             if SOURCES[source].get("cookie"):
-                raise SourcePaused("来源拒绝访问，暂停向它请求一段时间；"
-                                   "请在采集设置里更新它的 Cookie；已有图片保留")
-            raise SourcePaused("来源拒绝访问，暂停向它请求一段时间；已有图片保留")
+                raise SourcePaused("errors.scrapingAccess.refusedUpdateCookie")
+            raise SourcePaused("errors.scrapingAccess.refused")
         if blocks and response.status < 400:
             # 这一趟通了，封已经解除：清掉记录，下次撞上从最短的一档重新起算。
             cooldown.unlink(missing_ok=True)
@@ -561,14 +561,12 @@ class SourceTransport:
         label = SOURCES.get(source or "", {}).get("label") or hostname_of(url)
         if reason is FailureReason.GEO_RESTRICTED:
             _pause(cooldown, time.time() + FIRST_BLOCKED_PAUSE, blocks, via)
-            raise SourceRefused(
-                f"{label} 不对当前出口所在的地区开放，请在代理里给它换一个它接受的地区的出口；"
-                f"暂停向它请求 {FIRST_BLOCKED_PAUSE // 60} 分钟", reason.value)
+            raise SourceRefused("errors.scrapingAccess.geoRestricted",
+                                {"label": label, "minutes": FIRST_BLOCKED_PAUSE // 60}, reason.value)
         blocks += 1
         limit = SOURCES.get(source or "", {}).get("blocked_pause") or 24 * 3600
         _pause(cooldown, time.time() + min(FIRST_BLOCKED_PAUSE * 2 ** (blocks - 1), limit), blocks, via)
-        raise SourceRefused(f"{label} 封禁了当前出口 IP，暂停向它请求一段时间，"
-                            "也可以在代理里给它换一个出口", reason.value)
+        raise SourceRefused("errors.scrapingAccess.ipBanned", {"label": label}, reason.value)
 
     def hold(self, source: str, action: str) -> None:
         """契约报的冷却细档（`SourceFailure.cooldown_action`）写回这个来源的冷却记录。
@@ -604,17 +602,17 @@ class SourceTransport:
         try:
             response = browser(request, timeout, max_bytes)
         except (browser_transport.BrowserUnavailable, browser_transport.ChallengeUnsolved) as error:
-            LOGGER.info("%s 的 HTTP 客户端被拦，浏览器验证也没取到：%s", source, error)
+            LOGGER.info("%s blocked the HTTP client and browser verification also failed: %s", source, error)
             return None
         if response.status != 200 or _refused(response):
-            LOGGER.info("%s 的 HTTP 客户端被拦，浏览器验证回 HTTP %s", source, response.status)
+            LOGGER.info("%s blocked the HTTP client; browser verification returned HTTP %s", source, response.status)
             return None
         fix_to_browser(self.root, source)
         replaced = self.transports.get(source)
         if isinstance(replaced, HttpxTransport):
             replaced.close()
         self.transports[source] = browser
-        LOGGER.warning("%s 的 HTTP 客户端被拦，浏览器验证取到正常页；这个来源之后固定走本机浏览器", source)
+        LOGGER.warning("%s blocked the HTTP client; browser verification got a normal page, so this source now always uses the local browser", source)
         return response
 
     def _browser_for(self, source: str):

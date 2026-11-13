@@ -10,6 +10,7 @@ from filelock import FileLock, Timeout
 
 from . import distribution, release_updates, standalone_update
 from .fsutil import atomic_write_text
+from .user_messages import UserValueError
 
 
 class AutomaticUpdates:
@@ -59,14 +60,14 @@ class AutomaticUpdates:
 
     def save(self, body: dict) -> dict:
         if not self.available:
-            raise ValueError("自动更新需要由托盘管理的服务")
+            raise UserValueError("errors.automaticUpdates.needsTray")
         mode, hours = body.get("mode"), body.get("interval_hours")
         if mode not in ("off", "check", "download"):
-            raise ValueError("请选择自动更新方式")
+            raise UserValueError("errors.automaticUpdates.chooseMode")
         if type(hours) is not int or hours not in (6, 24, 168):
-            raise ValueError("请选择检查频率")
+            raise UserValueError("errors.automaticUpdates.chooseInterval")
         if mode == "download" and not distribution.in_app_update():
-            raise ValueError("自动下载仅适用于 Windows 独立测试包")
+            raise UserValueError("errors.automaticUpdates.downloadUnsupported")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with FileLock(str(self.path) + ".lock", timeout=0):
             current = self.read()

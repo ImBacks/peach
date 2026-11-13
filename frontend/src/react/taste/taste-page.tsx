@@ -59,6 +59,7 @@ import {
   tasteKey, tasteRefetchInterval, tasteTime, TASTE_REFRESH_KEY, TASTE_WINDOWS, type RankRow, type TasteData,
   type TasteJob,
 } from './taste';
+import { codedText, jobText, serverLabel, serverLabelList } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /** 收起时露这么多条名次。二十条一次铺开会把下面几块整个顶到屏外。 */
@@ -242,10 +243,10 @@ function AnalysisCard({ data, onSignal, navigate }:
   if (!analysis?.headline) return null;
   const confidence = analysis.confidence || {};
   const leads = [
-    ...(analysis.explore || []).map((item) => (
-      { key: `tag:${item.tag}`, title: item.title, detail: item.detail, act: () => onSignal('tag', item.tag) })),
-    ...(analysis.next_steps || []).map((item) => (
-      { key: `route:${item.route}`, title: item.title, detail: item.detail, act: () => navigate(item.route) })),
+    ...(analysis.explore || []).map((item) => ({ key: `tag:${item.tag}`, title: codedText(item, 'title'),
+      detail: codedText(item, 'detail'), act: () => onSignal('tag', item.tag) })),
+    ...(analysis.next_steps || []).map((item) => ({ key: `route:${item.route}`, title: codedText(item, 'title'),
+      detail: codedText(item, 'detail'), act: () => navigate(item.route) })),
   ];
   return (
     <section className={CARD} aria-label={t('manage:taste.summary')}>
@@ -253,20 +254,20 @@ function AnalysisCard({ data, onSignal, navigate }:
         <h3 className="text-title-2-medium text-text-primary">{t('manage:taste.summary')}</h3>
         {/* 结论句是这张卡的主角：旧 `.tasteleads .tastelede p` 是 20/30 的主文字色，比正文
             大一档、限宽 64ch。「有多少把握」是它的注脚，旧版就是一句灰字配一枚 8px 圆点。 */}
-        <p className="max-w-prose text-title-2-regular wrap-anywhere text-text-primary">{analysis.headline}</p>
+        <p className="max-w-prose text-title-2-regular wrap-anywhere text-text-primary">{codedText(analysis, 'headline')}</p>
         <p className="flex flex-wrap items-center gap-2 text-body-2-regular text-text-secondary">
           <i aria-hidden className={`size-2 shrink-0 rounded-full ${confidence.level === 'high'
             ? 'bg-status-lime-text'
             : confidence.level === 'medium' ? 'bg-status-yellow-text' : 'bg-text-tertiary'}`} />
-          <span className="min-w-0 wrap-anywhere">{confidence.label || t('manage:taste.stillLearning')}</span>
+          <span className="min-w-0 wrap-anywhere">{codedText(confidence, 'label') || t('manage:taste.stillLearning')}</span>
         </p>
       </header>
       {analysis.points?.length ? (
         <div className="inline-grid w-full gap-3 sm:grid-cols-2">
           {analysis.points.map((point) => (
             <div key={point.label} className={`flex min-w-0 flex-col gap-1 ${TILE}`}>
-              <span className="text-caption-1-regular text-text-secondary">{point.label}</span>
-              <b className="text-body-2-medium break-words text-text-primary">{point.text}</b>
+              <span className="text-caption-1-regular text-text-secondary">{codedText(point, 'label')}</span>
+              <b className="text-body-2-medium break-words text-text-primary">{codedText(point, 'text')}</b>
             </div>
           ))}
         </div>
@@ -489,7 +490,7 @@ export function TastePage(props: TasteProps) {
   const problem = refresh.error ? errorMessage(refresh.error)
     : load.error ? errorMessage(load.error)
     : retry.error ? errorMessage(retry.error)
-    : outcome?.status === 'failed' ? (outcome.error || t('manage:taste.readNotFound'))
+    : outcome?.status === 'failed' ? (jobText(outcome, 'error') || t('manage:taste.readNotFound'))
     : '';
 
   const browserActions = <div className="flex flex-wrap justify-center gap-2">
@@ -528,17 +529,17 @@ export function TastePage(props: TasteProps) {
           done={!!(summary.history_sources || data.updated_at)} />
         {/* 这一趟在后台跑，关掉页面还在继续，所以状态留在页面上而不是只让按钮转一下。 */}
         <div aria-live="polite" className="flex flex-col gap-3 empty:hidden">
-          {running ? <TaskProgress label={job?.message || t('manage:taste.refreshing')}
+          {running ? <TaskProgress label={jobText(job, 'message') || t('manage:taste.refreshing')}
             value={job?.checked} total={job?.total} /> : null}
           {load.isPending ? <TaskProgress label={t('manage:taste.importing')} /> : null}
           {data.stale && data.error ? (
             <Note tone="error" action={<Button variant="secondary" size="small"
               {...busyProps(retry.isPending)} onClick={() => retry.mutate(range)}>{t('manage:shared.retryNow')}</Button>}>
-              {t('manage:taste.updateFailedStale', { time: tasteTime(data.computed_at), error: data.error })}
+              {t('manage:taste.updateFailedStale', { time: tasteTime(data.computed_at), error: serverLabel(data.message_code ?? '', data.error, data.message_params) })}
             </Note>
           ) : data.stale ? <TaskProgress label={t('manage:taste.updatingStale', { time: tasteTime(data.computed_at) })} /> : null}
           {problem ? <Note tone="error">{problem}</Note> : null}
-          {outcome?.warnings?.length ? <Note tone="warning">{outcome.warnings.join('；')}</Note> : null}
+          {outcome?.warnings?.length ? <Note tone="warning">{serverLabelList(outcome.warnings, outcome.warning_codes, outcome.warning_params).join(t('shell:format.semicolonSeparator'))}</Note> : null}
         </div>
         <TabPanel id="browser" className="flex flex-col gap-5">
           <div className={STAT_STRIP}>

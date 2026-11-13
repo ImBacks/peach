@@ -25,6 +25,7 @@ import {
 } from './follow-manage';
 import { SourceIcon } from './source-view';
 import { RiKey2Line } from '@remixicon/react';
+import { serverLabel } from '../../core/server-text';
 import { joinList, t } from '../../i18n';
 
 const CLEAR_BODY = t('follow:sourceCredentials.clearBody');
@@ -55,7 +56,7 @@ function CredentialForm({ row, readOnly, toast }:
     onSuccess: (result, next) => {
       /* 共享盘不在时后端只撤掉了本机那一份，必须让用户看见：他以为撤干净了，等盘回来
          key 又被同步回来。 */
-      if (result.note) { setProblem(result.note); return }
+      if (result.note) { setProblem(serverLabel(result.note_code ?? '', result.note)); return }
       setProblem('');
       setValues({});
       void queryClient.invalidateQueries({ queryKey: FOLLOW_CREDENTIALS_KEY, exact: true });

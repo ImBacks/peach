@@ -1,29 +1,29 @@
 /* 界面文案的翻译入口（ADR-0156）。
  *
- * 源文是 `locales/zh-CN/<命名空间>.json`，英文在 `locales/en/`，两份由同一个 PR 维护；其他语言经 Weblate 回流。
+ * 源文是仓库根下的 `resources/locales/zh-CN/<命名空间>.json`，英文在 `resources/locales/en/`，两份由同一个 PR 维护；其他语言经 Weblate 回流。
  * 界面语言在模块求值时从本地偏好同步算出（默认「自动」：浏览器语言优先，其次系统语言），整页只有这一份实例：
  * 导航词表这类模块在顶层就取译文，换语言靠整页重载，不做运行中切换。缺译文的键回落到 zh-CN。 */
 import i18next from 'i18next';
 
 import { SETTINGS_KEY } from '../settings-key';
-import enCatalog from '../locales/en/catalog.json' with { type: 'json' };
-import enCleanup from '../locales/en/cleanup.json' with { type: 'json' };
-import enFollow from '../locales/en/follow.json' with { type: 'json' };
-import enManage from '../locales/en/manage.json' with { type: 'json' };
-import enNavigation from '../locales/en/navigation.json' with { type: 'json' };
-import enOnboarding from '../locales/en/onboarding.json' with { type: 'json' };
-import enSettings from '../locales/en/settings.json' with { type: 'json' };
-import enServer from '../locales/en/server.json' with { type: 'json' };
-import enShell from '../locales/en/shell.json' with { type: 'json' };
-import zhCatalog from '../locales/zh-CN/catalog.json' with { type: 'json' };
-import zhCleanup from '../locales/zh-CN/cleanup.json' with { type: 'json' };
-import zhFollow from '../locales/zh-CN/follow.json' with { type: 'json' };
-import zhManage from '../locales/zh-CN/manage.json' with { type: 'json' };
-import zhNavigation from '../locales/zh-CN/navigation.json' with { type: 'json' };
-import zhOnboarding from '../locales/zh-CN/onboarding.json' with { type: 'json' };
-import zhSettings from '../locales/zh-CN/settings.json' with { type: 'json' };
-import zhServer from '../locales/zh-CN/server.json' with { type: 'json' };
-import zhShell from '../locales/zh-CN/shell.json' with { type: 'json' };
+import enCatalog from '../../../resources/locales/en/catalog.json' with { type: 'json' };
+import enCleanup from '../../../resources/locales/en/cleanup.json' with { type: 'json' };
+import enFollow from '../../../resources/locales/en/follow.json' with { type: 'json' };
+import enManage from '../../../resources/locales/en/manage.json' with { type: 'json' };
+import enNavigation from '../../../resources/locales/en/navigation.json' with { type: 'json' };
+import enOnboarding from '../../../resources/locales/en/onboarding.json' with { type: 'json' };
+import enSettings from '../../../resources/locales/en/settings.json' with { type: 'json' };
+import enServer from '../../../resources/locales/en/server.json' with { type: 'json' };
+import enShell from '../../../resources/locales/en/shell.json' with { type: 'json' };
+import zhCatalog from '../../../resources/locales/zh-CN/catalog.json' with { type: 'json' };
+import zhCleanup from '../../../resources/locales/zh-CN/cleanup.json' with { type: 'json' };
+import zhFollow from '../../../resources/locales/zh-CN/follow.json' with { type: 'json' };
+import zhManage from '../../../resources/locales/zh-CN/manage.json' with { type: 'json' };
+import zhNavigation from '../../../resources/locales/zh-CN/navigation.json' with { type: 'json' };
+import zhOnboarding from '../../../resources/locales/zh-CN/onboarding.json' with { type: 'json' };
+import zhSettings from '../../../resources/locales/zh-CN/settings.json' with { type: 'json' };
+import zhServer from '../../../resources/locales/zh-CN/server.json' with { type: 'json' };
+import zhShell from '../../../resources/locales/zh-CN/shell.json' with { type: 'json' };
 
 export const INTERFACE_LANGUAGES = ['zh-CN', 'en'] as const;
 export type InterfaceLanguage = typeof INTERFACE_LANGUAGES[number];

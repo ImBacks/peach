@@ -36,8 +36,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import interface_text
 from .fsutil import atomic_write_text
 from .migrations import plan as migration_plan, sqlite_backup, upgrade as migration_upgrade
+from .task_stages import stage as stage_fields
+from .user_messages import UserFacingError
 
 log = logging.getLogger(__name__)
 
@@ -57,13 +60,11 @@ COPY_PAGES = 4096
 MARKER_NAME = "ledger.restore.json"
 STAGING_NAME = "ledger.restore-staging.db"
 RESULT_NAME = "ledger.restore-result.json"
-#: 备份列表里「用途」一栏；不在表里的写入前备份统称「写入前自动备份」。
-PURPOSE_LABELS = {
-    MANUAL_PURPOSE: "手动备份", RESTORE_PURPOSE: "恢复前另存",
-    "migrate": "迁移前", "schema": "迁移前", "upgrade": "自动修复前",
-    "organize": "整理前", "download": "下载后整理前", "tag-management": "标签管理前",
-    "auto-landing-revert": "撤回自动写入前", "sar": "显示尺寸补测前",
-}
+#: 备份列表里「用途」一栏的 code；不在表里的写入前备份统称 `OTHER_PURPOSE`。名字在
+#: `server:ledgerBackup.purpose.<code>`（ADR-0159），响应同时带 `purpose_code`。
+OTHER_PURPOSE = "other"
+PURPOSES = (MANUAL_PURPOSE, RESTORE_PURPOSE, "migrate", "schema", "upgrade", "organize", "download", "tag-management",
+            "auto-landing-revert", "sar", OTHER_PURPOSE)
 
 ORGANIZE_DIRNAME = "organize-backups"
 ORGANIZE_PATTERN = re.compile(r"^ledger\.pre-(?:download|organize)-.+\.db$")
@@ -114,7 +115,7 @@ def organize_backup(live: Path, generated_root: Path | str, name: str) -> Iterat
     清退失败只记日志：少删几份旧备份不能让这次整理失败。
     """
     if not ORGANIZE_PATTERN.match(name):
-        raise ValueError(f"整理备份文件名不合规则：{name}")
+        raise ValueError(f"organize backup name does not match the pattern: {name}")
     backup = organize_dir(generated_root) / name
     sqlite_backup(live, backup)
     with holding(backup):
@@ -122,7 +123,7 @@ def organize_backup(live: Path, generated_root: Path | str, name: str) -> Iterat
             prune(live, apply=True, directory=backup.parent, pattern=ORGANIZE_PATTERN,
                   keep_recent=ORGANIZE_KEEP_RECENT, min_age=ORGANIZE_MIN_AGE)
         except Exception:
-            log.warning("整理备份清退失败", exc_info=True)
+            log.warning("Organize backup retention cleanup failed", exc_info=True)
         yield backup
 
 
@@ -249,7 +250,7 @@ def prune(
         try:
             target.unlink(missing_ok=True)
         except OSError as exc:
-            log.warning("数据库备份未能删除 %s: %s", target, exc)
+            log.warning("Failed to delete database backup %s: %s", target, exc)
     return decided
 
 
@@ -257,7 +258,7 @@ def prune(
 # 手动备份与从备份恢复（ADR-0138）
 
 
-class BackupRejected(ValueError):
+class BackupRejected(UserFacingError, ValueError):
     """这份备份或这次恢复不能做，原因写给人看；账本没有被改动。"""
 
 
@@ -277,10 +278,10 @@ def _unlink_all(path: Path) -> None:
 
 
 def _pages(progress, stage: str):
-    """把 `Connection.backup` 的进度回调翻成 `progress(stage=, done=, total=)`。"""
+    """把 `Connection.backup` 的进度回调翻成 `progress(stage=, stage_code=, done=, total=)`；`stage` 是阶段 code。"""
     if progress is None:
         return None
-    return lambda _status, remaining, total: progress(stage=stage, done=total - remaining, total=total)
+    return lambda _status, remaining, total: progress(**stage_fields(stage), done=total - remaining, total=total)
 
 
 def _copy(live: Path, destination: Path, progress, stage: str) -> None:
@@ -300,23 +301,23 @@ def create(live: Path, *, purpose: str = MANUAL_PURPOSE, progress=None, now: dat
     `.part` 不合 `BACKUP_PATTERN`，列表与清退都看不见它；没通过检查的那份当场删掉。
     """
     if not live.is_file():
-        raise BackupRejected("账本不存在")
+        raise BackupRejected("errors.ledgerBackups.ledgerMissing")
     target = _free_name(live.parent, purpose, now)
     part = target.with_name(target.name + PART_SUFFIX)
     try:
-        _copy(live, part, progress, "复制账本")
+        _copy(live, part, progress, "backup.copyLedger")
         if progress is not None:
-            progress(stage="检查备份完整性")
+            progress(**stage_fields('backup.checkIntegrity'))
         check = integrity(part)
         if check != "ok":
-            raise BackupRejected(f"备份没有通过完整性检查：{check}")
+            raise BackupRejected("errors.ledgerBackups.backupIntegrityFailed", {"check": check})
         part.replace(target)
     finally:
         _unlink_all(part)
     try:
         prune(live, apply=True)
     except Exception:
-        log.warning("账本备份清退失败", exc_info=True)
+        log.warning("Ledger backup retention cleanup failed", exc_info=True)
     return target
 
 
@@ -329,12 +330,13 @@ def purpose_of(name: str) -> str:
 
 def describe(path: Path, location: str) -> dict:
     purpose = purpose_of(path.name)
+    code = purpose if purpose in PURPOSES else OTHER_PURPOSE
     stat = path.stat()
     return {
         "id": f"{location}/{path.name}", "name": path.name,
         "bytes": stat.st_size, "modified_at": stat.st_mtime,
         "source": "manual" if purpose == MANUAL_PURPOSE else "auto",
-        "purpose": PURPOSE_LABELS.get(purpose, "写入前自动备份"),
+        "purpose": interface_text.text(f"server:ledgerBackup.purpose.{code}"), "purpose_code": code,
     }
 
 
@@ -358,10 +360,10 @@ def resolve(live: Path, organize_directory: Path, ident: object) -> Path:
     directory, pattern = {"database": (live.parent, BACKUP_PATTERN),
                           "organize": (organize_directory, ORGANIZE_PATTERN)}.get(location, (None, None))
     if directory is None or not pattern.match(name) or Path(name).name != name:
-        raise BackupRejected("请选择列表里的一份备份")
+        raise BackupRejected("errors.ledgerBackups.chooseBackup")
     path = directory / name
     if not path.is_file():
-        raise BackupRejected("这份备份已经不在了，请刷新列表")
+        raise BackupRejected("errors.ledgerBackups.backupGone")
     return path
 
 
@@ -394,7 +396,7 @@ def _record(live: Path, **fields) -> dict:
     try:
         atomic_write_text(live.with_name(RESULT_NAME), json.dumps(data, ensure_ascii=False))
     except OSError:
-        log.warning("账本恢复结果未能写入", exc_info=True)
+        log.warning("Failed to write the ledger restore result", exc_info=True)
     return data
 
 
@@ -474,36 +476,36 @@ def restore(live: Path, backup: Path, *, migrations_dir: Path, progress=None,
     不过，用另存的那份退回去。
     """
     report = progress or (lambda **_: None)
-    report(stage="检查备份完整性")
+    report(**stage_fields('backup.checkIntegrity'))
     check = integrity(backup)
     if check != "ok":
-        raise BackupRejected(f"这份备份没有通过完整性检查：{check}")
+        raise BackupRejected("errors.ledgerBackups.thisBackupIntegrityFailed", {"check": check})
     staging = _staging(live)
     _unlink_all(staging)
     try:
-        sqlite_backup(backup, staging, pages=COPY_PAGES, progress=_pages(progress, "复制备份"))
+        sqlite_backup(backup, staging, pages=COPY_PAGES, progress=_pages(progress, "backup.copyBackup"))
         try:
             _, pending = migration_plan(staging, migrations_dir)
         except RuntimeError as exc:
-            raise BackupRejected(f"这份备份的结构与当前程序不符：{exc}") from exc
+            raise BackupRejected("errors.ledgerBackups.schemaMismatch", {"error": str(exc)}) from exc
         if pending:
-            report(stage="把备份迁到当前结构")
+            report(**stage_fields('backup.migrateBackup'))
             migration_upgrade(staging, migrations_dir)
         check = integrity(staging, foreign_keys=True)
         if check != "ok":
-            raise BackupRejected(f"备份迁到当前结构后没有通过完整性检查：{check}")
+            raise BackupRejected("errors.ledgerBackups.migratedIntegrityFailed", {"check": check})
         healthy = live.is_file() and integrity(live) == "ok"
         if healthy and _page_size(live) != _page_size(staging):
-            raise BackupRejected("这份备份的页面大小与当前账本不同，不能在服务运行时恢复")
-        report(stage="另存当前账本")
+            raise BackupRejected("errors.ledgerBackups.pageSizeMismatch")
+        report(**stage_fields('backup.saveCurrent'))
         saved = None
         if live.is_file():
             saved = _free_name(live.parent, RESTORE_PURPOSE, now)
             if healthy:
-                _copy(live, saved, progress, "另存当前账本")
+                _copy(live, saved, progress, "backup.saveCurrent")
                 if integrity(saved) != "ok":
                     _unlink_all(saved)
-                    raise BackupRejected("当前账本另存后没有通过完整性检查，没有恢复")
+                    raise BackupRejected("errors.ledgerBackups.savedCopyIntegrityFailed")
             else:
                 # 坏账本 SQLite 未必读得出来，按文件原样留一份，连同 `-wal`。
                 for suffix in ("", "-wal"):
@@ -514,7 +516,7 @@ def restore(live: Path, backup: Path, *, migrations_dir: Path, progress=None,
         atomic_write_text(marker, json.dumps({
             "state": "copying", "backup": str(backup), "saved": str(saved) if saved else "",
             "started_at": time.time()}, ensure_ascii=False))
-        report(stage="写入账本")
+        report(**stage_fields('backup.writeLedger'))
         try:
             if healthy:
                 _copy_into(staging, live)
@@ -525,15 +527,15 @@ def restore(live: Path, backup: Path, *, migrations_dir: Path, progress=None,
                 _replace_file(staging, live)
             check = integrity(live, foreign_keys=True)
             if check != "ok":
-                raise BackupRejected(f"恢复后的账本没有通过完整性检查：{check}")
+                raise BackupRejected("errors.ledgerBackups.restoredIntegrityFailed", {"check": check})
         except Exception as exc:
             settled = settle(live, reason=f"恢复没有完成（{exc}）", state="failed")
-            raise BackupRejected(settled["message"]) from exc
+            raise BackupRejected("errors.ledgerBackups.restoreSettled", {"message": settled["message"]}) from exc
         if healthy and saved is not None:
             try:
                 _carry_operational(live, saved)
             except sqlite3.Error:
-                log.warning("恢复后未能接回任务历史与账本版本号", exc_info=True)
+                log.warning("Failed to reattach task history and the ledger version after restore", exc_info=True)
         marker.unlink(missing_ok=True)
         live.with_name(RESULT_NAME).unlink(missing_ok=True)
     finally:
@@ -541,7 +543,7 @@ def restore(live: Path, backup: Path, *, migrations_dir: Path, progress=None,
     try:
         prune(live, apply=True)
     except Exception:
-        log.warning("账本备份清退失败", exc_info=True)
+        log.warning("Ledger backup retention cleanup failed", exc_info=True)
     return RestoreOutcome(backup, saved, tuple(migration.version for migration in pending))
 
 
@@ -585,7 +587,7 @@ def settle(live: Path, *, reason: str = "上次从备份恢复被中断", state:
     result = _record(live, state=state, outcome=outcome, message=message,
                      backup=Path(data.get("backup") or "").name)
     marker.unlink(missing_ok=True)
-    log.warning("账本恢复标记处理：%s", message)
+    log.warning("Ledger restore marker processed: %s", message)
     return result
 
 
@@ -633,32 +635,32 @@ class LedgerBackups:
     def start_backup(self) -> dict:
         with self.lock:
             if self._busy():
-                raise BackupRejected("备份或恢复正在进行，请等它完成")
+                raise BackupRejected("errors.ledgerBackups.busy")
             job = self.backup_job
 
             def work(identity):
                 path = create(self.live, progress=lambda **values: job.update(identity, **values))
-                job.update(identity, status="complete", stage="备份完成", name=path.name,
+                job.update(identity, status="complete", **stage_fields('backup.backupDone'), name=path.name,
                            bytes=path.stat().st_size)
 
-            job.start(work, restart=True, initial={"stage": "准备备份", "done": 0, "total": 0})
+            job.start(work, restart=True, initial={**stage_fields('backup.prepareBackup'), "done": 0, "total": 0})
         return self.snapshot()
 
     def start_restore(self, ident: object) -> dict:
         from .health import inspect_database
         from .runtime_prepare import configured_ledger_writer
         from . import update_tasks
-        writer, reason = configured_ledger_writer(self.config)
+        writer, reason = configured_ledger_writer(self.config, language=None)
         if not writer:
-            raise BackupRejected(f"只有写入端能恢复账本：{reason}")
+            raise BackupRejected("errors.ledgerBackups.writerOnly", {"reason": reason})
         backup = resolve(self.live, self.organize, ident)
         readable = bool(inspect_database(self.live, self.migrations_dir)["readable"])
         with self.lock:
             if self._busy():
-                raise BackupRejected("备份或恢复正在进行，请等它完成")
+                raise BackupRejected("errors.ledgerBackups.busy")
             busy = update_tasks.running(self.live, task_rows=readable)
             if busy:
-                raise BackupRejected(f"还有后台任务在运行：{'、'.join(busy)}。请等它们结束或停止后再恢复")
+                raise BackupRejected("errors.ledgerBackups.tasksRunning", {"tasks": '、'.join(busy)})
             job = self.restore_job if readable else self.offline_restore
             self._restoring = job
             migrations_dir = self.migrations_dir
@@ -671,7 +673,8 @@ class LedgerBackups:
                     late = update_tasks.running(self.live, own_files=own_files, own_runs=own_runs,
                                                 task_rows=readable)
                     if late:
-                        raise BackupRejected(f"还有后台任务在运行：{'、'.join(late)}。没有恢复")
+                        raise BackupRejected("errors.ledgerBackups.tasksRunningNotRestored",
+                                             {"tasks": '、'.join(late)})
                     outcome = restore(self.live, backup, migrations_dir=migrations_dir or MIGRATIONS_DIR,
                                       progress=lambda **values: job.update(identity, **values))
                 finally:
@@ -680,12 +683,12 @@ class LedgerBackups:
                     try:
                         self.after_restore()
                     except Exception:
-                        log.warning("恢复后清理缓存失败", exc_info=True)
-                job.update(identity, status="complete", stage="恢复完成", backup=backup.name,
+                        log.warning("Failed to clear caches after restore", exc_info=True)
+                job.update(identity, status="complete", **stage_fields('backup.restoreDone'), backup=backup.name,
                            saved=outcome.saved.name if outcome.saved else "",
                            migrated=len(outcome.migrated))
 
-            job.start(work, restart=True, initial={"stage": "准备恢复", "backup": backup.name,
+            job.start(work, restart=True, initial={**stage_fields('backup.prepareRestore'), "backup": backup.name,
                                                    "done": 0, "total": 0})
         return self.snapshot()
 

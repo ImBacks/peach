@@ -72,7 +72,7 @@ class DownloadPostprocessTests(unittest.TestCase):
         from peach.task_retry import RETRY_DELAYS
         started = 1_800_000_000.0
         self.contract.downloads.clock = lambda: started
-        with patch.object(post, '_collect', side_effect=TimeoutError('来源连接超时')):
+        with patch.object(post, '_collect', side_effect=TimeoutError('connect timed out')):
             for attempt, delay in enumerate(RETRY_DELAYS, 1):
                 with self.assertRaises(TimeoutError):
                     self.run_task()
@@ -244,9 +244,9 @@ class DownloadPostprocessTests(unittest.TestCase):
         self.contract.task_runs = Mock()
         notices = IngestNotices()
         for failed_stage in ('_collect', '_organize'):
-            with self.subTest(stage=failed_stage), patch.object(post, failed_stage, side_effect=RuntimeError('模拟阶段失败')), \
+            with self.subTest(stage=failed_stage), patch.object(post, failed_stage, side_effect=RuntimeError('simulated stage failure')), \
                     patch.object(post, 'NOTICES', notices):
-                with self.assertRaisesRegex(RuntimeError, '模拟阶段失败'):
+                with self.assertRaisesRegex(RuntimeError, 'simulated stage failure'):
                     self.run_task()
                 self.assertEqual(self.store.get(self.task.id).postprocess_state, 'failed')
                 self.contract.task_runs.enqueue_followups.assert_not_called()

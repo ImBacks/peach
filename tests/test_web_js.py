@@ -27,12 +27,15 @@ SOURCES = {
     "jav-title.js": ROOT / "frontend" / "src" / "core" / "jav-title.ts",
     "filter-scroll.js": ROOT / "frontend" / "src" / "application" / "filter-scroll.js",
     "search-morph.js": ROOT / "frontend" / "src" / "application" / "search-morph.js",
+    "i18n.js": ROOT / "frontend" / "src" / "i18n" / "index.ts",
 }
 NODE = shutil.which("node")
 
 # Node 那边的入口。模块按绝对 file:// URL 引入，所以驱动脚本放临时目录也能找到它们；
 # 用例从 argv 进来，期望值全留在 Python 这边，避免同一张表在两种语言里各写一份。
 # TS 源码靠 Node 自带的类型剥离直接跑；源码里不带扩展名的相对 import 按 Vite 的口径补 `.ts` 或 `/index.ts`。
+# 界面语言默认跟系统语言走（ADR-0156），Node 的 `navigator.language` 取自运行机器：期望值写的是源语言 zh-CN，
+# 所以在引入任何模块前把它固定住，和 vitest 的 `frontend/test/setup-language.ts` 同一个口径，不随 CI 或开发者的系统语言变。
 DRIVER = """
 import { existsSync } from 'node:fs';
 import { registerHooks } from 'node:module';
@@ -43,6 +46,9 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   value: { getItem: key => key === 'peach.settings.v1' ? JSON.stringify({ interfaceLanguage: 'zh-CN' }) : null },
 });
+if (!globalThis.navigator) Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
+Object.defineProperty(globalThis.navigator, 'languages', { value: ['zh-CN', 'zh'], configurable: true });
+Object.defineProperty(globalThis.navigator, 'language', { value: 'zh-CN', configurable: true });
 
 registerHooks({
   resolve(specifier, context, next) {
@@ -81,6 +87,10 @@ process.stdout.write(JSON.stringify(results));
 
 @unittest.skipUnless(NODE, "没装 Node，纯模块的行为验收跳过")
 class WebJsBehaviourTests(unittest.TestCase):
+    def test_the_driver_runs_in_the_source_language_on_any_machine(self):
+        # 期望值是 zh-CN 源文；英文系统的 CI 上界面语言一旦跟着系统走，这里先红，不必等到格式化用例逐条对不上。
+        self.assertJsResults([("i18n.js", "storedInterfaceLanguage", [], "zh-CN")])
+
     def test_mobile_filter_scroll_has_direction_hysteresis_and_visible_resets(self):
         down = dict(y=120, origin=100, direction=1, free=True)
         jitter = dict(y=117, origin=120, direction=-1, free=True)

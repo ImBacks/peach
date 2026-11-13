@@ -20,7 +20,7 @@ from .catalog_rules import (
 from .config import PROJECT_ROOT
 from .downloads import (
     CLOUDDRIVE_CREDENTIAL, INGESTED, POSTPROCESS_FAILED, POSTPROCESS_PENDING, POSTPROCESS_QUEUED,
-    POSTPROCESS_RUNNING, REMOTE_RUNNING, RESUBMITTABLE_STATES, STATE_LABELS, TRACKED_STATES, iso,
+    POSTPROCESS_RUNNING, REMOTE_RUNNING, RESUBMITTABLE_STATES, TRACKED_STATES, iso, state_label,
     never_seen, submit_offline_download, parse_magnet,
     parse_iso, DownloadError,
 )
@@ -30,7 +30,7 @@ from .feeds import scan_code
 from .fsutil import atomic_write_text
 from .sources.dmm import code_from_cid
 from .jav_editions import bonus_cid
-from .user_messages import UserFacingError
+from .user_messages import UserFacingError, UserValueError
 
 LOGGER = logging.getLogger(__name__)
 CREDENTIAL = "jav-browser"
@@ -61,22 +61,22 @@ def source_sites() -> list[dict]:
     payload = json.loads((PROJECT_ROOT / "web" / "integrations" / "jav-sites.json").read_text(encoding="utf-8"))
     sites = payload.get("sites")
     if payload.get("version") != 1 or not isinstance(sites, list) or not sites:
-        raise ValueError("JAV 站点清单无法读取")
+        raise ValueError("JAV site list can't be read")
     ids, domains = set(), set()
     for site in sites:
         if (not isinstance(site, dict) or not site.get("id") or site["id"] in ids
                 or not site.get("label") or not site.get("kind")
                 or site.get("mode") not in {"automatic", "selection"}
                 or not isinstance(site.get("domains"), list) or not site["domains"]):
-            raise ValueError("JAV 站点清单包含无效条目")
+            raise ValueError("JAV site list has an invalid entry")
         ids.add(site["id"])
         if site.get("identity") is not None and (site["identity"] != "peach" or site["mode"] != "automatic"
                 or not isinstance(site.get("detail_pattern"), str) or not site["detail_pattern"].startswith("^")
                 or len(site.get("query_keys", ())) > 1):
-            raise ValueError("发行商品号识别配置无效")
+            raise ValueError("release product ID recognition settings are invalid")
         for host in site["domains"]:
             if not isinstance(host, str) or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) or host in domains:
-                raise ValueError("JAV 站点清单包含无效域名")
+                raise ValueError("JAV site list has an invalid domain")
             domains.add(host)
     return sites
 
@@ -90,7 +90,7 @@ def code_key(value: object) -> str:
     raw = str(value or "").strip()
     code = release_code_from_product(raw) if len(raw) <= 80 else None
     if not code or not is_jav_code(code) or normalise_code_key(raw) != normalise_code_key(code):
-        raise ValueError("请提供一个明确的 JAV 番号")
+        raise UserValueError("errors.javBrowser.codeRequired")
     # 店铺商品号（`107STZY-019`）在账本与资源站都是裸番号，查询、搜索与入库统一用它。
     return without_store_prefix(code)
 
@@ -110,7 +110,7 @@ def source_page(value: object) -> str:
                 for key, value in parameters)):
             raise ValueError
     except ValueError:
-        raise ValueError("请从支持的 JAV 影片详情页添加") from None
+        raise UserValueError("errors.javBrowser.unsupportedPage") from None
     return parsed._replace(query=urlencode(parameters), fragment="").geturl()
 
 
@@ -157,12 +157,12 @@ def identify_source(value: object, hint: str = "") -> str:
     """从已登记发行平台的详情地址提取商品号，复用编目规则确认番号。"""
     site, product = _registered_product(source_page(value))
     if not product:
-        raise ValueError("未识别到作品番号，请选中页面的完整番号后加入 Peach")
+        raise UserValueError("errors.javBrowser.codeNotRecognized")
     # DMM 的商品号按编目规则拆出番号；FC2 内容市场的商品页地址里只有数字编号，番号是 FC2-PPV-<编号>。
     code = code_key(code_from_cid(product) if site["id"] in {"dmm", "fanza-clip"}
                     else f"FC2-PPV-{product}" if site["id"] == "fc2-market" else product)
     if hint and not same_release_code(code, code_key(hint)):
-        raise ValueError("页面番号与商品号不一致，请核对作品详情")
+        raise UserValueError("errors.javBrowser.codeProductMismatch")
     return code
 
 
@@ -254,15 +254,15 @@ class JavBrowser:
             return {}
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or len(payload) > 200:
-            raise ValueError("浏览器添加队列无法读取")
+            raise UserValueError("errors.javBrowser.queueUnreadable")
         rows = {}
         for key, row in payload.items():
             if not isinstance(row, dict) or normalise_code_key(key) != key or row.get("state") not in MESSAGES:
-                raise ValueError("浏览器添加队列无法读取")
+                raise UserValueError("errors.javBrowser.queueUnreadable")
             if 'retry_attempt' in row and (type(row['retry_attempt']) is not int or not 0 <= row['retry_attempt'] <= len(RETRY_DELAYS)):
-                raise ValueError('浏览器添加重试次数无效')
+                raise UserValueError("errors.javBrowser.invalidRetryAttempt")
             if 'retry_at' in row and (not isinstance(row['retry_at'], str) or parse_iso(row['retry_at']) is None):
-                raise ValueError('浏览器添加重试时间无效')
+                raise UserValueError("errors.javBrowser.invalidRetryTime")
             if row["state"] == "searching":
                 row["state"] = "queued"
             # 店铺前缀归一之前记下的行（`107STZY-019`）改记到裸番号下，裸番号已有记录时以它为准。
@@ -289,7 +289,7 @@ class JavBrowser:
         except FileNotFoundError:
             ended = {"since": iso(time.time() - RECENT_SECONDS), "dismissed": []}
         except (ValueError, KeyError, TypeError):
-            LOGGER.warning("浏览器添加的结束确认记录无法读取，从现在起重新计")
+            LOGGER.warning("Could not read the browser-add completion record; counting from now")
             ended = {"since": iso(time.time()), "dismissed": []}
         atomic_write_text(self.ended_path, json.dumps(ended, ensure_ascii=False, indent=2) + "\n")
         return ended
@@ -299,7 +299,7 @@ class JavBrowser:
         keys = body.get("keys", [])
         if body.get("all") not in (None, False, True) or not isinstance(keys, list) or len(keys) > ACTIVE_LIMIT \
                 or not all(isinstance(key, str) and ENDED_KEY.match(key) for key in keys):
-            raise ValueError("确认参数无效")
+            raise UserValueError("errors.javBrowser.invalidDismiss")
         with self._lock:
             since = iso(time.time()) if body.get("all") is True else self.ended["since"]
             dismissed = [key for key in dict.fromkeys([*self.ended["dismissed"], *keys])
@@ -331,9 +331,9 @@ class JavBrowser:
     def configure(self, body: dict) -> dict:
         action = body.get("action")
         if action not in {"enable", "rotate", "disable"}:
-            raise ValueError("请选择启用、更新令牌或关闭")
+            raise UserValueError("errors.javBrowser.chooseAction")
         if not self.downloads.available:
-            raise ValueError("浏览器添加只在允许修改数据库的设备上可用")
+            raise UserValueError("errors.javBrowser.deviceNotAllowed")
         provider = str(body.get("provider") or "")
         if action != "disable":
             self._ready(provider)
@@ -361,7 +361,7 @@ class JavBrowser:
 
     def _ready(self, provider: str, *, remote=True):
         if not self.downloads.available:
-            raise ValueError("浏览器添加只在允许修改数据库的设备上可用")
+            raise UserValueError("errors.javBrowser.deviceNotAllowed")
         if remote:
             state = next((row for row in self.downloads.channel_snapshot()["providers"] if row["key"] == provider), None)
         elif provider in {"115", "pikpak"}:
@@ -371,7 +371,7 @@ class JavBrowser:
                 self.downloads.config.clouddrive_address and "token" in
                 self.credentials.describe(CLOUDDRIVE_CREDENTIAL)["fields"])}
         if not state or not state["configured"] or not state["target"]:
-            raise ValueError("请先在下载渠道配置网盘账号和目标目录")
+            raise UserValueError("errors.javBrowser.channelNotConfigured")
 
     def _existing(self, code: str) -> dict | None:
         with self.contract.database.read_connection() as connection:
@@ -414,7 +414,7 @@ class JavBrowser:
                 if task.asset_id:
                     row["asset_id"] = task.asset_id
                 progress = task.progress
-                detail["download"] = {"state": task.state, "label": STATE_LABELS.get(task.state, ""),
+                detail["download"] = {"state": task.state, "label": state_label(task.state),
                     "phase": "organize" if task.state == INGESTED else "ingest" if task.remote_done_at
                         or task.state in {"remote_done", "landed"} else "download",
                     "progress": min(1.0, max(0.0, progress)) if task.state in {REMOTE_RUNNING, "remote_done", "landed", INGESTED}
@@ -442,7 +442,7 @@ class JavBrowser:
         with self._lock:
             row = self.rows.get(code)
             if row is None or row["state"] != "queued":
-                raise UserFacingError("这个番号不在排队中", code="javBrowser.notQueued")
+                raise UserFacingError("javBrowser.notQueued")
             ordered = [(code, row), *((key, other) for key, other in self.rows.items() if key != code)]
             self.rows.clear()
             self.rows.update(ordered)
@@ -455,7 +455,7 @@ class JavBrowser:
         status = self.status(value)
         task_id = status.get("task_id")
         if not task_id or status["state"] != "ingested" or status.get("download", {}).get("postprocess_state") != "failed":
-            raise ValueError("这个番号没有失败的整理可以重试")
+            raise UserValueError("errors.javBrowser.nothingToRetry")
         self.downloads.retry_postprocess(int(task_id))
         return self.status(value)
 
@@ -507,21 +507,21 @@ class JavBrowser:
         code = code_key(body.get("code"))
         if body.get("manual") is True:
             if body.get("source_url") not in (None, ""):
-                raise ValueError("手动添加不接受来源网页地址")
+                raise UserValueError("errors.javBrowser.manualRejectsSource")
             page = ""
         else:
             page = source_page(body.get("source_url"))
         with self._lock:
             config = self._config()
             if not config.get("token_hash"):
-                raise ValueError("请先启用浏览器添加")
+                raise UserValueError("errors.javBrowser.notEnabled")
             status = self.status(code)
             if status["state"] in ACTIVE | {"owned", "submitted", "ingested"}:
                 return status
             if body.get("switch") not in (None, False, True):
-                raise ValueError("换磁力参数无效")
+                raise UserValueError("errors.javBrowser.invalidSwitch")
             if body.get("edition") not in (None, "", "bonus", "regular"):
-                raise ValueError("版本参数无效")
+                raise UserValueError("errors.javBrowser.invalidEdition")
             # 换磁力：把上一次提交的磁力记入跳过名单，重新搜索时取下一个。
             previous = self.rows.get(code, {})
             skip = list(previous.get("skip", ()))
@@ -533,7 +533,7 @@ class JavBrowser:
             if code not in self.rows and len(self.rows) >= 200:
                 completed = next((key for key, row in self.rows.items() if row["state"] not in ACTIVE), None)
                 if completed is None:
-                    raise ValueError("添加队列已满，请等待当前任务结束")
+                    raise UserValueError("errors.javBrowser.queueFull")
                 del self.rows[completed]
             # 要哪一版：本次明说的优先，其次沿用上一次的选择（换磁力），都没有时按来源页的商品号定。
             edition = body.get("edition") or previous.get("edition") or (
@@ -596,11 +596,12 @@ class JavBrowser:
                     with self._lock:
                         self._submitting.discard(code)
         except Exception as error:
-            LOGGER.error("JAV 浏览器添加失败：%s (%s)", code, type(error).__name__)
+            LOGGER.error("JAV browser add failed: %s (%s)", code, type(error).__name__)
             with self._lock:
                 self._submitting.discard(code)
                 if row["state"] == "searching":
-                    retry_error = RetryableTaskError(error.detail) if isinstance(error, DownloadError) and error.retryable else error
+                    retry_error = (RetryableTaskError(error.code, error.params)
+                                   if isinstance(error, DownloadError) and error.retryable else error)
                     self._schedule_retry(row, retry_error)
                     self._save()
         return True
@@ -612,7 +613,7 @@ class JavBrowser:
                    else NO_OTHER_MAGNET if row.get('skip') else MESSAGES['no_match'])
         after = result.get('retry_after')
         if failed and type(after) in (int, float) and math.isfinite(after) and after >= 0:
-            self._schedule_retry(row, RetryableTaskError(message, after=after))
+            self._schedule_retry(row, RetryableTaskError('errors.javBrowser.searchUnavailable', after=after))
         else:
             row.update(state='failed' if failed else 'no_match', message=message)
 

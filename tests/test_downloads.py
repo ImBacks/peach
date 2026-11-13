@@ -15,6 +15,7 @@ from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 from peach import downloads as dl
+from peach import interface_text
 from peach import push_discovery as push
 from peach import wants
 from peach.follow_secrets import CredentialStore
@@ -24,6 +25,13 @@ from support.ledger import fresh_ledger
 HASH = "c9e15763f722f23e98a29decdfae341b98d53056"
 MAGNET = f"magnet:?xt=urn:btih:{HASH}&dn=ABC-123"
 CLOUD_LEDGER_ROOT = "B:\\"
+UNREACHABLE = "查离线任务时连不上 CloudDrive2：Deadline Exceeded"
+
+
+def unreachable() -> dl.DownloadError:
+    """一次瞬时网络故障，渲染出来就是 `UNREACHABLE`。"""
+    return dl.DownloadError("network", "errors.downloadsClouddrive.unreachable",
+                            {"action": "查离线任务", "details": "Deadline Exceeded"})
 
 
 class FakeProvider:
@@ -196,7 +204,7 @@ class SubmitTests(_Deployment):
         self.assertEqual(self.submit()["outcome"], "adopted_remote")
 
     def test_a_failed_task_can_be_submitted_again_and_keeps_one_row(self):
-        self.provider.submit_result = dl.DownloadError("quota", "离线配额不够")
+        self.provider.submit_result = dl.DownloadError("quota", "errors.downloads.remoteQuota", {"text": "本月离线配额已用完"})
         failed = self.submit()
         self.assertEqual((failed["outcome"], failed["task"]["state"], failed["task"]["failure"]),
                          ("failed", dl.FAILED, "quota"))
@@ -209,7 +217,7 @@ class SubmitTests(_Deployment):
                          [("failed", "quota"), ("submitted", None)])
 
     def test_a_network_failure_while_submitting_is_submitted_again_by_the_poller(self):
-        self.provider.submit_result = dl.DownloadError("network", "查离线任务时连不上 CloudDrive2：Deadline Exceeded")
+        self.provider.submit_result = unreachable()
         deferred = self.submit(code="ABC-123")
         task = deferred["task"]
         self.assertEqual((deferred["outcome"], task["state"], task["failure"], task["cancellable"]),
@@ -232,19 +240,19 @@ class SubmitTests(_Deployment):
         self.assertEqual(self.service.store.get(task["id"]).state, dl.REMOTE_RUNNING)
 
     def test_a_submission_that_never_gets_through_fails_after_an_hour(self):
-        self.provider.submit_result = dl.DownloadError("network", "连不上")
+        self.provider.submit_result = unreachable()
         task_id = self.submit()["task"]["id"]
         while self.service.store.get(task_id).state == dl.SUBMIT_PENDING:
             self.tick(dl.POLL_DELAYS[-1])
         task = self.service.store.get(task_id)
         self.assertEqual((task.state, task.failure), (dl.FAILED, "network"))
         self.assertGreaterEqual(self.clock() - 1_800_000_000.0, dl.SUBMIT_RETRY_WINDOW)
-        self.assertRegex(task.failure_detail, r"^连不上（自动重试 \d+ 次后仍未提交）$")
+        self.assertRegex(task.failure_detail, r"^查离线任务时连不上 CloudDrive2：Deadline Exceeded（自动重试 \d+ 次后仍未提交）$")
         self.assertTrue(task.payload()["resubmittable"])
         self.assertEqual(self.submissions()[-1][:2], ("failed", "network"))
 
     def test_a_task_waiting_to_be_submitted_again_is_cancelled_locally(self):
-        self.provider.submit_result = dl.DownloadError("network", "连不上")
+        self.provider.submit_result = unreachable()
         task_id = self.submit()["task"]["id"]
         self.assertEqual(self.service.cancel(task_id).state, dl.CANCELLED)
         self.assertEqual(self.provider.cancelled, [])
@@ -284,7 +292,7 @@ class PollingTests(_Deployment):
 
     def test_a_network_blip_is_retried_and_other_failures_stop(self):
         task_id = self.submit()["task"]["id"]
-        self.provider.statuses = [dl.DownloadError("network", "连不上"),
+        self.provider.statuses = [unreachable(),
                                   dl.RemoteStatus(dl.ERROR, "r1", "ABC-123", 0.1, "种子无人做种")]
         self.tick(10)
         self.assertEqual(self.service.store.get(task_id).state, dl.SUBMITTED)
@@ -294,14 +302,23 @@ class PollingTests(_Deployment):
 
     def test_a_network_blip_reason_lasts_only_until_the_next_good_poll(self):
         task_id = self.submit()["task"]["id"]
-        self.provider.statuses = [dl.DownloadError("network", "连不上"), dl.RemoteStatus(dl.MISSING)]
+        self.provider.statuses = [unreachable(), dl.RemoteStatus(dl.MISSING)]
         self.tick(10)
         task = self.service.store.get(task_id)
-        self.assertEqual((task.state, task.failure, task.failure_detail), (dl.SUBMITTED, None, "连不上"))
+        self.assertEqual((task.state, task.failure, task.failure_detail), (dl.SUBMITTED, None, UNREACHABLE))
         # 远端列表里暂时没有、还在宽限期里：这一次查通了，上一次的连不上不再是现状。
         self.tick(30)
         task = self.service.store.get(task_id)
         self.assertEqual((task.state, task.failure_detail), (dl.SUBMITTED, None))
+
+    def test_a_failure_reported_without_remote_text_keeps_the_channel_reason(self):
+        task_id = self.submit()["task"]["id"]
+        code = "errors.downloadsClouddrive.offlineFailed"
+        self.provider.statuses = [dl.RemoteStatus(dl.ERROR, "r1", "", None, "ignored", message_code=code)]
+        self.tick(10)
+        task = self.service.store.get(task_id)
+        self.assertEqual((task.state, task.failure), (dl.FAILED, "rejected"))
+        self.assertEqual(task.failure_detail, "远端拒绝了这个任务：115 报告离线失败，多半是资源无人做种或被拒")
 
     def test_a_block_seen_while_polling_also_blacklists(self):
         task_id = self.submit()["task"]["id"]
@@ -579,10 +596,23 @@ class SettingsTests(_Deployment):
         loaded = self.service.settings.load()
         self.assertEqual(loaded.payload(), stored)
         self.assertIn("端口", loaded.problems[0])
+        self.assertEqual(dl.problem_codes(loaded.problems), [{"code": "errors.downloads.addressPortInvalidIpv6", "params": {}}])
         self.assertEqual(path.read_bytes(), payload)
         corrected = self.service.settings.save({**stored, "clouddrive_address": "localhost:19798"}, None)
         self.assertEqual(corrected.problems, ())
         self.assertEqual(corrected.targets, stored["targets"])
+
+    def test_a_scheduled_postprocess_retry_is_labelled_with_its_attempt(self):
+        task = dl.DownloadTask(1, HASH, "115", "magnet:", "", "/115", dl.INGESTED,
+                               postprocess_state=dl.POSTPROCESS_PENDING, next_check_at="2026-11-13T00:00:00+00:00",
+                               postprocess_retries=1)
+        payload = task.payload()
+        self.assertEqual(payload["postprocess_label"], f"等待自动重试（1/{len(dl.RETRY_DELAYS)}）")
+        self.assertEqual((payload["postprocess_label_code"], payload["postprocess_label_params"]),
+                         ("labels.downloads.postprocessRetrying", {"retries": 1, "limit": len(dl.RETRY_DELAYS)}))
+        english = interface_text.text(f"server:{payload['postprocess_label_code']}",
+                                      payload["postprocess_label_params"], language="en")
+        self.assertEqual(english, f"Waiting to retry automatically (1/{len(dl.RETRY_DELAYS)})")
 
     def test_snapshot_hides_remote_cancel_when_the_channel_cannot_cancel(self):
         task_id = self.submit()["task"]["id"]

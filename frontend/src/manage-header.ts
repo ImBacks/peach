@@ -118,7 +118,7 @@ export function manageHeaderSkeletonHtml(props: ManageHeaderProps): string {
       + `${glyph(mark)}<span>${escape(label)}</span></button>`;
   }).join('');
   const crumb = view.crumb
-    ? `<nav data-manage-crumb="" aria-label="Breadcrumb"><ol><li><a href="${escape(view.parent.href)}">${escape(view.parent.label)}</a>${glyph('chevron-right')}</li>`
+    ? `<nav data-manage-crumb="" aria-label="${escape(t('manage:manageHeader.breadcrumbLabel'))}"><ol><li><a href="${escape(view.parent.href)}">${escape(view.parent.label)}</a>${glyph('chevron-right')}</li>`
       + `<li aria-current="true"><span>${escape(view.crumb)}</span></li></ol></nav>`
     : '';
   const lede = view.lede.kind === 'none' ? ''

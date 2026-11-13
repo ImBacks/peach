@@ -28,7 +28,9 @@ import { pageOpens, state, subscribeShell, writeShell, type CatalogFilters } fro
 
 import { junkPath, junkRoute } from '../../../junk-queue';
 import { sortFromAddress } from '../../../sort-preferences';
-import { pageNavigationReady, rememberPageState, restoredPageState, restoringPage } from '../../../history/page-navigation';
+import {
+  pageNavigationReady, rememberPageState, restoredPageState, restoringPage, settlePageNavigation,
+} from '../../../history/page-navigation';
 import { ShellActionsContext, useOpenEpoch } from '../router';
 import type { CatalogShell, ShellActions } from '../shell-actions';
 import { JavLibraryHeader } from '../../jav/jav-header';
@@ -126,7 +128,9 @@ function settle(mark: Seen, actions: ShellActions): void {
   let entering = false;
   if (now.opens === was.opens) {
     if (now.epoch === was.epoch && was.opened) {
-      if (now.seq === was.seq || (was.covered && now.address === was.address && now.filters === was.filters)) return;
+      if (now.seq === was.seq) return;
+      // 详情撤下、下面还是同一屏：不重取，只放开导航时的锚定。
+      if (was.covered && now.address === was.address && now.filters === was.filters) { settlePageNavigation(); return }
       openCatalog(() => shell.load());
       return;
     }

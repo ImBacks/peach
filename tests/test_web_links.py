@@ -11,7 +11,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from peach import link_status, web_links   # noqa: E402
+from peach import interface_text, link_status, web_links   # noqa: E402
 from peach.jobs import BackgroundJob   # noqa: E402
 
 from support.ledger import fresh_ledger   # noqa: E402
@@ -66,7 +66,7 @@ class VerdictTests(unittest.TestCase):
         def remember(**fields):
             saved.update(fields)
             if fields['checked'] == 2:
-                raise InterruptedError('停止于检查点')
+                raise InterruptedError('stopped at checkpoint')
             return True
         with mock.patch.object(web_links, '_probe', side_effect=[(404, ''), (503, '')]):
             with self.assertRaises(InterruptedError):
@@ -110,8 +110,14 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("parklogic.com", note)
         self.assertEqual(web_links.link_verdict(status, note), "gone")
-        self.assertIn("parklogic.com", web_links._note(status, note),
+        self.assertIn("parklogic.com", web_links._note(status, note)["note"],
                       "面板上要看得出为什么 200 也判了没了")
+
+    def test_an_unreachable_link_says_why_in_the_interface_language(self):
+        note = web_links._note(0, "ConnectError")
+        self.assertEqual(note["note"], "取不到：ConnectError")
+        self.assertEqual(interface_text.text(f"server:{note['note_code']}", note["note_params"], language="en"),
+                         "Unreachable: ConnectError")
 
 
 class SummaryTests(unittest.TestCase):

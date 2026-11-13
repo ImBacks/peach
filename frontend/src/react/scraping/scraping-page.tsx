@@ -44,6 +44,7 @@ import {
   SCRAPING_SETTINGS_URL, type AmaneBridge, type Check, type CheckAllJob, type CheckOutcome,
   type CoverJob, type ReportedCheck, type ScrapingData, type Source, type SourceReport,
 } from './scraping';
+import { codedText, jobText, partsLabel, serverLabel } from '../../core/server-text';
 import { interfaceLanguage, joinList, t } from '../../i18n';
 
 const NETWORKS = [['peach', t('manage:customSources.peachProxy')], ['direct', t('manage:sourceSettings.direct')]] as const;
@@ -283,7 +284,7 @@ function CheckAllCard({ toast }: ScrapingProps) {
     (a, b) => OUTCOME_ORDER.indexOf(a.check.outcome) - OUTCOME_ORDER.indexOf(b.check.outcome));
   const problem = start.error ? errorMessage(start.error)
     : taskQuery.error ? errorMessage(taskQuery.error)
-    : job?.status === 'failed' ? (job.error || t('manage:connectionCheck.notFinished')) : '';
+    : job?.status === 'failed' ? (jobText(job, 'error') || t('manage:connectionCheck.notFinished')) : '';
   const finished = job?.status === 'complete' && job.completed_at
     ? [momentText(new Date(job.completed_at * 1000).toISOString()),
        job.elapsed_s !== undefined ? t('manage:connectionCheck.elapsed', { seconds: job.elapsed_s.toFixed(1) }) : ''].filter(Boolean).join(' · ')
@@ -346,6 +347,12 @@ function CheckAllCard({ toast }: ScrapingProps) {
   );
 }
 
+/** 封面任务成功那一句。 */
+const coverResult = (job: CoverJob) => serverLabel(job.result_code ?? '', job.result ?? '', job.result_params);
+
+/** 封面任务失败那一句：由几段拼成的逐段取译文，缺一段译文就整句用服务端原文。 */
+const coverFailure = (job: CoverJob): string => partsLabel(job.error_parts, jobText(job, 'error'));
+
 /** 按番号补一张高清封面。这一趟在后台跑，页面上留状态。 */
 function CoverCard({ toast }: ScrapingProps) {
   const [code, setCode] = useState('');
@@ -354,7 +361,7 @@ function CoverCard({ toast }: ScrapingProps) {
     queryFn: ({ signal }) => fetchCoverJob(signal),
     start: () => apiSend<CoverJob>(SCRAPING_COVER_URL, { code }),
     onFinish: (state) => {
-      if (state.status === 'complete') toast(state.result || t('manage:hdCover.fetched'));
+      if (state.status === 'complete') toast(coverResult(state) || t('manage:hdCover.fetched'));
     },
   });
 
@@ -366,7 +373,7 @@ function CoverCard({ toast }: ScrapingProps) {
 
   const problem = start.error ? errorMessage(start.error)
     : taskQuery.error ? errorMessage(taskQuery.error)
-    : outcome?.status === 'failed' ? (outcome.error || t('manage:hdCover.notFound')) : '';
+    : outcome?.status === 'failed' ? (coverFailure(outcome) || t('manage:hdCover.notFound')) : '';
   return (
     <Section title={t('manage:hdCover.title')} onSubmit={submit}>
       <Stack>
@@ -385,7 +392,7 @@ function CoverCard({ toast }: ScrapingProps) {
         {running ? <LoadingDots label={t('manage:hdCover.fetching')} /> : null}
         {problem ? <Note tone="error">{problem}</Note> : null}
         {outcome?.status === 'complete'
-          ? <Note tone="success">{outcome.result || t('manage:hdCover.fetched')}</Note>
+          ? <Note tone="success">{coverResult(outcome) || t('manage:hdCover.fetched')}</Note>
           : null}
       </Stack>
     </Section>
@@ -403,7 +410,7 @@ function AmaneBridgeCard({ toast }: ScrapingProps) {
     jobOf: (card) => card.job,
     withJob: (card, started) => card && { ...card, job: started },
     onFinish: (state) => {
-      if (state.status === 'complete') toast(state.result || t('manage:amaneRuntime.rebuilt'));
+      if (state.status === 'complete') toast(codedText(state, 'result') || t('manage:amaneRuntime.rebuilt'));
     },
   });
   const check = useMutation({
@@ -420,7 +427,7 @@ function AmaneBridgeCard({ toast }: ScrapingProps) {
   const busy = running || rebuild.isPending || check.isPending;
   const problem = rebuild.error ? errorMessage(rebuild.error)
     : check.error ? errorMessage(check.error)
-    : outcome?.status === 'failed' ? (outcome.error || t('manage:amaneRuntime.rebuildNotFinished')) : '';
+    : outcome?.status === 'failed' ? (jobText(outcome, 'error') || t('manage:amaneRuntime.rebuildNotFinished')) : '';
   return (
     <Section id="amane" title="amane" aside={<ExternalLink href={data.repository} leadingIcon={GitHubMark}>{data.repository}</ExternalLink>}>
       <FactList>
@@ -440,7 +447,7 @@ function AmaneBridgeCard({ toast }: ScrapingProps) {
           : <Help>{t('manage:amaneRuntime.help', { license: data.license, version: data.version })}</Help>}
         {running ? <LoadingDots label={t('manage:amaneRuntime.rebuilding')} /> : null}
         {problem ? <Note tone="error">{problem}</Note> : null}
-        {outcome?.status === 'complete' ? <Note tone="success">{outcome.result || t('manage:amaneRuntime.rebuilt')}</Note> : null}
+        {outcome?.status === 'complete' ? <Note tone="success">{codedText(outcome, 'result') || t('manage:amaneRuntime.rebuilt')}</Note> : null}
       </Stack>
       <Footer>
         <Button variant="secondary" onClick={() => { if (!busy) check.mutate() }} {...busyProps(check.isPending)}>

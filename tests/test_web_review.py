@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from peach import interface_text
 from peach import metadata_policy as rm_policy
 from peach import review_csv as rm_candidates
 from peach import web_contract as rm_web
@@ -2040,7 +2041,7 @@ class ReviewQueueTests(unittest.TestCase):
         row = next(item for item in rows if item["item_key"] == "III-9:studio")
         self.assertEqual(row["current_owner"], USER_MANUAL)
         self.assertEqual(row["asset_mutation_revision"], 1)
-        self.assertIn("（手动填写）", rm_review._review_evidence("metadata_fields", row))
+        self.assertIn("（手动填写）", rm_review._evidence_fields("metadata_fields", row)["reason"])
 
     def test_two_sources_saying_the_same_thing_land_without_review(self):
         """数取值，不数候选条数。
@@ -3495,6 +3496,18 @@ class ReviewQueueTests(unittest.TestCase):
         row = rm_review.q_review(self.contract)["sections"]["fc2_markings"][0]
         self.assertIn("19 个分片", row["reason"])
         self.assertIn("封面不下发", row["reason"])
+
+    def test_evidence_lines_carry_codes_that_read_in_english(self):
+        self._csv("fc2-candidate-log.csv", self.FC2_FIELDS, [
+            self._fc2_row("FC2-PPV-2355314", performers="真夏",
+                          performer_votes="真夏:2", writer="陸王24")])
+        row = rm_review.q_review(self.contract)["sections"]["fc2_markings"][0]
+        parts = row["reason_parts"]
+        self.assertEqual([part["code"] for part in parts], [
+            "labels.webReview.commentVotes", "labels.webReview.separator", "labels.webReview.seller"])
+        english = "".join(interface_text.text(f"server:{part['code']}", part["params"], language="en")
+                          for part in parts)
+        self.assertEqual(english, "Comment marks 真夏:2; Seller 陸王24")
 
     def test_fc2_cross_number_similarity_is_a_record_only_review_candidate(self):
         con = sqlite3.connect(self.db_path)

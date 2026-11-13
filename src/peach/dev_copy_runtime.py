@@ -19,6 +19,7 @@ from . import dev_copy
 from .diagnostic_browser import BUNDLE_CHUNK_NAME
 from .fsutil import atomic_write_bytes, atomic_write_text
 from .jobs import process_alive
+from .user_messages import UserValueError
 
 ACTIVE = {'building', 'waiting_restart', 'restarting'}
 BUNDLES = ('peach-app.js', 'peach-app.css', 'peach-pages.js', 'peach-pages.css')
@@ -79,15 +80,15 @@ def submit(root: Path, body: dict, *, retry: bool = False) -> dict:
         with FileLock(directory / 'apply.lock', timeout=0):
             current = status(root)
             if current.get('state') in ACTIVE:
-                raise ValueError('文案正在生效，请稍后再编辑')
+                raise UserValueError("errors.devCopyRuntime.applying")
             if retry:
                 if not isinstance(body, dict) or current.get('id') != body.get('id') or current.get('state') != 'error':
-                    raise ValueError('没有可重试的生效任务')
+                    raise UserValueError("errors.devCopyRuntime.nothingToRetry")
                 return {'ok': True, 'apply': _start(root, current)}
             saved = dev_copy.save(root, body)
             return {**saved, 'apply': _start(root, saved)}
     except Timeout as exc:
-        raise ValueError('正在保存其他文案，请稍后重试') from exc
+        raise UserValueError("errors.devCopyRuntime.saving") from exc
 
 
 def _chunks(folder: Path) -> list[str]:
@@ -98,7 +99,7 @@ def _chunks(folder: Path) -> list[str]:
 def build_frontend(root: Path) -> None:
     npm = shutil.which('npm.cmd' if os.name == 'nt' else 'npm')
     if not npm:
-        raise ValueError('未找到 npm，请安装项目所需的 Node.js')
+        raise UserValueError("errors.devCopyRuntime.npmMissing")
     directory = _directory(root)
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='build-', dir=directory) as temporary:
@@ -109,9 +110,10 @@ def build_frontend(root: Path) -> None:
             **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
         atomic_write_text(directory / 'build.log', (result.stdout or '') + (result.stderr or ''))
         if result.returncode:
-            raise ValueError('构建失败：' + ((result.stderr or result.stdout or '').strip()[-600:] or str(result.returncode)))
+            raise UserValueError("errors.devCopyRuntime.buildFailed", {
+                "detail": (result.stderr or result.stdout or '').strip()[-600:] or str(result.returncode)})
         if any(not (stage / name).is_file() for name in BUNDLES):
-            raise ValueError('构建产物不完整，详情见 build/copy-editor/build.log')
+            raise UserValueError("errors.devCopyRuntime.buildIncomplete")
         destination = root / 'web/dist'
         fresh = _chunks(stage)
         stale = [name for name in _chunks(destination) if name not in fresh]
@@ -170,8 +172,8 @@ def poll(tray, root: Path) -> None:
             gate = task_gate(DATABASE_PATH, host=socket.gethostname(), alive=process_alive)
             if gate.refused:
                 raise ValueError(gate.refusal())
-            if not tray.manager.restart(reason="源码改字构建完成，重载服务"):
-                raise ValueError('服务尚未恢复，请查看托盘日志')
+            if not tray.manager.restart(reason="source copy edit built, reloading services"):
+                raise UserValueError("errors.devCopyRuntime.serviceNotRecovered")
             readiness = tray._readiness()
             if readiness.problem:
                 raise ValueError(readiness.message)

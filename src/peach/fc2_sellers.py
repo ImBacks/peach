@@ -161,7 +161,7 @@ def _associate(connection, entity_id, name, record, metadata, batch, skipped):
     for asset_id in record['asset_ids']:
         asset = connection.execute("SELECT code FROM asset WHERE id=? AND medium='video' AND disposal IS NULL", (asset_id,)).fetchone()
         if not asset or normalise_code_key(asset[0]) != record['code']:
-            raise ValueError('卖家作品计划已过期')
+            raise ValueError('seller plan is stale: video no longer matches')
         if entity_id and connection.execute("SELECT 1 FROM asset_entity WHERE asset_id=? AND entity_id=? AND role='creator'",
                                             (asset_id, entity_id)).fetchone():
             linked = entity_id
@@ -174,9 +174,9 @@ def _associate(connection, entity_id, name, record, metadata, batch, skipped):
             continue
         actual = connection.execute('SELECT kind FROM entity WHERE id=?', (landed,)).fetchone()
         if not actual or actual[0] != 'creator':
-            raise ValueError('卖家账号与已合并出演身份冲突')
+            raise ValueError('seller account conflicts with a merged performer identity')
         if entity_id and landed != entity_id:
-            raise ValueError('卖家身份计划已过期：摄取认到另一个账号')
+            raise ValueError('seller plan is stale: ingestion resolved a different account')
         entity_id = linked = landed
     return linked
 
@@ -185,12 +185,12 @@ def _install_account(connection, group, batch, skipped):
     first = group['records'][0]
     entity_id = group['entity_id']
     if existing_account(connection, group['records']) != (entity_id, ''):
-        raise ValueError('卖家身份计划已过期')
+        raise ValueError('seller plan is stale')
     name = first['name']
     if entity_id:
         held = connection.execute('SELECT kind,canonical_name FROM entity WHERE id=?', (entity_id,)).fetchone()
         if not held or held[0] != 'creator':
-            raise ValueError('账号身份已变化')
+            raise ValueError('account identity changed')
         name = held[1]
     metadata = {'source': SOURCE, 'batch': batch, 'account_url': first['account_url']}
     installed = None
@@ -209,7 +209,7 @@ def _install_account(connection, group, batch, skipped):
     other = connection.execute("SELECT external_id FROM entity_external_ref WHERE entity_id=? AND provider='fc2' "
                                "AND external_kind='creator'", (entity_id,)).fetchone()
     if other and other[0] != first['account']:
-        raise ValueError('卖家身份计划已过期：账号已绑定另一个 FC2 账号')
+        raise ValueError('seller plan is stale: the account is already bound to another FC2 account')
     if not other:
         connection.execute("INSERT INTO entity_external_ref(entity_id,provider,external_kind,external_id,metadata_json) VALUES(?,'fc2','creator',?,?)",
                            (entity_id, first['account'], json.dumps(metadata)))
@@ -220,7 +220,7 @@ def _install_account(connection, group, batch, skipped):
 def install(connection, frozen: dict, *, batch: str) -> dict:
     """追加卖家关系，保留出演者、扁平字段和既有账号资料。"""
     if not batch.startswith(SOURCE + '@'):
-        raise ValueError('卖家批次需要明确来源前缀')
+        raise ValueError(f'seller batch must start with {SOURCE}@')
     before = connection.total_changes
     skipped: list[dict] = []
     ids = [_install_account(connection, group, batch, skipped) for group in frozen['accounts']]

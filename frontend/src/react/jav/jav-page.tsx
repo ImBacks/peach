@@ -27,6 +27,7 @@ import { LibraryShortcuts } from '../library-shortcuts/shortcut-controls';
 import { Segments, SortKeys } from '../entity-filter/entity-filter-page';
 import { TaskProgress } from '../components/task-progress';
 import { DISCOVERY_SORTS, discoveryScore, recommendationScore, type DiscoverySort } from './discovery-sorts';
+import { jobText, serverLabelList } from '../../core/server-text';
 import { t } from '../../i18n';
 
 const MetadataStopGlyph = spriteGlyph('x');
@@ -169,7 +170,7 @@ function Discover({ readOnly, receipt, resource, query, navigate, clearText }: {
         label={t('catalog:javMetadata.loadingProgress', { completed: metadata.completed, count: metadata.total })} value={metadata.completed} total={metadata.total} /></div> : null}
     {metadata && metadata.status !== 'running' && (metadata.status !== 'complete' || metadata.failed > 0)
       ? <Note tone="neutral" action={<Button variant="secondary" {...busyProps(metadataAction.busy === 'retry')}
-        aria-label={t('catalog:javMetadata.retry')} onClick={() => updateMetadata('retry')}>{t('catalog:shared.retryNow')}</Button>}>{metadata.message || t('catalog:javMetadata.progress', { completed: metadata.completed, count: metadata.total })}</Note> : null}
+        aria-label={t('catalog:javMetadata.retry')} onClick={() => updateMetadata('retry')}>{t('catalog:shared.retryNow')}</Button>}>{jobText(metadata) || t('catalog:javMetadata.progress', { completed: metadata.completed, count: metadata.total })}</Note> : null}
     {metadataAction.error ? <Note tone="error">{metadataAction.error}</Note> : null}
     {!waiting && !discoveries.error && !items.length ? <EmptyState icon={RiCompassLine} title={query || tag ? t('catalog:javDiscover.noMatches') : t('catalog:javDiscover.noTasteMatches')}
       actions={<><ButtonLink size="small" href="/taste" variant="secondary">{t('catalog:javDiscover.viewTaste')}</ButtonLink>
@@ -184,7 +185,7 @@ function Discover({ readOnly, receipt, resource, query, navigate, clearText }: {
         const recommendation = recommendationScore(item.taste_score ?? item.score);
         const scoreDetails = [recommendation.label, t('catalog:javScore.taste', { score: discoveryScore(item.taste_score ?? item.score) }),
           discoveries.data?.ranking_method === 'mmr' && item.ranking_score != null ? t('catalog:javScore.ranking', { score: discoveryScore(item.ranking_score) }) : '',
-          item.source_score != null ? t('catalog:javScore.siteRating', { rating: item.source_score.toFixed(1) }) : '', ...(item.reasons || [])].filter(Boolean).join(' · ');
+          item.source_score != null ? t('catalog:javScore.siteRating', { rating: item.source_score.toFixed(1) }) : '', ...serverLabelList(item.reasons, item.reason_codes, item.reason_params)].filter(Boolean).join(' · ');
         return <DiscoveryCard key={item.id} item={item} layout={layout} javImage={settings.value.javImage} readOnly={readOnly}
           navigate={navigate} tag={tag} onTag={setTag} wanting={action.busy === String(item.id)}
           onWant={() => { void action.run(String(item.id), signal => addWant({ code: item.code }, signal), () => {

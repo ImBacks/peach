@@ -14,6 +14,7 @@ from .entities import normalize_entity_name, upsert_asset_entity
 from .entity_classification import trusted_sql
 from .field_owners import is_protected, owner_of, write_owned_fields
 from .studio_sites import is_platform, normalise
+from .user_messages import UserValueError
 
 OWNER = 'script:creator-attributions'
 FIELDS = ('asset_id', 'entity_id', 'current_creator', 'relation_source', 'confidence',
@@ -200,7 +201,7 @@ def _land_studio(connection, cursor, row: dict) -> tuple[dict | None, dict | Non
                             (normalize_entity_name(row['proposed_studio']),)).fetchone()
     if not entity:
         if row['verdict'] != 'verified_studio' or not row['studio_source_url']:
-            raise ValueError('计划中的厂牌身份不存在')
+            raise UserValueError("errors.metadataCreatorAttributions.plannedLabelMissing")
         entity_id = upsert_asset_entity(connection,kind='studio',name=row['proposed_studio'],asset_id=asset_id,
             role='studio',source=OWNER,metadata={'source_url':row['studio_source_url'],'evidence':row['reason']},
             update_entity_metadata=False)
@@ -232,7 +233,7 @@ def _land_creator(connection, cursor, row):
     target = cursor.execute("SELECT id FROM entity WHERE kind='creator' AND canonical_name=?",
                             (row['proposed_creator'],)).fetchone()
     if not target:
-        raise ValueError('计划中的账号身份不存在')
+        raise UserValueError("errors.metadataCreatorAttributions.plannedAccountMissing")
     if connection.execute("SELECT 1 FROM asset_entity WHERE asset_id=? AND entity_id=? AND role='creator'",
                           (row['asset_id'],target['id'])).fetchone():
         return None
@@ -247,7 +248,7 @@ def apply_plan(connection: sqlite3.Connection, plan: list[dict]) -> dict:
     """调用方持有事务；校验整批当前判定，保留实体与其它来源断言。"""
     current = [row for row in collect(connection) if row['action'] in {'remove','replace'}]
     if fingerprint(current) != fingerprint(plan):
-        raise ValueError('审计计划与当前数据库不一致，请重新预览')
+        raise UserValueError("errors.metadataCreatorAttributions.planOutdated")
     removed = []
     added = []
     created = []
@@ -278,14 +279,14 @@ def apply_plan(connection: sqlite3.Connection, plan: list[dict]) -> dict:
         if before['creator'] not in removed_names or before['creator'] in names:
             continue
         if len(names) > 1:
-            raise ValueError(f'资产 {asset_id} 有多个存续创作者，需复核兼容投影')
+            raise UserValueError("errors.metadataCreatorAttributions.multipleCreators", {"asset": asset_id})
         value = next(iter(names), None)
         current_fields = _asset_fields(cursor, asset_id)
         write_owned_fields(connection, [asset_id], {'creator': value}, OWNER,
                            expected_revision=current_fields['mutation_revision'])
         after = _asset_fields(cursor, asset_id)
         if after['creator'] != value:
-            raise ValueError(f'资产 {asset_id} 的创作者字段拒绝写入')
+            raise UserValueError("errors.metadataCreatorAttributions.creatorWriteRefused", {"asset": asset_id})
     changed = [{'before': before, 'after': _asset_fields(cursor, asset_id)}
                for asset_id, before in before_assets.items() if _asset_fields(cursor, asset_id) != before]
     return {'relations': removed, 'added_relations': added, 'created_entities':created, 'fields': changed, 'plan': plan,
@@ -296,13 +297,13 @@ def _remove_created_studios(connection, cursor, entities):
     """本批新建的空厂牌可撤回；任何额外资料都会阻止整批恢复。"""
     for entity in entities:
         if dict(cursor.execute('SELECT * FROM entity WHERE id=?',(entity['id'],)).fetchone() or {}) != entity:
-            raise ValueError('新厂牌资料已发生后续改动')
+            raise UserValueError("errors.metadataCreatorAttributions.newLabelChanged")
         for table, in connection.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"):
             if not re.fullmatch('[a-zA-Z0-9_]+',table):
                 continue
             for foreign in connection.execute(f'PRAGMA foreign_key_list({table})'):
                 if foreign[2]=='entity' and connection.execute(f'SELECT 1 FROM {table} WHERE {foreign[3]}=?',(entity['id'],)).fetchone():
-                    raise ValueError('新厂牌出现额外资料，拒绝回滚整批')
+                    raise UserValueError("errors.metadataCreatorAttributions.newLabelHasExtra")
         connection.execute('DELETE FROM entity WHERE id=?',(entity['id'],))
 
 
@@ -314,21 +315,21 @@ def restore(connection: sqlite3.Connection, manifest: dict) -> None:
         after = item['after']
         current = _asset_fields(cursor, after['id'])
         if current != after:
-            raise ValueError(f"资产 {after['id']} 已发生后续改动，拒绝回滚整批")
+            raise UserValueError("errors.metadataCreatorAttributions.assetChanged", {"asset": after['id']})
     asset_ids = sorted({int(row['asset_id']) for row in manifest['relations']})
     if _creator_relations(connection, asset_ids) != manifest['remaining_creator_relations']:
-        raise ValueError('创作者关系已发生后续改动，拒绝回滚整批')
+        raise UserValueError("errors.metadataCreatorAttributions.creatorLinksChanged")
     for row in manifest['added_relations']:
         current = cursor.execute('SELECT * FROM asset_entity WHERE asset_id=? AND entity_id=? AND role=? AND source=?',
                                  tuple(row[key] for key in ('asset_id', 'entity_id', 'role', 'source'))).fetchone()
         if not current or dict(current) != row:
-            raise ValueError('厂牌关系已发生后续改动，拒绝回滚整批')
+            raise UserValueError("errors.metadataCreatorAttributions.labelLinksChanged")
     for row in manifest['relations']:
         if connection.execute("SELECT 1 FROM asset_entity WHERE asset_id=? AND entity_id=? AND role=? AND source=?",
                               tuple(row[key] for key in ('asset_id', 'entity_id', 'role', 'source'))).fetchone():
-            raise ValueError('创作者关系已存在，拒绝回滚整批')
+            raise UserValueError("errors.metadataCreatorAttributions.creatorLinkExists")
         if not connection.execute('SELECT 1 FROM entity WHERE id=?', (row['entity_id'],)).fetchone():
-            raise ValueError('档案已不存在，拒绝回滚整批')
+            raise UserValueError("errors.metadataCreatorAttributions.profileMissing")
     for row in manifest['relations']:
         columns = tuple(row)
         connection.execute(f"INSERT INTO asset_entity({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",

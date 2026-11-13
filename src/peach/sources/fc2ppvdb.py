@@ -152,16 +152,16 @@ class Fc2ppvdbSource(SiteSource):
             raise unrecognised()
         if challenge_page(page.body):
             raise SourceFailure(FailureReason.CLOUDFLARE_CHALLENGE,
-                                f"{self.config.label} 要求 Cloudflare 验证，请在采集设置里更新 Cookie",
+                                "errors.base.cloudflareUpdateCookie", {"label": self.config.label},
                                 status_code=403)
         if AGE_GATE_PATH in page.url:
             # 新会话第一次进站被送到年齢確認页（200）；浏览器传输按 `browser_gate` 替人点，点不过去时页面原样到这里。
-            raise SourceFailure(FailureReason.AUTH_REQUIRED, f"{self.config.label} 送到了年齢確認页，浏览器没有点过去")
+            raise SourceFailure(FailureReason.AUTH_REQUIRED, "errors.fc2ppvdb.ageGate", {"label": self.config.label})
         soup = BeautifulSoup(page.text, "html.parser")
         heading = soup.select_one("main h1") or soup.select_one("h1")
         title = text_of(heading)
         if not title or not _number(wanted).search(title):
-            raise SourceFailure(FailureReason.NOT_FOUND, f"{self.config.label} 上没有这个商品")
+            raise SourceFailure(FailureReason.NOT_FOUND, "errors.base.itemNotListed", {"label": self.config.label})
         description = soup.select_one('meta[name="description"]')
         tail = _META_TAIL.search(str(description.get("content") or "")) if description is not None else None
         seller, slug = _seller(soup)

@@ -13,6 +13,7 @@ from peach import job_recovery
 from peach.processing_control import (CURRENT, ProcessingControl, ProcessingEstimate,
                                       checkpoint, control_for, initial_estimate, user_paused, deadline_after)
 from peach.settings_file import PeachConfig
+from peach.task_stages import stage as stage_fields
 from peach.web_library_processing import w_library_processing
 from support.ledger import fresh_ledger
 
@@ -160,7 +161,7 @@ class ProcessingControlTests(unittest.TestCase):
     def test_progress_calibrates_range_and_paused_time_does_not_count(self):
         self.seed()
         state = dict(initial_estimate(self.config, self.db, 'metadata'),
-                     requested_stage='metadata', status='running', stage='读取本地资料', checked=0, total=10)
+                     requested_stage='metadata', status='running', **stage_fields('library.checkCompanions'), checked=0, total=10)
         with patch('peach.processing_control.time.monotonic', return_value=100):
             estimate = ProcessingEstimate(self.config, state, None)
             estimate.update(state)
@@ -180,7 +181,7 @@ class ProcessingControlTests(unittest.TestCase):
     def test_metadata_passes_use_independent_measured_samples(self):
         self.seed()
         state = dict(initial_estimate(self.config, self.db, 'metadata'),
-                     requested_stage='metadata', status='running', stage='读取本地资料', checked=0, total=10)
+                     requested_stage='metadata', status='running', **stage_fields('library.checkCompanions'), checked=0, total=10)
         with patch('peach.processing_control.time.monotonic', return_value=100):
             estimate = ProcessingEstimate(self.config, state, None)
             estimate.update(state)
@@ -188,7 +189,7 @@ class ProcessingControlTests(unittest.TestCase):
         with patch('peach.processing_control.time.monotonic', return_value=103):
             estimate.update(state)
         self.assertEqual(state['eta_kind'], 'measured')
-        state.update(stage='采集缺失资料', checked=0)
+        state.update(**stage_fields('library.fetchMetadata'), checked=0)
         with patch('peach.processing_control.time.monotonic', return_value=200):
             estimate.update(state)
         self.assertTrue(state['eta_initial'])
@@ -203,7 +204,7 @@ class ProcessingControlTests(unittest.TestCase):
 
     def test_total_estimate_includes_pending_media_and_collection(self):
         state = dict(speed_mode='standard', status='running', requested_stage='all',
-                     stage='读取本地资料', checked=0, total=10,
+                     **stage_fields('library.checkCompanions'), checked=0, total=10,
                      estimate_pending={'local': 10, 'probe': 2, 'previews': 3, 'metadata': 10})
         with patch('peach.processing_control.time.monotonic', return_value=100):
             estimate = ProcessingEstimate(self.config, state, None)
@@ -214,14 +215,14 @@ class ProcessingControlTests(unittest.TestCase):
         self.assertEqual(state['eta_scope'], '整趟任务')
         self.assertTrue(state['eta_initial'])
         self.assertGreater(state['eta_seconds_min'], 40)
-        state.update(checked=0, total=2, stage='采集缺失资料', estimate_pending={'metadata': 2})
+        state.update(checked=0, total=2, **stage_fields('library.fetchMetadata'), estimate_pending={'metadata': 2})
         with patch('peach.processing_control.time.monotonic', return_value=120):
             estimate.update(state)
         self.assertLessEqual(state['eta_seconds_max'], 40)
 
     def test_unmeasured_finalization_does_not_keep_a_completed_phase_estimate(self):
         state = dict(speed_mode='standard', status='running', requested_stage='metadata',
-                     stage='保存待确认资料', checked=10, total=10, estimate_pending={},
+                     **stage_fields('library.saveCandidates'), checked=10, total=10, estimate_pending={},
                      eta_seconds_min=1, eta_seconds_max=2)
         estimate = ProcessingEstimate(self.config, state, None)
         estimate.update(state)
@@ -229,7 +230,7 @@ class ProcessingControlTests(unittest.TestCase):
 
     def test_slow_tail_uses_recent_completions_instead_of_the_fast_prefix(self):
         state = dict(speed_mode='standard', status='running', requested_stage='metadata',
-                     stage='读取本地资料', checked=0, total=120, estimate_pending={'local': 120})
+                     **stage_fields('library.checkCompanions'), checked=0, total=120, estimate_pending={'local': 120})
         with patch('peach.processing_control.time.monotonic', return_value=100):
             estimate = ProcessingEstimate(self.config, state, None)
             estimate.update(state)
@@ -244,7 +245,7 @@ class ProcessingControlTests(unittest.TestCase):
     def test_progress_count_rewind_starts_a_new_sample_for_same_stage(self):
         self.seed()
         state = dict(initial_estimate(self.config, self.db, 'metadata'),
-                     requested_stage='metadata', status='running', stage='读取时长与分辨率', checked=0, total=10)
+                     requested_stage='metadata', status='running', **stage_fields('library.probeMedia'), checked=0, total=10)
         with patch('peach.processing_control.time.monotonic', return_value=100):
             estimate = ProcessingEstimate(self.config, state, None)
             estimate.update(state)
@@ -435,6 +436,23 @@ class ProcessingControlTests(unittest.TestCase):
         from peach.library_new_assets import pending
         self.seed(1)
         self.assertEqual(pending(self.db),[])
+
+    def test_a_damaged_new_asset_range_is_set_aside_and_the_next_scan_starts_over(self):
+        """断电或同步盘留下的半份文件不能让之后每次轮询都报错；改名留证，扫描重新登记。"""
+        from peach.library_new_assets import pending, remember
+        from peach.update_tasks import state_for
+        self.seed(3)
+        path=state_for(self.db).parent/'library-new-assets.json'
+        path.parent.mkdir(parents=True,exist_ok=True)
+        for damaged in ('[1, 2', '{"ids": [1]}', '[0, "2"]'):
+            with self.subTest(damaged=damaged):
+                path.write_text(damaged,encoding='utf-8')
+                with self.assertLogs('peach.library_new_assets','WARNING'):
+                    self.assertEqual(pending(self.db),[])
+                self.assertFalse(path.exists())
+                self.assertEqual(path.with_name(path.name+'.invalid').read_text(encoding='utf-8'),damaged)
+        remember(self.db,[2])
+        self.assertEqual(pending(self.db),[2])
 
     def test_archiving_keeps_full_legacy_issues_and_export_rejects_changes(self):
         import json

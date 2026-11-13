@@ -36,6 +36,7 @@ from .follow_identity import author_display_name, author_name, name_key, trusted
 from .follow_sources import KemonoConnector
 from .follow_store import FollowStore
 from .followups import FollowupType, register
+from .user_messages import UserValueError
 
 TASK_KEY = "follow-creator"
 TASK_LABEL = "关注作者建档"
@@ -279,7 +280,7 @@ def confirm(connection: sqlite3.Connection, entity_id: int, key: str) -> dict:
     """
     landing = next((item for item in held_for(connection, entity_id) if item.key == key), None)
     if landing is None:
-        raise ValueError("这组关注作者已经不在等确认了，刷新后再看")
+        raise UserValueError("errors.followCreators.holdGone")
     landing.action = "join"
     stamp = datetime.now(timezone.utc).isoformat()
     return apply(connection, [landing], batch=f"{CONFIRM_SOURCE}@{stamp}",
@@ -309,7 +310,7 @@ def declare(connection: sqlite3.Connection) -> list[dict]:
 def run(contract, key: str, handle) -> dict:
     """跑一轮建档。幂等：已绑的来源不再出现在计划里，重跑只是一张空计划。"""
     if key != f"{TASK_KEY}:all":
-        raise ValueError(f"认不出这条关注作者建档后继：{key}")
+        raise ValueError(f"unrecognized follow creator followup key: {key}")
     batch = f"{SOURCE}@{getattr(handle, 'run_id', None) or time.strftime('%Y%m%dT%H%M%S')}"
     with contract.database.write_transaction() as connection:
         landings = plan(connection)

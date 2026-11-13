@@ -10,13 +10,14 @@ import { TaskProgress } from '../components/task-progress';
 import { queryClient } from '../query';
 import { busyProps, useAction } from '../settings/use-action';
 import { t } from '../../i18n';
+import { stageText } from '../../core/server-text';
 
 const URL = '/api/diagnostics/exports';
 const KEY = ['diagnostic-export'] as const;
 interface ExportState {
   job_id?: string; kind?: 'support' | 'scraping';
   status: 'idle' | 'running' | 'cancelling' | 'complete' | 'cancelled' | 'failed';
-  stage?: string; done?: number; total?: number; files?: number; rows?: number; bytes?: number;
+  stage?: string; stage_code?: string; done?: number; total?: number; files?: number; rows?: number; bytes?: number;
   download_url?: string; error?: string;
 }
 
@@ -53,8 +54,8 @@ export function DiagnosticExportAction({ kind, codes = '', children }: {
       {children}
     </div>
     {mine && active ? <TaskProgress embedded={kind === 'scraping'} value={state.done || 0} total={state.total}
-      label={state.total ? t('manage:diagnosticsExport.progress', { stage: state.stage, done: state.done || 0, count: state.total })
-        : [state.stage || t('manage:diagnosticsExport.preparing'), state.rows ? t('manage:diagnosticsExport.candidateCount', { count: state.rows }) : '',
+      label={state.total ? t('manage:diagnosticsExport.progress', { stage: stageText(state), done: state.done || 0, count: state.total })
+        : [stageText(state) || t('manage:diagnosticsExport.preparing'), state.rows ? t('manage:diagnosticsExport.candidateCount', { count: state.rows }) : '',
           state.files ? t('manage:diagnosticsExport.fileCount', { count: state.files }) : ''].filter(Boolean).join(' · ')} /> : null}
     {mine && state.status === 'complete' ? <p role="status" className="text-body-2-regular text-text-secondary">
       {t('manage:diagnosticsExport.completedSize', { size: ((state.bytes || 0) / 1024 / 1024).toFixed(2) })}</p> : null}

@@ -33,6 +33,7 @@ from pathlib import Path
 from peach.catalog_rules import (
     CODE_BODY_STOPWORDS,
     REPOST_SITE_LABELS,
+    CodePatternError,
     code_query_variants,
     compact_label,
     compile_code_patterns,
@@ -552,8 +553,10 @@ class TitledFilenameTests(unittest.TestCase):
         self.assertEqual(release_code_from_filename("片名 CAWD-987.mp4", patterns=loose), "CAWD-987")
 
     def test_a_broken_user_rule_says_which_one(self):
-        with self.assertRaisesRegex(ValueError, "第 2 条"):
+        with self.assertRaises(CodePatternError) as caught:
             compile_code_patterns([r"(\w+-\d+)", "(unclosed"])
+        self.assertEqual((caught.exception.code, caught.exception.params["index"]),
+                         ("errors.catalogRules.codePatternInvalid", 2))
         self.assertEqual(compile_code_patterns(None), ())
         self.assertEqual(compile_code_patterns(["", "  "]), ())
 

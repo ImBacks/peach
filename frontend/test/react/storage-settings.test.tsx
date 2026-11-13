@@ -17,7 +17,7 @@ const measured: StorageState = {
     measured_at: 1_790_000_000, total_bytes: 6 * 2 ** 30, total_files: 300,
     categories: [
       category('database', '数据库', 2 ** 30, 0, false, 'Peach 的全部资料都在这里'),
-      category('backups', '数据库备份', 2 ** 30, 2 ** 29, true, '更早的无法再恢复'),
+      category('backups', '数据库备份', 2 ** 30, 2 ** 29, true, '每处保留最近一份，更早的无法再恢复'),
       category('playback', '播放缓存', 2 ** 30, 2 ** 30, true, '再次播放时重新转码'),
       category('previews', '预览图', 2 ** 30, 0, false, '重建要重新读取整部影片'),
       category('logs', '日志', 2 ** 20, 0, true, '只清理已归档的日志'),
@@ -98,7 +98,7 @@ it('不能清理的勾选框禁用并写明原因，勾几类一起清，全部�
   await settle();
   // 备份在里面时确认框是危险样式；正文逐类写清理后会怎样。
   expect(seen[1]!.danger).toBe(true);
-  expect(String(seen[1]!.body)).toContain('数据库备份 512 MB（清理后更早的无法再恢复）');
+  expect(String(seen[1]!.body)).toContain('数据库备份 512 MB（清理后每处保留最近一份，更早的无法再恢复）');
   expect(sentBody(all)).toEqual({ categories: ['backups', 'playback'] });
 });
 

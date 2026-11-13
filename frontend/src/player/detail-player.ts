@@ -182,7 +182,7 @@ export async function mountDetailPlayer(
       [t('catalog:playerStats.bufferHealth'), t('catalog:playerStats.seconds', { seconds: buffer.toFixed(1) }),
         playerStatsPlot(statsHistory.buffer, 'buffer', 30, t('catalog:playerStats.bufferAhead', { seconds: buffer.toFixed(1) }))],
       [t('catalog:playerStats.playbackTime'), `${fmtClock(video.currentTime)} / ${fmtClock(expected || player.duration())}`],
-      [t('catalog:playerStats.date'), new Date().toLocaleString()],
+      [t('catalog:playerStats.date'), new Date().toLocaleString(interfaceLanguage)],
     ];
     statsPanel.innerHTML = `<dl>${rows.map(([key, value, plot]) =>
       `<dt>${esc(key)}</dt><dd${plot ? ' data-player-stats-metric=""' : ''}>${plot || ''}<span>${esc(value)}</span></dd>`).join('')}</dl>`;

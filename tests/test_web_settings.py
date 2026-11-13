@@ -192,11 +192,14 @@ class SettingsRoundTripTests(unittest.TestCase):
                 w_settings(self.contract, {'interfaceLanguage': value})
         self.assertEqual(self._stored_json(), {'interfaceLanguage': 'en'})
 
-    def test_interface_languages_match_the_shipped_locales(self):
-        """后端放行的语言必须有前端译文：多放一个，存进去以后整页回落成中文；少放一个，选了存不进去。"""
-        locales = Path(__file__).resolve().parents[1] / 'frontend' / 'src' / 'locales'
-        shipped = sorted(path.name for path in locales.iterdir() if path.is_dir() and path.name != 'glossary')
-        self.assertEqual(sorted(web_settings.INTERFACE_LANGUAGES), shipped)
+    def test_interface_languages_have_locale_resources(self):
+        """后端放行的语言必须有译文目录，否则存进去以后整页回落成中文。
+
+        Weblate 新开的语言先只有目录，翻到能用再登记，所以目录可以比放行的多。
+        """
+        locales = Path(__file__).resolve().parents[1] / 'resources' / 'locales'
+        present = {path.name for path in locales.iterdir() if path.is_dir() and path.name != 'glossary'}
+        self.assertLessEqual(set(web_settings.INTERFACE_LANGUAGES), present)
 
     def test_a_hand_broken_rule_reads_as_unset(self):
         con = sqlite3.connect(self.db)

@@ -4,6 +4,7 @@
  * 读到的是这几条的撤回预览与 token；撤回把同一个 token 交回去，服务端在写锁里重算，对不上就拒绝。 */
 import { apiGet, apiSend } from '../../api';
 import { localTime } from '../time';
+import { serverLabel } from '../../core/server-text';
 import { joinList, quoted, t } from '../../i18n';
 
 export const AUTO_LANDINGS_URL = '/api/review/auto-landings';
@@ -21,13 +22,15 @@ interface AssetRef {
 export interface AutoLandingWrite extends AssetRef {
   item_key: string;
   rule: string;
-  /** 规则写给人看的名字。 */
+  /** 规则写给人看的名字，`label_code` 是它的 code。 */
   label: string;
+  label_code?: string;
   batch: string;
   /** 写入时刻，秒；读不出时为 null。 */
   at: number | null;
-  /** 写的是哪一格：标题、发行日期，或「标签」。 */
+  /** 写的是哪一格：标题、发行日期，或「标签」；`field_code` 是它的 code。 */
   field: string;
+  field_code?: string;
   /** 覆盖写下的值；并集是补上的标签连成的一串。 */
   value: string;
   /** 覆盖前的值，各文件不同时有几个列几个；并集为空。 */
@@ -40,8 +43,12 @@ export interface AutoLandingWrite extends AssetRef {
 }
 
 interface Row extends AssetRef { asset_id: number }
-export interface RestoreRow extends Row { field: string; current: string; previous: string }
-export interface ChangedRow extends Row { field: string; written: string }
+/** 一格的名字：有 code 且有译文用译文，否则用服务端原文。 */
+export const fieldName = (row: { field: string; field_code?: string }) => serverLabel(row.field_code ?? '', row.field);
+/** 规则的名字。 */
+export const ruleName = (item: AutoLandingWrite) => serverLabel(item.label_code ?? '', item.label);
+export interface RestoreRow extends Row { field: string; field_code?: string; current: string; previous: string }
+export interface ChangedRow extends Row { field: string; field_code?: string; written: string }
 export interface TagRow extends Row { tag: string; batch: string }
 
 export interface AutoLandingPreview {
@@ -92,11 +99,11 @@ export const previousText = (item: AutoLandingWrite) => item.tags.length
 /** 确认弹层里逐条列出的改动：改回的值、删掉的标签，最后是不动的那几条。 */
 export function previewLines(preview: AutoLandingPreview): string[] {
   return [
-    ...preview.restores.map((row) => t('manage:autoLandings.previewRestore', { video: workLabel(row), field: row.field, current: shown(row.current), previous: shown(row.previous) })),
+    ...preview.restores.map((row) => t('manage:autoLandings.previewRestore', { video: workLabel(row), field: fieldName(row), current: shown(row.current), previous: shown(row.previous) })),
     ...preview.tags.map((row) => t('manage:autoLandings.previewRemoveTag', { video: workLabel(row), tag: row.tag })),
     ...preview.changed.map((row) => row.gone
-      ? t('manage:autoLandings.previewGone', { video: workLabel(row), field: row.field })
-      : t('manage:autoLandings.previewEdited', { video: workLabel(row), field: row.field })),
+      ? t('manage:autoLandings.previewGone', { video: workLabel(row), field: fieldName(row) })
+      : t('manage:autoLandings.previewEdited', { video: workLabel(row), field: fieldName(row) })),
   ];
 }
 

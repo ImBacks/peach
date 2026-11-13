@@ -16,11 +16,20 @@ from . import brand_marks, artifact_rules, upgrade_rules
 from .ffmpeg import FFmpegResolver
 from .fsutil import atomic_path
 from .media import normalized_path
+from .metadata import RelayableError, relayed
 from .repository import LedgerRepository
 
 
-class PreviewUnavailable(RuntimeError):
-    pass
+class PreviewUnavailable(RelayableError, RuntimeError):
+    """预览图、头像或厂牌图生成不了。
+
+    本模块抛的都是英文原因标记（`snapshot unavailable`、`ffmpeg generation failed` 等），
+    `/api/poster` 把 `str(exc)` 放进 `reason`，前端 `artwork-gap.tsx` 按原文认，所以经 `relayed` 原样转述。
+    """
+
+
+def _unavailable(reason: str) -> PreviewUnavailable:
+    return PreviewUnavailable(*relayed(reason))
 
 
 #: 厂牌标识的变体后缀。取图、可用性判定、落盘三处必须认同一套后缀，否则会出现
@@ -167,9 +176,9 @@ class PreviewService:
                     "-q:v", "4", str(temporary),
                 ])
                 if stamp != artifact_rules.fingerprint(source):
-                    raise PreviewUnavailable('snapshot changed during preview generation')
+                    raise _unavailable('snapshot changed during preview generation')
             if not artifact_rules.remember(destination, source=source, source_fingerprint=stamp):
-                raise PreviewUnavailable('snapshot changed during preview generation')
+                raise _unavailable('snapshot changed during preview generation')
         return destination
 
     def avatar(self, asset_id: int) -> Path:
@@ -214,15 +223,15 @@ class PreviewService:
                     if brightness >= 60:
                         break
                 if not candidates:
-                    raise PreviewUnavailable("avatar generation failed")
+                    raise _unavailable("avatar generation failed")
                 best, brightness = max(candidates, key=lambda item: item[1])
                 if brightness < 12:
-                    raise PreviewUnavailable("snapshot is too dark")
+                    raise _unavailable("snapshot is too dark")
                 if stamp != artifact_rules.fingerprint(source):
-                    raise PreviewUnavailable('snapshot changed during avatar generation')
+                    raise _unavailable('snapshot changed during avatar generation')
                 os.replace(best, destination)
                 if not artifact_rules.remember(destination, source=source, source_fingerprint=stamp):
-                    raise PreviewUnavailable('snapshot changed during avatar generation')
+                    raise _unavailable('snapshot changed during avatar generation')
             finally:
                 for path, _ in candidates:
                     if path.exists() and path != destination:
@@ -240,7 +249,7 @@ class PreviewService:
         """
         safe = logo_key(studio)
         if not safe:
-            raise PreviewUnavailable("empty studio")
+            raise _unavailable("empty studio")
         listing = list(self.logo_root.iterdir()) if self.logo_root.is_dir() else []
         if variant == LOGO_RING:
             variant = self._ring_variant(listing, safe)
@@ -256,7 +265,7 @@ class PreviewService:
             path = self._logo_file(listing, name)
             if path is not None:
                 return path, self._logo_content_type(path)
-        raise PreviewUnavailable("logo unavailable")
+        raise _unavailable("logo unavailable")
 
     def _largest_logo(self, listing: list[Path], safe: str) -> Path:
         """这个厂牌手上最清晰的那份（`LOGO_LARGEST`）。
@@ -267,7 +276,7 @@ class PreviewService:
         names = (f"{safe}.logo.img", f"{safe}.icon.img", f"{safe}.img")
         found = [path for path in (self._logo_file(listing, name) for name in names) if path]
         if not found:
-            raise PreviewUnavailable("logo unavailable")
+            raise _unavailable("logo unavailable")
         return max(found, key=self._logo_clarity)
 
     def _ring_variant(self, listing: list[Path], safe: str) -> str:
@@ -339,10 +348,10 @@ class PreviewService:
     def entity_image(self, kind: str, entity_id: int) -> tuple[Path, str]:
         """返回已缓存的高清实体图；抓取与版权溯源由离线导入任务负责。"""
         if kind not in ENTITY_IMAGE_KINDS:
-            raise PreviewUnavailable("invalid entity kind")
+            raise _unavailable("invalid entity kind")
         path = self.avatar_root / f"{entity_image_key(kind, entity_id)}.img"
         if not path.is_file():
-            raise PreviewUnavailable("entity image unavailable")
+            raise _unavailable("entity image unavailable")
         content_type = "image/jpeg"
         sidecar = Path(str(path) + ".ct")
         if sidecar.is_file():
@@ -353,16 +362,16 @@ class PreviewService:
     def _snapshot(self, asset_id: int) -> Path:
         asset = self.repository.media_asset(asset_id)
         if asset is None or not asset.snapshot_path:
-            raise PreviewUnavailable("snapshot unavailable")
+            raise _unavailable("snapshot unavailable")
         path = normalized_path(asset.snapshot_path)
         if not (path == self.snapshot_root or self.snapshot_root in path.parents) or not path.is_file():
-            raise PreviewUnavailable("snapshot unavailable")
+            raise _unavailable("snapshot unavailable")
         return path
 
     def _ffmpeg(self) -> Path:
         choice = self.resolver.ffmpeg()
         if choice is None:
-            raise PreviewUnavailable("ffmpeg unavailable")
+            raise _unavailable("ffmpeg unavailable")
         return choice.path
 
     @staticmethod
@@ -374,13 +383,13 @@ class PreviewService:
             from .error_reporting import subprocess_failure
             subprocess_failure('preview', tool=command[0], error=exc, timeout_seconds=30)
             Path(command[-1]).unlink(missing_ok=True)
-            raise PreviewUnavailable("ffmpeg generation failed") from exc
+            raise _unavailable("ffmpeg generation failed") from exc
         if result.returncode != 0 or not Path(command[-1]).is_file():
             from .error_reporting import subprocess_failure
             subprocess_failure('preview', tool=command[0], returncode=result.returncode,
                                stderr=result.stderr, reason='generation_failed')
             Path(command[-1]).unlink(missing_ok=True)
-            raise PreviewUnavailable("ffmpeg generation failed")
+            raise _unavailable("ffmpeg generation failed")
 
 
 #: 图片墙一列大约 300 CSS px，二倍屏取 640 够用；再大只是白付云盘流量。
@@ -470,11 +479,11 @@ class PhotoThumbnailService:
                         image.thumbnail((self.width, self.width * 8), Image.LANCZOS)
                         image.save(temporary, "JPEG", quality=82, optimize=True)
                     if stamp != artifact_rules.fingerprint(source):
-                        raise PreviewUnavailable('photo changed during thumbnail generation')
+                        raise _unavailable('photo changed during thumbnail generation')
                 if not artifact_rules.remember(destination, source=source, source_fingerprint=stamp):
-                    raise PreviewUnavailable('photo changed during thumbnail generation')
+                    raise _unavailable('photo changed during thumbnail generation')
             except (OSError, ValueError, Image.DecompressionBombError) as exc:
-                raise PreviewUnavailable("photo thumbnail failed") from exc
+                raise _unavailable("photo thumbnail failed") from exc
         return destination
 
 

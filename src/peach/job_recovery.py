@@ -17,7 +17,7 @@ current_job_id = ContextVar('peach_resuming_job_id', default=None)
 
 def _path(db: Path, key: str) -> Path:
     if not key or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in key):
-        raise ValueError("任务恢复标识无效")
+        raise ValueError("invalid job recovery key")
     return state_for(db).parent / "job-recovery" / (key + ".json")
 
 
@@ -152,7 +152,7 @@ def resume(db: Path, handlers: dict) -> list[str]:
                         TaskRunStore(db).finish(data['run_id'], 'failed', error=str(exc))
                     data.update(status="blocked", error=str(exc))
                     atomic_write_text(_path(db, key), json.dumps(data, ensure_ascii=False))
-                    LOGGER.warning("任务 %s 未能恢复：%s", key, exc)
+                    LOGGER.warning("Task %s could not be resumed: %s", key, exc)
                 else:
                     resumed.append(key)
         except UpdateBusy:

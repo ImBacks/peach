@@ -2,7 +2,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import * as legacyUi from '@peach/legacy/ui';
 
-import type { ConfigurationData, ReleaseState } from '../../src/react/bundle';
+import type { ConfigurationData, ReleaseState, UpdateJob } from '../../src/react/bundle';
 import {
   AutomaticUpdates, MaintenanceSettings, TutorialSettings, UninstallSettings,
 } from '../../src/react/settings/maintenance-settings';
@@ -105,6 +105,14 @@ describe('检查更新', () => {
     vi.stubGlobal('fetch', fetchMock(200, { state: 'idle', progress: 0 }));
     const host = await mount(<ReleaseUpdates initial={release} />);
     expect(host.textContent?.split('尚未检查')).toHaveLength(2);
+  });
+
+  it('更新任务的说明按 code 取当前语言的译文，不用服务端兜底的原文', async () => {
+    vi.stubGlobal('fetch', fetchMock(200, { state: 'idle', progress: 0 }));
+    const job = { state: 'error', progress: 0, message: '兜底原文', message_code: 'jobMessage.standaloneUpdate.interrupted' };
+    const host = await mount(<ReleaseUpdates initial={release} initialJob={job as UpdateJob} />);
+    expect(host.textContent).toContain('更新任务已中断，请重试。');
+    expect(host.textContent).not.toContain('兜底原文');
   });
 
   it('刷新后接着已准备好的更新，弹一次重启确认，确认前不发重启', async () => {

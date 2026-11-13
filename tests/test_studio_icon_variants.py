@@ -2147,7 +2147,7 @@ class FaceGateTests(unittest.TestCase):
 
         def refuse():
             calls.append(1)
-            raise MODULE.face_detect.FaceModelUnavailable("缺少人脸模型：yunet.onnx")
+            raise MODULE.face_detect.FaceModelUnavailable("errors.faceDetect.faceModelMissing", {"path": "yunet.onnx"})
 
         MODULE.face_detect.FaceDetector = refuse
         gate = MODULE.FaceGate()

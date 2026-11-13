@@ -30,6 +30,7 @@ from .strm import skip_background_read
 from .processing_control import current_control, checkpoint
 from .catalog_rules import is_local_extra
 from . import junk, record_rehome
+from .user_messages import UserValueError
 
 #: 一次探测最多等多久。ffprobe 只读文件头，网盘上实测一两秒。
 TIMEOUT_SECONDS = 20.0
@@ -79,7 +80,7 @@ def probe_file(ffprobe: str, path: str, timeout: float = TIMEOUT_SECONDS) -> tup
     media_input(path)
     from .processing_traffic import CURRENT as TRAFFIC, media_statistics
     if skip_background_read(path):
-        raise ValueError('STRM 和 ISO 不执行视频探测')
+        raise UserValueError('errors.mediaProbe.strmIsoNotProbed')
     from .smb_media import input_url
     path = input_url(path)
     result = run_task_process(

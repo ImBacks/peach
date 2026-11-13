@@ -71,8 +71,8 @@ LABEL_PAGES = 4
 
 REVIEW_WARNING = '社区 Wiki 的出演断言需要人工复核；人物页链接不自动合并艺名'
 INCOMPLETE_WARNING = '出演栏含未识别或不确定内容，完整出演名单未取得'
-NOT_IN_SEARCH = 'Wiki 搜索范围内未取得精确作品表格行'
-NOT_IN_ENTRIES = 'Wiki 搜索范围内未取得精确番号的作品条目'
+NOT_IN_SEARCH = 'errors.seesaa.notInSearch'
+NOT_IN_ENTRIES = 'errors.seesaa.notInEntries'
 #: 出演栏里这些写法说明名单不确定，整份名单只留原文证据。`▲` 是 av_neme 站方说明里的不确定标记。
 _UNCERTAIN_NAME = re.compile(r'[?？�▲]|不明|未確認')
 #: 链接名摘掉之后剩下的分隔符与「出演順」不算未识别内容。
@@ -92,7 +92,7 @@ def page_url(url: str, root: str = ROOT) -> str:
     parsed = urlsplit(absolute)
     if (parsed.scheme != 'https' or parsed.netloc != 'seesaawiki.jp'
             or not parsed.path.startswith(urlsplit(root).path + 'd/') or parsed.query):
-        raise ValueError('需要这个 Wiki 的公开详情页')
+        raise ValueError('expected a public detail page of this wiki')
     return absolute
 
 
@@ -113,7 +113,7 @@ def _one(code: str, rows) -> SiteRecord | None:
     if not matches:
         return None
     if len({_signature(row) for row in matches}) != 1:
-        raise MetadataProviderError('Wiki 精确番号存在冲突行，需复核原页', kind='ambiguous')
+        raise MetadataProviderError('errors.seesaa.conflictingRows', kind='ambiguous')
     return matches[0]
 
 
@@ -148,13 +148,13 @@ class WikiPages:
             except (ValueError, KeyError, TypeError):
                 pass
         if self.blocked or self.requests >= self.max_requests:
-            raise MetadataProviderError('Wiki 本批请求已停止或达到限额', kind='budget', retryable=True)
+            raise MetadataProviderError('errors.seesaa.budgetStopped', kind='budget', retryable=True)
         self.limiter.wait(url)
         self.requests += 1
         try:
             response = self.transport(HttpRequest('GET', url, {}), TIMEOUT, limit)
         except (OSError, RuntimeError, httpx.HTTPError) as error:
-            raise MetadataProviderError('Wiki 网络请求未取得', kind='unavailable', retryable=True) from error
+            raise MetadataProviderError('errors.seesaa.networkFailed', kind='unavailable', retryable=True) from error
         if response.status in {403, 429}:
             self.blocked = True
         # 鉴权失败先判：401/403 与「跳到登录页」都是同一把锁，本批再问多少次都是它。
@@ -164,15 +164,15 @@ class WikiPages:
             self.blocked = True
             raise auth_error(self.config.name, reason, status_code=response.status)
         if response.status != 200:
-            raise MetadataProviderError('Wiki HTTP 请求未取得', kind='unavailable',
+            raise MetadataProviderError('errors.seesaa.httpFailed', kind='unavailable',
                                         status_code=response.status, retryable=True)
         if len(response.body) > limit:
-            raise MetadataProviderError('Wiki 页面超过读取上限', kind='size_limit')
+            raise MetadataProviderError('errors.seesaa.pageTooLarge', kind='size_limit')
         if response.url and response.url != url:
-            raise MetadataProviderError('Wiki 重定向页面未取得身份验证', kind='redirect')
+            raise MetadataProviderError('errors.seesaa.redirectUnverified', kind='redirect')
         if b'cf-chl-' in response.body or b'Just a moment' in response.body:
             self.blocked = True
-            raise MetadataProviderError('Wiki 机器人验证未取得', kind='blocked', status_code=403)
+            raise MetadataProviderError('errors.seesaa.botCheckFailed', kind='blocked', status_code=403)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix('.tmp')
         temp.write_text(json.dumps({'url': url, 'body_hex': response.body.hex()}), encoding='utf8')

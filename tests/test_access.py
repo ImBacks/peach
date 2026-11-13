@@ -9,7 +9,7 @@ from unittest.mock import patch
 import httpx
 from fastapi import FastAPI, Depends
 
-from peach import access, routes_auth, routes_configuration
+from peach import access, interface_text, routes_auth, routes_configuration
 
 
 class AccessTests(unittest.IsolatedAsyncioTestCase):
@@ -461,7 +461,13 @@ class TokenRotationTests(ConfigurationPageCase):
                 self.assertIn(reason, response.text)
         self.app.state.settings = settings
         state = routes_configuration.api_token_payload(SimpleNamespace(app=self.app))
-        self.assertEqual(state, {"rotatable": True, "reason": "", "paired": routes_configuration.REPLICATION_ENABLED})
+        self.assertEqual(state, {"rotatable": True, "reason": "", "reason_code": "",
+                                 "paired": routes_configuration.REPLICATION_ENABLED})
+        self.app.state.settings = replace(settings, token_file=None)
+        fixed = routes_configuration.api_token_payload(SimpleNamespace(app=self.app))
+        self.app.state.settings = settings
+        self.assertEqual(fixed["reason_code"], "api.configuration.tokenFromLaunch")
+        self.assertIn("PEACH_TOKEN", interface_text.text(f"server:{fixed['reason_code']}", None, "en"))
 
 
 def _ca_pem(with_key: bool = False) -> bytes:
@@ -567,10 +573,14 @@ class DockerFirstAccessTests(ConfigurationPageCase):
     async def test_docker_without_a_policy_opens_access_setup_for_local_and_private_peers(self):
         for peer in ("127.0.0.1", "198.51.100.1", "192.0.2.20", "fd00::5"):
             with self.subTest(peer=peer):
-                page = await self.device(peer=(peer, 1)).get("/login", params={"next": "/stats"})
+                page = await self.device(peer=(peer, 1)).get("/login", params={"next": "/stats"},
+                                                              headers={"Accept-Language": "zh-CN"})
                 self.assertEqual(page.status_code, 200)
                 self.assertEqual(self.mode(page), "setup")
                 self.assertIn("<title>Peach · 访问设置</title>", page.text)
+        english = await self.device().get("/login", headers={"Accept-Language": "en-US,en;q=0.9"})
+        self.assertIn('<html lang="en">', english.text)
+        self.assertIn("<title>Peach · Access settings</title>", english.text)
 
     async def test_public_peers_and_forwarded_requests_get_the_explanation_and_cannot_submit(self):
         body = {"mode": "password", "password": "correct-password", "confirmation": "correct-password"}
@@ -584,7 +594,7 @@ class DockerFirstAccessTests(ConfigurationPageCase):
                 self.assertEqual(self.mode(page), "denied")
                 refused = await self.submit(client, **body)
                 self.assertEqual(refused.status_code, 403)
-                self.assertEqual(refused.json()["detail"]["message"], routes_auth.FIRST_ACCESS_DENIED)
+                self.assertEqual(refused.json()["detail"]["message_code"], routes_auth.FIRST_ACCESS_DENIED_CODE)
                 self.assertEqual(refused.json()["detail"]["message_code"], routes_auth.FIRST_ACCESS_DENIED_CODE)
         foreign = await self.device().post("/api/configuration/access/first", json=body,
                                            headers={"Origin": "https://evil.example"})
@@ -593,8 +603,9 @@ class DockerFirstAccessTests(ConfigurationPageCase):
 
     async def test_setting_a_password_writes_the_policy_and_lets_this_browser_in(self):
         desk = self.device(peer=("192.0.2.20", 1))
-        self.assertEqual((await self.submit(desk, mode="password", password="short", confirmation="short")).json()["detail"]["errors"],
-                         {"password": "访问密码需为 8–256 个字符"})
+        short = (await self.submit(desk, mode="password", password="short", confirmation="short")).json()["detail"]
+        self.assertEqual(short["errors"], {"password": "访问密码需为 8–256 个字符"})
+        self.assertEqual(short["error_codes"], {"password": {"code": "errors.access.passwordLength", "params": {}}})
         mismatch = await self.submit(desk, mode="password", password="correct-password", confirmation="other-password")
         self.assertEqual(set(mismatch.json()["detail"]["errors"]), {"confirmation"})
         self.assertEqual((await self.submit(desk, password="correct-password")).status_code, 400)
@@ -629,9 +640,11 @@ class DockerFirstAccessTests(ConfigurationPageCase):
         await self.sign_in(remote, self.old)
         self.assertEqual((await remote.get("/private")).status_code, 200)
         with patch.dict("os.environ", {"PEACH_DISTRIBUTION": "source"}):
-            page = await self.device().get("/login")
+            page = await self.device().get("/login", headers={"Accept-Language": "zh-CN,zh;q=0.9"})
             self.assertEqual(self.mode(page), "legacy")
             self.assertIn("<title>登录 Peach</title>", page.text)
+            self.assertIn("<title>Sign in to Peach</title>",
+                          (await self.device().get("/login", headers={"Accept-Language": "en"})).text)
             wrong = await self.device().post("/login", data={"token": "wrong", "next": "/"})
             self.assertEqual((wrong.status_code, self.mode(wrong)), (401, "legacy"))
             body = {"mode": "open"}

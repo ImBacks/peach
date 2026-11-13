@@ -35,6 +35,7 @@ import {
 } from './follow-manage';
 import { SourceIcon } from './source-view';
 import { composingKey } from '../components/ime';
+import { jobText, serverLabel } from '../../core/server-text';
 import { joinList, t } from '../../i18n';
 
 const MENU_ROW = cx(MENU_ITEM, MENU_ITEM_INTERACTIVE, 'text-body-2-medium');
@@ -156,7 +157,7 @@ function PickRow(
   },
 ) {
   if (row.kind === 'error') {
-    return <Note tone="error" title={row.line}>{row.error || t('follow:addCreatorSource.searchFailed')}</Note>;
+    return <Note tone="error" title={row.line}>{jobText(row, 'error') || t('follow:addCreatorSource.searchFailed')}</Note>;
   }
   const candidates = (row.candidates || []).filter(
     (candidate) => !hidden.has(candidate.provider_label || ''));
@@ -228,7 +229,7 @@ export function AddSource({ data, credentials, readOnly, toast }: AddSourceProps
 
   const options = useMemo<SuggestOption[]>(() => (suggest.data?.groups || []).flatMap((group) => (
     group.items.map((item) => ({
-      value: item.value, matched: item.matched || '', n: item.n || 0, group: group.label,
+      value: item.value, matched: item.matched || '', n: item.n || 0, group: serverLabel(group.label_code ?? '', group.label),
     }))
   )), [suggest.data]);
 
@@ -239,7 +240,7 @@ export function AddSource({ data, credentials, readOnly, toast }: AddSourceProps
     onStarted: () => setUnpicked(new Set()),
     onError: (cause) => setProblem(errorMessage(cause)),
     onFinish: (state) => {
-      if (state.status === 'failed') setProblem(state.error || t('follow:addCreatorSource.searchFailed'));
+      if (state.status === 'failed') setProblem(jobText(state, 'error') || t('follow:addCreatorSource.searchFailed'));
     },
   });
 
@@ -353,7 +354,7 @@ export function AddSource({ data, credentials, readOnly, toast }: AddSourceProps
 
       <div aria-live="polite" className="flex flex-col gap-3 empty:hidden">
         {running || resolve.isPending ? <TaskProgress embedded
-          label={job?.message || (job?.total ? t('follow:addCreatorSource.searchProgress', { checked: job.checked || 0, count: job.total }) : byName ? BY_NAME_HINT : BY_LINK_HINT)}
+          label={jobText(job) || (job?.total ? t('follow:addCreatorSource.searchProgress', { checked: job.checked || 0, count: job.total }) : byName ? BY_NAME_HINT : BY_LINK_HINT)}
           value={job?.checked} total={job?.total} /> : null}
         {problem ? <Note tone="error" title={t('follow:addJavFeed.notCompleted')}>{problem}</Note> : null}
       </div>

@@ -15,7 +15,8 @@ import { LoadingDots } from '../components/loading-dots';
 import { Progress } from '../components/progress';
 import { ErrorText, Footer, Help, Rows, Section, Stack, TaskCenterLink } from './section';
 import { busyProps, useAction } from './use-action';
-import { t } from '../../i18n';
+import { serverLabel } from '../../core/server-text';
+import { interfaceLanguage, t } from '../../i18n';
 
 export const LEDGER_BACKUPS_URL = '/api/configuration/ledger-backups';
 const POLL_MS = 1500;
@@ -27,6 +28,8 @@ export interface LedgerBackup {
   modified_at: number;
   source: 'manual' | 'auto';
   purpose: string;
+  /** 用途的 id，按它取译文；没有译文时显示 `purpose`。 */
+  purpose_code?: string;
 }
 
 export interface LedgerBackupJob {
@@ -48,10 +51,10 @@ export interface LedgerBackupState {
   last_restore: { state: 'interrupted' | 'failed'; outcome: string; message: string; finished_at: number } | null;
 }
 
-const when = (backup: LedgerBackup) => new Date(backup.modified_at * 1000).toLocaleString();
+const when = (backup: LedgerBackup) => new Date(backup.modified_at * 1000).toLocaleString(interfaceLanguage);
 
 function describe(backup: LedgerBackup) {
-  return [backup.source === 'manual' ? t('settings:databaseBackups.manual') : t('settings:databaseBackups.automatic', { purpose: backup.purpose }), fmtSize(backup.bytes)].join(' · ');
+  return [backup.source === 'manual' ? t('settings:databaseBackups.manual') : t('settings:databaseBackups.automatic', { purpose: serverLabel(`ledgerBackup.purpose.${backup.purpose_code}`, backup.purpose) }), fmtSize(backup.bytes)].join(' · ');
 }
 
 /** 进行中的那一个任务：知道页数就画进度条，否则只说在做哪一步。 */

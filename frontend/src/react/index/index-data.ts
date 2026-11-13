@@ -62,6 +62,8 @@ export const isCompany = (kind: IndexKind) => kind === 'studios' || kind === 'ag
 export interface IndexPerson {
   entity_kind?: string;
   identity_labels?: string[];
+  /** 与 `identity_labels` 一一对应的分类 id，按它取译文。 */
+  identity_categories?: string[];
   following?: boolean;
   entity_id?: number;
   id?: number;

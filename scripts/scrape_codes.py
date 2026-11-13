@@ -47,6 +47,8 @@ from peach.metadata import (
     extract_catalog_evidence,
     extract_peach_fields,
     identifies_code,
+    relay_args,
+    relayed,
 )
 from peach.metadata_policy import (PEACH_FIELDS, POLICY_VERSION, SOURCE_SPECS, field_rank,
                                    preferred_tag_source, sort_candidates)
@@ -160,13 +162,13 @@ def translate_failure(source: str, error: Exception) -> MetadataProviderError:
     if reason:
         return auth_error(source, reason, status_code=code)
     if is_missing(error):
-        return MetadataProviderError(text, kind="not_found", status_code=404)
+        return MetadataProviderError(*relay_args(error), kind="not_found", status_code=404)
     if isinstance(error, SourcePaused):
-        return MetadataProviderError(text, kind="rate_limited", status_code=code or 429,
+        return MetadataProviderError(*relay_args(error), kind="rate_limited", status_code=code or 429,
                                      retryable=True, temporary=True)
     if isinstance(error, DeadlineExceeded):
-        return MetadataProviderError(text, kind="timeout", retryable=True, temporary=True)
-    return MetadataProviderError(text, kind="unavailable", status_code=code,
+        return MetadataProviderError(*relay_args(error), kind="timeout", retryable=True, temporary=True)
+    return MetadataProviderError(*relay_args(error), kind="unavailable", status_code=code,
                                  retryable=True, temporary=True)
 
 
@@ -286,7 +288,7 @@ def _stage_results(adapter, *, query: str, stage: str, members: tuple[str, ...],
             health[source]["fetched"] += 1
             payload, error = found.get(source), errors.get(source)
             if payload is None and error is None:
-                error = MetadataProviderError("no result", kind="empty")
+                error = MetadataProviderError(*relayed("no result"), kind="empty")
             _write_snapshot(raw_dir / query / f"{source}.json", code=query, source=source,
                             result=payload, error=error)
             results[source] = (payload, error, False)
@@ -317,7 +319,7 @@ def _identity_mismatch(query: str, payload: dict) -> MetadataProviderError | Non
         ):
             return None
         return MetadataProviderError(
-            f"MGStage 商品编号 {product_code} 与查询 {query} 或返回番号 {returned} 不一致",
+            *relayed(f"MGStage 商品编号 {product_code} 与查询 {query} 或返回番号 {returned} 不一致"),
             kind="identity_mismatch",
         )
     # DMM content_id 的厂牌段属于该来源的编码；只用于没有展示 id 的裸番号查询。
@@ -329,7 +331,7 @@ def _identity_mismatch(query: str, payload: dict) -> MetadataProviderError | Non
     if not returned or same_release_code(query, returned):
         return None
     return MetadataProviderError(
-        f"来源返回的番号 {returned} 不是查询的 {query}",
+        *relayed(f"来源返回的番号 {returned} 不是查询的 {query}"),
         kind="identity_mismatch",
     )
 
@@ -424,7 +426,7 @@ def _read_settled_error(path: Path) -> MetadataProviderError | None:
         if str(error.get("kind") or "") not in SETTLED_ERROR_KINDS:
             return None
         return MetadataProviderError(
-            str(error.get("message") or "metadata source error"),
+            *relayed(str(error.get("message") or "metadata source error")),
             kind=str(error.get("kind") or "unknown"),
             status_code=int(error.get("status_code") or 0),
             retryable=False,
@@ -861,7 +863,7 @@ def _collect_code_fields(*, code, query, variants, chain, profile, sources, adap
             args=args, health=health)
         for source, (payload, error, attempt) in results.items():
             if payload is None:
-                error = error or MetadataProviderError("no result", kind="empty")
+                error = error or MetadataProviderError(*relayed("no result"), kind="empty")
                 error_writer.writerow({
                     "code": code, "query": query, "source": source, "kind": error.kind,
                     "status_code": error.status_code, "retryable": int(error.retryable),

@@ -20,6 +20,45 @@ from .entities import (
     normalize_entity_name,
 )
 from .metadata_alias_resolve import is_descriptive, is_planning_alias
+from . import interface_text
+from .user_messages import UserFacingError
+
+#: 原样转述上游原文（上游网站与 amane 桥的报错、`HTTP 503` 这类状态说明）时用的 code，模板只有 `{{detail}}`。
+#: 这类文字本来就没有译文；Peach 自己的说法一律有自己的 code。
+RELAYED = "errors.metadata.relayed"
+
+
+def relayed(text: object) -> tuple[str, dict]:
+    """原样转述一句上游原文：展开给 `RelayableError` 一族的构造，`NotFound(*relayed("HTTP 404"))`。"""
+    return RELAYED, {"detail": str(text)}
+
+
+class RelayableError(UserFacingError):
+    """来源与采集链上的失败：给人看的那句是 `server` 命名空间里的 code 与参数。
+
+    转述上游原文要显式写成 `relayed(原文)`；构造时传别的字符串直接抛 `TypeError`，免得一句中文
+    被当成原文透传、英文界面跟着露出中文。`pickle`、`copy` 走 `UserFacingError.__reduce__` 按状态复制，
+    不经过这里。
+    """
+
+    def __init__(self, code: str, params: dict | None = None, *, status_code: int | None = None) -> None:
+        if not (isinstance(code, str) and interface_text.has(f"server:{code}")):
+            raise TypeError(f"{type(self).__name__} takes a server message code, not {code!r}; "
+                            "relay upstream text with relayed(text)")
+        super().__init__(code, params, status_code=status_code)
+
+    @property
+    def response_status(self) -> int:
+        """漏到接口层时的状态：子类的 `status_code` 记的是上游网站的状态，不能当响应状态；
+        按原来的内置基类算，`ValueError` 一族回 400，其余回 500。"""
+        return 400 if isinstance(self, ValueError) else 500
+
+
+def relay_args(error: BaseException) -> tuple[str, dict]:
+    """另一个异常的说法交给 `RelayableError` 的构造参数：带 code 的照搬 code 与参数，别的按原文转述。"""
+    if isinstance(error, UserFacingError):
+        return error.code, dict(error.params)
+    return relayed(str(error))
 
 
 #: 日期式那一支两种分隔符都放行：`_` 是一本道等片商的标识，不是可替换的写法
@@ -33,8 +72,8 @@ CATALOG_EVIDENCE_FIELDS = (
 MAX_EVIDENCE_URLS = 24
 
 
-class MetadataProviderError(RuntimeError):
-    """来源没给出结果的原因。`kind` 是分类，不是措辞。
+class MetadataProviderError(RelayableError, RuntimeError):
+    """来源没给出结果的原因。`kind` 是分类，不是措辞；措辞是 code 与参数（转述上游原文用 `relayed`）。
 
     `auth` 单列一档：登录墙、Cookie 过期和 401/403 与「这次没问出结果」不是一回事，
     和「这部片不存在」更不是。混在 `unavailable` 里的代价有两样：一是每个番号都要为
@@ -47,11 +86,12 @@ class MetadataProviderError(RuntimeError):
     """
 
     def __init__(
-        self, message: str, *, kind: str = "unknown", status_code: int = 0,
+        self, code: str, params: dict | None = None, *, kind: str = "unknown", status_code: int = 0,
         retryable: bool = False, temporary: bool = False, detail: str = "",
     ) -> None:
-        super().__init__(message)
+        super().__init__(code, params)
         self.kind = kind
+        #: 上游答复的 HTTP 状态，不是接口响应的状态码。
         self.status_code = status_code
         self.retryable = retryable
         self.temporary = temporary
@@ -129,7 +169,7 @@ def auth_error(source: str, reason: str, *, status_code: int = 0,
                detail: str = "") -> MetadataProviderError:
     """把一次鉴权失败包成 `kind="auth"` 的错误。措辞只有这一处。"""
     return MetadataProviderError(
-        f"{source} 需要登录或已被拒绝：{reason}", kind="auth",
+        "errors.metadata.authRequired", {"source": source, "reason": reason}, kind="auth",
         status_code=status_code, retryable=False, temporary=True, detail=detail,
     )
 
@@ -143,7 +183,7 @@ def validate_provider_code(code: str) -> str:
         return tokyo
     value = raw.upper()
     if not _SAFE_CODE.fullmatch(value):
-        raise ValueError("metadata provider 只接受规范化番号，不接受路径、URL 或任意文本")
+        raise ValueError("metadata provider only accepts normalized codes, not paths, URLs, or arbitrary text")
     return value
 
 

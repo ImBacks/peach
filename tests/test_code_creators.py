@@ -7,6 +7,9 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+from peach.jav_cover_fetch import NotFound
+from peach.metadata import relayed
+
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
@@ -307,12 +310,12 @@ class ConfirmScriptTests(unittest.TestCase):
 
         def query(self, code, **_):
             self.asked.append(code)
-            raise LookupError("r18.dev 没有这个番号")
+            raise NotFound(*relayed("HTTP 404"))
 
         def community(self, code, **_):
             runtime = self.runtimes.get(code)
             if runtime is None:
-                raise LookupError("社区来源都没有这个番号")
+                raise NotFound("errors.libraryProcessing.communitySaidNo")
             # 真实返回顺序里 javbus 排在 javdb 前面，`n0780` 它报的是 36 分。
             return [("javbus", {"runtime": 36}), ("javdb", {"runtime": runtime})]
 

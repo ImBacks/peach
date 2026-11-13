@@ -28,6 +28,7 @@ from .minnano_av import PROFILE_COLUMNS
 from .performer_profiles import read_profile, write_profile
 from .config import PROJECT_ROOT
 from .social_links import canonical_url
+from .user_messages import UserValueError
 
 FORMAT = 1
 SOURCE = "auto:seed"
@@ -181,11 +182,11 @@ def export_pack(connection: sqlite3.Connection, *, version: str, revision: int |
         if previous is not None:
             seed_validation.validate(previous)
             if revision <= previous.get("revision", 0) or version <= previous["version"]:
-                raise ValueError("导出需要更新的 version 与 revision")
+                raise ValueError("export needs a newer version and revision")
         by_id = {item["id"]: item for item in inherited}
         for item in withdrawals or []:
             if item["id"] in by_id and item != by_id[item["id"]]:
-                raise ValueError("累计撤销 id 不得改写")
+                raise ValueError(f"cumulative withdrawal id cannot be rewritten: {item['id']}")
             by_id[item["id"]] = item
         for item in entities:
             item["identity"] = {"kind": item["kind"], "name": item["name"], "refs": item["refs"]}
@@ -193,7 +194,7 @@ def export_pack(connection: sqlite3.Connection, *, version: str, revision: int |
         pack["content_sha256"] = seed_validation.digest(pack)
         seed_validation.validate(pack)
     elif withdrawals or previous:
-        raise ValueError("累计撤销需要格式 2 的 revision")
+        raise ValueError("cumulative withdrawals need a format 2 revision")
     return pack
 
 
@@ -212,7 +213,7 @@ def parse(text: str) -> dict:
         result = {}
         for key, value in pairs:
             if key in result:
-                raise ValueError(f"种子 JSON 字段重复：{key}")
+                raise UserValueError("errors.seedPack.duplicateField", {"key": key})
             result[key] = value
         return result
 
@@ -481,7 +482,7 @@ def revert_names(connection, names: list[dict]) -> int:
             continue
         taken = connection.execute("SELECT 1 FROM entity WHERE kind='performer' AND normalized_name=? AND id<>?", (normalize_entity_name(previous), entity_id)).fetchone()
         if taken:
-            raise ValueError("原规范名已被其他实体占用，未撤回中文名")
+            raise UserValueError("errors.seedPack.previousNameTaken")
         if item.get("previous_preference") is None:
             metadata.pop("name_preference", None)
         else:

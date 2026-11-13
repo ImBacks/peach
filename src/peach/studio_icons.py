@@ -80,6 +80,8 @@ from . import face_detect, images, link_marks, site_icons, site_logos
 from .http import HttpRequest, HttpxTransport
 from .scripting import RateLimiter
 from .social_links import is_archive
+from .task_outcomes import part, said
+from .user_messages import UserValueError
 
 
 FIELDS = ("entity_id", "studio", "safe", "variant", "installed", "original_size",
@@ -99,6 +101,10 @@ SHARED = "平台通用图标"
 PORTRAIT = "人像不是标识"
 #: 会被 `--install` 落盘的判词。`平台通用图标` 与 `仍是字标` 不在内。
 INSTALLABLE = (OK, PADDED)
+#: 补厂牌后继没装上时，第一张候选的判词在结论里的 code（`task_outcomes`）。判 `ok` 却没写入的是
+#: 装着的那张与它相同。
+VERDICT_OUTCOMES = {OK: "hasMark", WORDMARK: "stillWordmark", TOOSMALL: "onlySmallIcon", MISSING: "unfetched",
+                    SKIP: "noSiteLink", PADDED: "paddedWordmark", SHARED: "sharedIcon", PORTRAIT: "portraitNotMark"}
 
 ICON, LOGO = "icon", "logo"
 
@@ -1295,10 +1301,10 @@ def install(rows: list[dict[str, object]], logo_root: Path, *,
             continue
         candidate = Path(str(row["candidate"])).read_bytes()
         if hashlib.sha256(candidate).hexdigest() != row["sha256"]:
-            raise ValueError(f'候选文件与复核记录哈希不一致，拒绝安装：{row["safe"]}')
+            raise UserValueError('errors.studioIcons.hashMismatch', {'name': row["safe"]})
         payload = images.bake_square(candidate)
         if payload is None:
-            raise ValueError(f'无法生成可用的方形图片，未安装：{row["safe"]}')
+            raise UserValueError('errors.studioIcons.notSquare', {'name': row["safe"]})
         installed_sha256 = hashlib.sha256(payload).hexdigest()
         variant = str(row.get("variant") or ICON)
         targets = [logo_root / f'{row["safe"]}.{variant}.img']
@@ -1352,7 +1358,7 @@ def land_one(name: str, entries: list[dict[str, str]], logo_root: Path,
     targets = {key: value for key, value in harvest_targets({}, links, logo_root).items()
                if key == safe}
     if not targets:
-        return {"outcome": SKIP if not entries else "已有标识", "rows": []}
+        return {**said("noSiteLink" if not entries else "hasMark"), "rows": []}
     rows = harvest(targets, links, fetch, candidate_dir, faces)
     # 大位那张来自站点页头的 `<img>`，命令行那一趟不过人像闸：页头横幅放一张艺人照，
     # 复核的人一眼就看得出来。这里没人看，所以每一张要落盘的都再过一次。
@@ -1362,8 +1368,8 @@ def land_one(name: str, entries: list[dict[str, str]], logo_root: Path,
             item.update(verdict=PORTRAIT, evidence=f"{item['evidence']}；检出人脸")
     verdicts = [str(item["verdict"]) for item in rows]
     if faces.unavailable:
-        return {"outcome": f"人像闸未生效，不自动装（{faces.unavailable}）",
+        return {**said(part("faceGateOff", reason=str(faces.unavailable))),
                 "face_match_unavailable": True, "verdicts": verdicts, "rows": rows}
     written = install(rows, logo_root, source=source, batch=batch)
-    return {"outcome": "已装上" if written else next(iter(verdicts), MISSING),
+    return {**said("installed" if written else VERDICT_OUTCOMES[next(iter(verdicts), MISSING)]),
             "verdicts": verdicts, "installed": written, "rows": rows}

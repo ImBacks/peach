@@ -16,7 +16,10 @@ class ReportingProjectionTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(error.diagnostics))
         with mock.patch.object(remote_reporting, 'send') as send:
             remote_reporting.capture('library-preview', error)
-            send.assert_not_called()
+            self.assertEqual(send.call_args.kwargs, {'count_only': True})
+            self.assertEqual(send.call_args.args[1]['tags']['condition'], 'invalid_media')
+            self.assertNotIn('private', json.dumps(send.call_args.args[1]))
+            send.reset_mock()
             failed = subprocess.CalledProcessError(1, 'ffprobe', stderr=b'Unknown decoder private-decoder')
             remote_reporting.capture('media-probe', failed)
             self.assertEqual(send.call_args.args[1]['tags']['media_failure'], 'decoder_unavailable')

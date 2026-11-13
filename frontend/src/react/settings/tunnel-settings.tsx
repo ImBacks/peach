@@ -18,6 +18,7 @@ import { SEGMENT, SEGMENTED_TRACK, SegmentedRadioGroup as RadioGroup } from '../
 import { CONFIGURATION_KEY, fetchConfiguration } from './configuration';
 import { ExternalLink, ErrorText, Footer, Help, Section, Stack } from './section';
 import { busyProps, useAction } from './use-action';
+import { bodyFieldErrors } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /** 连接握手在服务端进行，页面按固定间隔重问，直到拿到入口或失败原因。 */
@@ -82,9 +83,8 @@ export function TunnelSettings({ revision: initialRevision, initial, receipt }: 
       setToken('');
       done(next);
     }, (cause) => {
-      const payload = cause instanceof ApiError
-        ? cause.body as { errors?: FieldErrors; detail?: { errors?: FieldErrors } } : null;
-      const errors = payload?.errors || payload?.detail?.errors;
+      const payload = cause instanceof ApiError ? cause.body as { detail?: unknown } : null;
+      const errors = bodyFieldErrors<FieldErrors>(payload) || bodyFieldErrors<FieldErrors>(payload?.detail);
       if (errors) setFields(errors); else action.setError(errorMessage(cause));
     });
   };

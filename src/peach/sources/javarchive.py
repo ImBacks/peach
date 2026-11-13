@@ -108,7 +108,7 @@ class JavArchiveSource(SiteSource):
         return links(session.get(url, config=self.config).body, code)
 
     def _missing(self) -> SourceFailure:
-        return SourceFailure(FailureReason.NOT_FOUND, f"{self.config.label} 上没有这个商品")
+        return SourceFailure(FailureReason.NOT_FOUND, "errors.base.itemNotListed", {"label": self.config.label})
 
     def fetch(self, code: str, *, session: Session) -> Page:
         """搜索结果里排第一的那条作品页。要每一条的用 `records()`。"""

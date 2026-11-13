@@ -431,7 +431,7 @@ class LedgerRestoreTests(unittest.TestCase):
         self.assertRegex(backup.name, r"^ledger\.pre-manual-\d{8}-\d{6}\.db$")
         self.assertTrue(ledger_backups.BACKUP_PATTERN.match(backup.name), "和自动备份同一套清退规则")
         self.assertEqual(notes(backup), ["before"])
-        self.assertEqual(seen[-1], {"stage": "检查备份完整性"})
+        self.assertEqual(seen[-1], {"stage": "检查备份完整性", "stage_code": "backup.checkIntegrity"})
         copied = [values for values in seen if values.get("stage") == "复制账本"]
         self.assertTrue(copied and copied[-1]["done"] == copied[-1]["total"] > 0)
         self.assertEqual([path.name for path in self.database.iterdir() if path.name.endswith(".part")], [])
@@ -679,7 +679,7 @@ class LedgerBackupManagerTests(unittest.TestCase):
             missing = client.post("/api/configuration/ledger-backups/restore",
                                   json={"id": "database/ledger.pre-manual-1.db", "confirm": True})
             self.assertEqual(missing.status_code, 409)
-            self.assertIn("已经不在", missing.json()["detail"])
+            self.assertIn("已经不在", missing.json()["detail"]["message"])
             self.assertEqual(client.post("/api/configuration/ledger-backups/backup",
                                          headers={"origin": "https://other.invalid"}).status_code, 403)
 

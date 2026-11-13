@@ -22,6 +22,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from .user_messages import UserFacingError, error_fields
+
 #: 模板认识的占位符，以及它在界面上的说明。顺序就是界面上列出来的顺序。
 PLACEHOLDERS: dict[str, str] = {
     "code": "番号",
@@ -57,8 +59,8 @@ _RESERVED = frozenset({"CON", "PRN", "AUX", "NUL",
                        *(f"LPT{n}" for n in range(1, 10))})
 
 
-class TemplateError(ValueError):
-    """模板本身不合法。消息直接给用户看，所以写成一句中文。"""
+class TemplateError(UserFacingError, ValueError):
+    """模板本身不合法。消息直接给用户看，带 code，文字在语言资源里。"""
 
 
 @dataclass(frozen=True)
@@ -147,15 +149,15 @@ def _parse(template: str) -> tuple[_Token, ...]:
         if char == "{":
             end = template.find("}", index)
             if end < 0:
-                raise TemplateError("占位符的 `{` 没有配对的 `}`")
+                raise TemplateError("errors.organizeTemplates.unclosedPlaceholder")
             name = template[index + 1:end].strip()
             # 已保存的模板可以使用番号别名。
             if name == "number":
                 name = "code"
             if name not in PLACEHOLDERS:
-                raise TemplateError(
-                    f"不认识的占位符 `{{{name}}}`；可用的是 "
-                    + "、".join(f"{{{key}}}" for key in PLACEHOLDERS))
+                raise TemplateError("errors.organizeTemplates.unknownPlaceholder", {
+                    "placeholder": f"{{{name}}}",
+                    "available": "、".join(f"{{{key}}}" for key in PLACEHOLDERS)})
             flush()
             target.append(_Token("field", name))
             index = end + 1
@@ -168,7 +170,7 @@ def _parse(template: str) -> tuple[_Token, ...]:
             continue
         if char == "]":
             if not stack:
-                raise TemplateError("可选分组的 `]` 没有配对的 `[`")
+                raise TemplateError("errors.organizeTemplates.unopenedGroup")
             flush()
             group = _Token("group", parts=tuple(target))
             target = stack.pop()
@@ -178,7 +180,7 @@ def _parse(template: str) -> tuple[_Token, ...]:
         buffer.append(char)
         index += 1
     if stack:
-        raise TemplateError("可选分组的 `[` 没有配对的 `]`")
+        raise TemplateError("errors.organizeTemplates.unclosedGroup")
     flush()
     return tuple(tokens)
 
@@ -240,21 +242,21 @@ def validate_template(template: str, *, directory: bool = False) -> str:
     if not text:
         return ""
     if len(text) > 300:
-        raise TemplateError("模板太长")
+        raise TemplateError("errors.organizeTemplates.tooLong")
     _parse(text)  # 记号配对与占位符名字先过一遍
     if ntpath.splitdrive(text)[0]:
-        raise TemplateError("模板不能带盘符；它只描述来源根下面的相对位置")
+        raise TemplateError("errors.organizeTemplates.driveLetter")
     normalised = text.replace("\\", "/")
     if normalised.startswith("/"):
-        raise TemplateError("模板不能以分隔符开头；它只描述来源根下面的相对位置")
+        raise TemplateError("errors.organizeTemplates.leadingSeparator")
     if not directory and "/" in normalised:
-        raise TemplateError("文件名模板不能带目录分隔符；分层写在目录模板里")
+        raise TemplateError("errors.organizeTemplates.separatorInFilename")
     for component in normalised.split("/"):
         stripped = component.strip()
         if stripped in {".", ".."}:
-            raise TemplateError("模板不能包含 `.` 或 `..`")
+            raise TemplateError("errors.organizeTemplates.dotSegment")
         if directory and not stripped and normalised.strip("/") != "":
-            raise TemplateError("目录模板里有空的一层")
+            raise TemplateError("errors.organizeTemplates.emptyLevel")
     return normalised.strip("/") if directory else normalised
 
 
@@ -284,6 +286,6 @@ def example_path(file_template: str, dir_template: str) -> dict:
         try:
             parts[field], _missing = render(text, EXAMPLE_VALUES, directory=directory)
         except TemplateError as error:
-            return {"ok": False, "error": str(error), "field": field}
+            return {"ok": False, **error_fields(error), "field": field}
     filename = (parts["file"] if file_template.strip() else "ABC-123 标题") + ".mp4"
     return {"ok": True, "example": "/".join(filter(None, (parts["dir"], filename)))}

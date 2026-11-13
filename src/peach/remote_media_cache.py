@@ -13,6 +13,7 @@ from starlette.responses import Response, StreamingResponse
 
 from .fsutil import atomic_path, atomic_write_text
 from .streaming import BufferedFileResponse
+from .user_messages import UserFacingError, UserOSError
 
 AVATAR_REFRESH_SECONDS = 90 * 86400
 FAVICON_REFRESH_SECONDS = 365 * 86400
@@ -34,8 +35,8 @@ def passive_media_type(value: str) -> bool:
                              'application/vnd.apple.mpegurl','application/x-mpegurl')))
 
 
-class RemoteMediaUnavailable(ValueError):
-    pass
+class RemoteMediaUnavailable(UserFacingError, ValueError):
+    """远程媒体这次取不到；带 code，界面按语言显示。"""
 
 
 def cache_for(contract):
@@ -56,7 +57,7 @@ class RemoteMediaCache:
             try:
                 self.capacity_guard.check()
             except DiskSpaceDenied as error:
-                raise RemoteMediaUnavailable(str(error)) from error
+                raise RemoteMediaUnavailable("errors.remoteMediaCache.capacityDenied", {"detail": str(error)}) from error
 
     def folder(self, key: str) -> Path:
         return self.root / hashlib.sha256(key.encode()).hexdigest()
@@ -179,7 +180,7 @@ class RemoteMediaCache:
             expected = int(headers.get("content-length", size))
             if not size or size != expected or (content_range and
                     size != int(content_range[2]) - int(content_range[1]) + 1):
-                raise OSError("媒体响应长度不完整")
+                raise UserOSError("errors.remoteMediaCache.incompleteResponse")
         atomic_write_text(slot.with_suffix(".json"), json.dumps({
             "status": 200 if complete_range else upstream.status_code, "size": size, "headers": {
                 name: value for name, value in headers.items() if name in MEDIA_HEADERS
@@ -201,12 +202,12 @@ class RemoteMediaCache:
             if failed.is_file() and time.time() - failed.stat().st_mtime < 3600:
                 if path.is_file():
                     return path.read_bytes()
-                raise RemoteMediaUnavailable("媒体未取得")
+                raise RemoteMediaUnavailable("errors.remoteMediaCache.unavailable")
             self._check_capacity()
             try:
                 data = fetch()
                 if not data:
-                    raise RemoteMediaUnavailable("媒体未取得")
+                    raise RemoteMediaUnavailable("errors.remoteMediaCache.unavailable")
             except Exception:
                 failed.write_bytes(b"")
                 if path.is_file():

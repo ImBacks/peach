@@ -14,7 +14,7 @@ export interface FolderPage {
   roots: MediaFolder[]; children: MediaFolder[]; ancestors: MediaFolder[];
   selected: MediaFolder | null; matches: MediaFolder[]; rule: FolderRule | null;
   rules_revision: number; rules: FolderRule[];
-  conflicts: { id: number; name: string; reason: string }[];
+  conflicts: { id: number; name: string; reason: string; reason_code?: string }[];
 }
 export interface FolderScope { loc?: string; library?: string }
 export const PURPOSES: Record<FolderPurpose, string> = {

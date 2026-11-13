@@ -23,6 +23,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from .user_messages import UserRuntimeError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ class CertificateFiles:
 def _openssl(*args: str, stdin: bytes | None = None) -> str:
     binary = shutil.which("openssl") or "/usr/bin/openssl"
     if not Path(binary).is_file():
-        raise RuntimeError("未找到 OpenSSL，请安装并加入 PATH 后重试")
+        raise UserRuntimeError("errors.certs.opensslMissing")
     result = subprocess.run(
         [binary, *args], input=stdin, capture_output=True,
         # 显式给 encoding：text=True 会用平台默认编码，中文输出会静默丢成空 stdout。
@@ -71,7 +72,7 @@ def _openssl(*args: str, stdin: bytes | None = None) -> str:
     if result.returncode != 0:
         detail = result.stderr if isinstance(result.stderr, str) else result.stderr.decode(
             "utf-8", "replace")
-        raise RuntimeError(f"openssl {args[0]} 失败：{detail.strip()[:200]}")
+        raise UserRuntimeError("errors.certs.opensslFailed", {"command": args[0], "detail": detail.strip()[:200]})
     return result.stdout if isinstance(result.stdout, str) else result.stdout.decode(
         "utf-8", "replace")
 
@@ -192,7 +193,7 @@ def create_local_ca(files: CertificateFiles, days: int = CA_DAYS) -> Path:
              "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
              "-addext", "keyUsage=critical,keyCertSign,cRLSign",
              "-addext", "subjectKeyIdentifier=hash")
-    LOGGER.info("已生成本机 CA：%s", files.ca_cert)
+    LOGGER.info("Generated local CA: %s", files.ca_cert)
     return files.ca_cert
 
 
@@ -233,7 +234,7 @@ def ensure_certificate(
     reason = reissue_reason(files, names, wanted)
     if reason is None:
         return None
-    LOGGER.info("重签服务器证书：%s", reason)
+    LOGGER.info("Reissued server certificate: %s", reason)
     reissue(files, common_name, names, wanted)
     return reason
 

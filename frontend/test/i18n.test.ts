@@ -7,7 +7,7 @@ import { createTranslator, resolveInterfaceLanguage, resources, storedInterfaceL
 import { countLiterals, scan } from '../scripts/i18n-literals.mjs';
 
 const frontend = resolve(__dirname, '..');
-const locales = join(frontend, 'src/locales');
+const locales = join(frontend, '../resources/locales');
 
 type Tree = { [key: string]: string | Tree };
 const flatten = (tree: Tree, prefix = ''): Record<string, string> => Object.fromEntries(Object.entries(tree).flatMap(
@@ -17,6 +17,7 @@ const namespaces = (language: string) => readdirSync(join(locales, language)).ma
 const placeholders = (text: string) => [...text.matchAll(/\{\{\s*([^},\s]+)[^}]*\}\}/g)].map((match) => match[1]).sort();
 /* 复数键按 i18next v4：中文只有 `_other`，英文另有 `_one`；比键时折成同一个基名。 */
 const base = (key: string) => key.replace(/_(zero|one|two|few|many|other)$/, '');
+const extraPlaceholders = (source: string, text: string) => placeholders(text).filter((name) => !placeholders(source).includes(name));
 
 /** TBX 里每条术语：中文词、英文写法、是不是禁用写法。 */
 function glossary() {
@@ -26,7 +27,7 @@ function glossary() {
     const target = lang('en')?.querySelector('tig');
     return {
       id: entry.getAttribute('id') || '',
-      zh: lang('zh-CN')?.querySelector('term')?.textContent?.trim() || '',
+      zh: lang('zh-Hans')?.querySelector('term')?.textContent?.trim() || '',
       en: target?.querySelector('term')?.textContent?.trim() || '',
       forbidden: target?.querySelector('termNote[type="administrativeStatus"]')?.textContent?.trim() === 'forbidden',
     };
@@ -44,8 +45,9 @@ describe('界面文案的语言资源', () => {
   });
 
   it('入口登记的资源就是目录里的全部文件', () => {
+    /* `cli` 只给 `peach` 命令行用（ADR-0159 第三条），不打进前端包。 */
     for (const language of INTERFACE_LANGUAGES) {
-      expect(Object.keys(resources[language]).sort(), language).toEqual(namespaces(language));
+      expect(Object.keys(resources[language]).sort(), language).toEqual(namespaces(language).filter((ns) => ns !== 'cli'));
     }
   });
 
@@ -59,6 +61,23 @@ describe('界面文案的语言资源', () => {
         else expect(placeholders(text), `${ns}:${key}`).toEqual(placeholders(source));
       }
     }
+  });
+
+  it('Weblate 回流的其他语言不多出源文没有的插值占位', () => {
+    /* 多出的占位会原样显示成 {{名字}}；漏掉的由 Weblate 的强制检查拦。源文已删的键随后由 Weblate 的清理插件删掉，这里跳过。 */
+    expect(extraPlaceholders('共 {{count}} 部', 'Total {{count}} in {{library}}')).toEqual(['library']);
+    const hits: string[] = [];
+    for (const language of readdirSync(locales).filter((name) => ![SOURCE_LANGUAGE, 'en', 'glossary'].includes(name))) {
+      for (const ns of namespaces(language).filter((name) => namespaces(SOURCE_LANGUAGE).includes(name))) {
+        const zh = read(SOURCE_LANGUAGE, ns);
+        for (const [key, text] of Object.entries(read(language, ns))) {
+          const source = zh[key] ?? zh[`${base(key)}_other`] ?? zh[base(key)];
+          const extra = source === undefined ? [] : extraPlaceholders(source, text);
+          if (extra.length) hits.push(`${language}/${ns}:${key} 多出 ${extra.join('、')}`);
+        }
+      }
+    }
+    expect(hits).toEqual([]);
   });
 
   it('译文不用术语表里禁用的写法', () => {
@@ -145,11 +164,29 @@ describe('界面语言', () => {
     visit(join(frontend, 'src'));
     expect(offenders).toEqual([]);
   });
+
+  it('日期和时间按界面语言排版，不跟浏览器语言', () => {
+    // 不传区域就按浏览器语言出格式：界面固定成英文、浏览器是中文时，英文句子里会夹一段中文格式的日期。
+    const unlocalized = /toLocale(Date|Time)String\(\s*(\)|undefined)|new Date\([^)]*\)\.toLocaleString\(\s*(\)|undefined)|toLocaleString\(\s*undefined/;
+    const offenders: string[] = [];
+    const visit = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) { if (entry.name !== 'locales') visit(path); continue; }
+        if (!/\.(ts|tsx|js)$/.test(entry.name)) continue;
+        readFileSync(path, 'utf8').split('\n').forEach((line, index) => {
+          if (unlocalized.test(line)) offenders.push(`${path}:${index + 1}`);
+        });
+      }
+    };
+    visit(join(frontend, 'src'));
+    expect(offenders, '传 i18n 的 interfaceLanguage').toEqual([]);
+  });
 });
 
 describe('前端不写死中文', () => {
   it('src 下没有未豁免的中文文案', () => {
-    expect(scan(), '新文案写进 src/locales/<语言>/*.json，用 t() 取；不是界面文案的中文在同一行或上一行写 // i18n-exempt: 理由').toEqual({});
+    expect(scan(), '新文案写进 resources/locales/<语言>/*.json，用 t() 取；不是界面文案的中文在同一行或上一行写 // i18n-exempt: 理由').toEqual({});
   }, 60_000);
 
   it('外壳页面里的中文文字和属性都标了翻译键，键在资源里', () => {
@@ -181,6 +218,16 @@ describe('前端不写死中文', () => {
       "const d = 'plain';",
     ].join('\n');
     expect(countLiterals('sample.tsx', source)).toBe(3);
+  });
+
+  it('只有中文全角标点的字符串也算写死：英文界面会露出「：」「；」', () => {
+    const source = [
+      "const a = [label, detail].join('：');",
+      "const b = reasons.join('；');",
+      "const c = `${name} · ${size}`;",
+      "const d = 'iPhone/iPad…';",
+    ].join('\n');
+    expect(countLiterals('sample.ts', source)).toBe(2);
   });
 
   it('同一行或上一行写明理由的 i18n-exempt 不计数，没写理由的照算', () => {

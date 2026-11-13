@@ -22,11 +22,12 @@ import re
 import subprocess
 import sys
 import threading
+from .user_messages import UserFacingError
 
 __all__ = ["PickerBusy", "PickerUnavailable", "command", "pick_folder"]
 
 
-class PickerUnavailable(RuntimeError):
+class PickerUnavailable(UserFacingError, RuntimeError):
     """这台机器上没有可用的文件夹对话框，或者对话框没能打开。"""
 
 
@@ -34,7 +35,7 @@ class PickerUnsupported(PickerUnavailable):
     """当前平台不提供系统文件夹对话框。"""
 
 
-class PickerBusy(RuntimeError):
+class PickerBusy(UserFacingError, RuntimeError):
     """已经有一个对话框开着：系统对话框是模态的，第二个只会藏在第一个后面。"""
 
 
@@ -182,7 +183,7 @@ def command(initial: str | None, platform: str = sys.platform) -> tuple[list[str
         if initial and os.path.isdir(initial):
             script += f' default location POSIX file "{_applescript_string(initial)}"'
         return ["osascript", "-e", f"POSIX path of ({script})"], {}
-    raise PickerUnsupported("这个系统上没有可用的文件夹对话框")
+    raise PickerUnsupported("errors.folderPicker.unsupportedSystem")
 
 
 def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
@@ -190,7 +191,7 @@ def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
     """弹对话框，返回选中的绝对路径；用户取消返回 None。"""
     argv, extra = command(initial, platform)
     if not _LOCK.acquire(blocking=False):
-        raise PickerBusy("已经有一个选择文件夹的窗口开着")
+        raise PickerBusy("errors.folderPicker.busy")
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if platform == "win32" else 0
         try:
@@ -200,7 +201,7 @@ def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
             return None
         except OSError as exc:
             # 对话框程序不存在或起不来，与不支持的平台同样处理：这台机器不提供对话框。
-            raise PickerUnsupported("这台电脑上打不开系统文件夹对话框") from exc
+            raise PickerUnsupported("errors.folderPicker.cannotOpen") from exc
     finally:
         _LOCK.release()
     stderr = (result.stderr or b"").decode("utf-8", "replace")
@@ -211,8 +212,8 @@ def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
         if "-128" in codes:
             return None  # 用户取消，不是失败。
         if codes & _MACOS_NO_DIALOG:
-            raise PickerUnsupported("这台电脑上的 Peach 没有弹出对话框的权限")
-        raise PickerUnavailable("没能打开文件夹对话框")
+            raise PickerUnsupported("errors.folderPicker.noPermission")
+        raise PickerUnavailable("errors.folderPicker.failed")
     text = (result.stdout or b"").decode("utf-8", "replace").strip()
     if platform == "darwin" and len(text) > 1:
         text = text.rstrip("/")

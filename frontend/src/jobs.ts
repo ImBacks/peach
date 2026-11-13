@@ -1,6 +1,7 @@
 import { esc } from '@peach/legacy/core';
 import { noteHtml, loadingDotsHtml } from '@peach/legacy/ui';
 import { t } from './i18n';
+import { jobText } from './core/server-text';
 
 /** 任务那枚环形进度。口味页与统计页归 React 之后只剩这一个读者，所以留在它身边。 */
 function jobProgressHtml(label: string, value: number, max: number): string {
@@ -19,6 +20,11 @@ export interface JobState {
   older?: boolean;
   error?: string;
   message?: string;
+  /** `message` 与 `error` 的 code 和参数（ADR-0159）；有译文时显示译文。 */
+  message_code?: string;
+  message_params?: Record<string, unknown>;
+  error_code?: string;
+  error_params?: Record<string, unknown>;
   current?: { label?: string; provider?: string; attempt?: number;
     max_attempts?: number; retry_in?: number };
 }
@@ -103,7 +109,7 @@ export function followJobProgress(options: {
             : t('manage:jobProgress.attempt', { attempt: current?.attempt, max: current?.max_attempts })}` : '';
         const titled = options.title && (state.total
           ? t('manage:jobProgress.titledProgress', { title: options.title, checked: state.checked || 0, total: state.total }) : options.title);
-        const text = (state.message || titled || (state.total
+        const text = (jobText(state) || titled || (state.total
           ? t(state.older ? 'manage:jobProgress.historySources' : 'manage:jobProgress.updateSources', { checked: state.checked || 0, count: state.total })
           : t('manage:jobProgress.preparing')))
           + (current ? ` · ${current.label || current.provider || ''}${attempt}` : '');
@@ -115,7 +121,7 @@ export function followJobProgress(options: {
         settled = true;
         options.host.hidden = state.status !== 'failed';
         sessionStorage.removeItem(storageKey);
-        panel.innerHTML = state.status === 'failed' ? note(state.error || t('manage:jobProgress.checkFailed')) : '';
+        panel.innerHTML = state.status === 'failed' ? note(jobText(state, 'error') || t('manage:jobProgress.checkFailed')) : '';
         options.complete(state);
       } else {
         if (tracked && state.status === 'idle') {

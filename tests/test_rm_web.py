@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from peach import catalog_rules, jav_poster_crop, web_batch, web_catalog, web_entity, web_playlists, web_search, web_stats
+from peach import catalog_rules, interface_text, jav_poster_crop, web_batch, web_catalog, web_entity, web_playlists, web_search, web_stats
 from peach import web_contract as rm_web
 from peach.previews import entity_image_key, logo_key
 from peach.web_catalog import q_editions, q_items, q_parts
@@ -660,7 +660,7 @@ class WebDataTests(unittest.TestCase):
             {"k": "速食", "n": 2}, {"k": "短", "n": 0}, {"k": "中", "n": 0}, {"k": "长", "n": 0}])
         self.assertEqual(stats["by_quality"], [
             {"k": "4K", "n": 0}, {"k": "2K", "n": 1}, {"k": "1080P", "n": 1},
-            {"k": "720P", "n": 0}, {"k": "低画质", "n": 0}])
+            {"k": "720P", "n": 0}, {"k": "低画质", "n": 0, "label_code": "taste.qualityBand.low"}])
 
     def test_stats_play_activity_and_replays_count_each_work_once(self):
         """在线追更那条关联的馆藏视频自己播过，就只按馆藏那一次算；没关联的照常算。"""
@@ -749,6 +749,11 @@ class WebDataTests(unittest.TestCase):
             [("system", "系统盘"), ("local", "资源盘 1"), ("local", "资源盘 2"),
              ("115", "115 网盘"), ("pikpak", "PikPak 网盘")],
         )
+        # 显示名带 code，英文界面按 code 取译文。
+        self.assertEqual(
+            [interface_text.text(f"server:{row['label_code']}", row["label_params"], "en")
+             for row in stats["storage_volumes"]],
+            ["System drive", "Media drive 1", "Media drive 2", "115 cloud drive", "PikPak cloud drive"])
         # 这几个根都不存在，认不出所在的卷，按根各算一卷。
         self.assertEqual(stats["storage_summary"], {
             "volumes": 5, "online": 5, "measured": 5,
@@ -769,7 +774,8 @@ class WebDataTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(web_stats, "_volume_key", side_effect=volume_key))
             stats = rm_web.q_stats(self.contract)
         for row in stats["storage_volumes"]:
-            self.assertEqual(set(row), {"kind", "label", "root", "online", "free", "used", "total"})
+            self.assertEqual(set(row), {"kind", "label", "label_code", "label_params",
+                                        "root", "online", "free", "used", "total"})
         return stats
 
     def test_storage_summary_counts_roots_on_one_disk_once(self):
@@ -1284,12 +1290,12 @@ class WebDataTests(unittest.TestCase):
         self.assertNotIn("error", first)
         with contract.write_transaction() as connection:
             connection.execute("UPDATE asset SET play_count=3 WHERE id=1")
-        failing = mock.Mock(side_effect=RuntimeError("账本读取失败"))
+        failing = mock.Mock(side_effect=RuntimeError("database is locked"))
         with mock.patch.object(web_stats, "q_taste", failing):
             failed = get()
             self.assertEqual((failed["stale"], failed["error"], failed["computed_at"]),
-                             (True, "账本读取失败", first["computed_at"]))
-            self.assertEqual(get()["error"], "账本读取失败")
+                             (True, "database is locked", first["computed_at"]))
+            self.assertEqual(get()["error"], "database is locked")
             self.assertEqual(failing.call_count, 1, "退避期内同一份输入不再重算")
             later = web_stats.time.monotonic() + web_stats.TASTE_RETRY_AFTER + 1
             with mock.patch.object(web_stats.time, "monotonic", return_value=later):
@@ -1302,10 +1308,10 @@ class WebDataTests(unittest.TestCase):
 
         web_stats._TASTE_SNAPSHOTS.clear()
         web_stats._taste_snapshot_path(contract, "all").unlink()
-        failing = mock.Mock(side_effect=RuntimeError("账本读取失败"))
+        failing = mock.Mock(side_effect=RuntimeError("database is locked"))
         with mock.patch.object(web_stats, "q_taste", failing):
             for _ in range(2):
-                with self.assertRaisesRegex(RuntimeError, "账本读取失败"):
+                with self.assertRaisesRegex(RuntimeError, "database is locked"):
                     get()
         self.assertEqual(failing.call_count, 1)
 

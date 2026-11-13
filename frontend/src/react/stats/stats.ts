@@ -11,6 +11,7 @@ import type { BarRow } from '../charts/bar-card';
 import type { ActivityCounts } from '../charts/heat';
 import { queryClient } from '../query';
 import { t } from '../../i18n';
+import { serverLabel } from '../../core/server-text';
 
 export const STATS_URL = '/api/stats';
 /** 整页共用这一个键。 */
@@ -43,8 +44,8 @@ export interface Consumption {
 /** 按文件类型分的条目数。`k` 是 `video`／`image`／`archive` 这些媒介代号。 */
 export interface MediumCount { k: string; n: number; bytes: number }
 
-/** 视频的一个时长或画质分档。 */
-export interface BandCount { k: string; n: number }
+/** 视频的一个时长或画质分档。`k` 是账本里的取值；要翻译的档带显示名的 `label_code`。 */
+export interface BandCount { k: string; n: number; label_code?: string }
 
 /** 播放过 `k` 次的作品有 `n` 个。 */
 export interface ReplayCount { k: number; n: number }
@@ -55,9 +56,11 @@ export interface RecentPlay {
   duration: number | null; max_reached: number | null; o_count: number; kind: string;
 }
 
-/** 一个存储卷。离线或取不到容量时 `total` 是 null，此时不画使用率。 */
+/** 一个存储卷。离线或取不到容量时 `total` 是 null，此时不画使用率。
+ *  `label` 是服务端按中文渲染好的显示名，配 `label_code` 与 `label_params`。 */
 export interface StorageVolume {
-  kind: string; label: string; root: string | null; online: boolean;
+  kind: string; label: string; label_code?: string | null; label_params?: Record<string, unknown>;
+  root: string | null; online: boolean;
   free: number | null; used: number | null; total: number | null;
 }
 
@@ -192,9 +195,9 @@ const LENGTH_LABEL: Record<string, string> = {
   速食: t('manage:stats.lengthUnder5'), 短: t('manage:stats.length5to15'), 中: t('manage:stats.length15to40'), 长: t('manage:stats.lengthOver40'),
 };
 
-/** 时长与画质分档，顺序由服务端给。时长换成分钟区间，画质原样。 */
+/** 时长与画质分档，顺序由服务端给。时长换成分钟区间，画质带 code 的档取译文，其余原样。 */
 export const bandRows = (rows: BandCount[], labels: Record<string, string> = {}): BarRow[] =>
-  rows.map((row) => ({ name: labels[row.k] ?? row.k, value: row.n }));
+  rows.map((row) => ({ name: labels[row.k] ?? serverLabel(row.label_code ?? '', row.k), value: row.n }));
 
 export const lengthRows = (rows: BandCount[]): BarRow[] => bandRows(rows, LENGTH_LABEL);
 

@@ -18,8 +18,12 @@ from .followups import FollowupType, Attempts, attempts_root, register
 from .fsutil import atomic_path, atomic_write_text
 from .jobs import DiskSpaceDenied, JobPaused
 from .migrations import sqlite_backup
-from .task_runs import MAX_FOLLOWUPS
+from . import interface_text
+from .task_outcomes import joined, part, render, said
+from .task_runs import MAX_FOLLOWUPS, run_error, run_progress
+from .task_stages import stage_code, stage_label
 from .update_tasks import UpdateBusy
+from .user_messages import UserRuntimeError, UserValueError
 
 LOGGER = logging.getLogger(__name__)
 TASK_KEY = 'upgrade-repairs'
@@ -46,10 +50,13 @@ def retry_at(attempts: int, now: float) -> float | None:
 
 
 class RepairDeferred(Exception):
-    """这部片这会儿补不了（挂载不可达、计费来源未确认、来源冷却），过 `retry_after` 秒再派。"""
+    """这部片这会儿补不了（挂载不可达、计费来源未确认、来源冷却），过 `retry_after` 秒再派。
 
-    def __init__(self, message: str, retry_after: float):
-        super().__init__(message)
+    `code` 是结论里那一段原因（`task_outcomes`），异常文字按它渲染。"""
+
+    def __init__(self, code: str, retry_after: float):
+        self.code = code
+        super().__init__(render([part(code)]))
         self.retry_after = retry_after
 
 
@@ -194,8 +201,9 @@ def _batched(planned) -> list:
                 rows.append(chunk[0][1])
                 continue
             ids = ','.join(str(asset_id) for asset_id, _ in chunk)
-            rows.append(Followup(f'{_BATCH_PREFIX}{rule}:{ids}', MEDIA_TASK,
-                                 f'{chunk[0][1].label} 等 {len(chunk)} 部'))
+            first = dict(chunk[0][1].params).get('name') or chunk[0][1].label
+            rows.append(Followup.coded(f'{_BATCH_PREFIX}{rule}:{ids}', MEDIA_TASK,
+                                       run_progress('items', MEDIA_TASK, first=first, count=len(chunk))))
     return rows
 
 
@@ -239,8 +247,17 @@ def _read(path: Path) -> dict:
     except FileNotFoundError:
         return {}
     if not isinstance(value, dict):
-        raise ValueError('更新后的处理记录格式无效')
+        raise UserValueError('errors.upgradeRepairs.invalidReceipt')
     return value
+
+
+def _media_progress(state: dict, key: str, **params) -> dict:
+    """「标题 · 阶段」「N 部影片 · 阶段」。阶段认得出 code 时整句带 code，认不出照原文。"""
+    code = stage_code(state) if state.get('stage') else 'upgrade.updateMetadata'
+    if code:
+        return run_progress(key, stage=code, **params)
+    label = interface_text.text(f'server:taskRun.progress.{key}', {**params, 'stage': state['stage']})
+    return {'label': label, 'code': None, 'params': {}}
 
 
 def _title(row) -> str:
@@ -503,7 +520,7 @@ def restore_dangling_candidates(database, candidate_root) -> dict:
         stored = connection.execute('SELECT result_json FROM ledger_upgrade_repair WHERE id=?',
                                     (DANGLING_KEY,)).fetchone()
         if stored is None:
-            raise ValueError('没有悬空候选补修的回执')
+            raise UserValueError('errors.upgradeRepairs.noDanglingReceipt')
         receipt = json.loads(stored[0])
         if receipt.get('restored_at'):
             return {'rows': 0, 'decisions': 0, 'skipped': 0}
@@ -863,6 +880,7 @@ class UpgradeRepairs:
                 self._settle_dangling_candidates()
                 self._settle_javdb_records()
                 self._settle_resolution_tags()
+                self._convert_interface_text()
                 self._isolate_system_files()
                 return
             self._restore_receipt(None)
@@ -888,9 +906,9 @@ class UpgradeRepairs:
                 changed = _catalog_apply(connection, plan)
                 garbled = changed.pop(metadata_text_repair.RECEIPT_KEY)
                 if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-                    raise RuntimeError('更新已有资料时账本完整性校验失败')
+                    raise UserRuntimeError('errors.upgradeRepairs.integrityFailed')
                 if any(tuple(row) not in violations for row in connection.execute('PRAGMA foreign_key_check')):
-                    raise RuntimeError('更新已有资料时关联校验失败')
+                    raise UserRuntimeError('errors.upgradeRepairs.foreignKeyFailed')
                 after = _counts(connection)
                 receipt = {'revision': REVISION, 'local': {'state': 'succeeded', 'changed': changed,
                            'review_count': review, 'before': before, 'after': after, 'backup': str(backup)},
@@ -913,6 +931,7 @@ class UpgradeRepairs:
             self._settle_dangling_candidates()
             self._settle_javdb_records()
             self._settle_resolution_tags()
+            self._convert_interface_text()
             self._isolate_system_files()
 
     def _prepare_display_dimensions(self) -> None:
@@ -983,7 +1002,7 @@ class UpgradeRepairs:
         except (OSError, sqlite3.Error) as error:
             if (getattr(error, 'errno', None) == errno.ENOSPC or getattr(error, 'winerror', None) in (39, 112)
                     or getattr(error, 'sqlite_errorcode', None) == sqlite3.SQLITE_FULL):
-                raise DiskSpaceDenied('显示尺寸补测备份空间不足，已暂停本批媒体') from error
+                raise DiskSpaceDenied('errors.upgradeRepairs.displayBackupNoSpace') from error
             raise
 
     def _isolate_system_files(self) -> None:
@@ -1047,7 +1066,7 @@ class UpgradeRepairs:
                                (json.dumps(receipt, ensure_ascii=False), REVISION))
         atomic_write_text(self.receipt, json.dumps(receipt, ensure_ascii=False))
         if plan['withdrawn']:
-            LOGGER.info('旧番号下的资料候选：撤下 %s 行，快照失效 %s 份',
+            LOGGER.info('Metadata candidates under stale codes: withdrew %s rows, invalidated %s snapshots',
                         len(plan['withdrawn']), len(plan['snapshots']))
 
     def _settle_dangling_candidates(self) -> None:
@@ -1060,7 +1079,7 @@ class UpgradeRepairs:
         try:
             self._settle_dangling_candidates_once()
         except Exception:
-            LOGGER.exception('悬空资料候选补修失败')
+            LOGGER.exception('Dangling metadata candidate repair failed')
 
     def _settle_dangling_candidates_once(self) -> None:
         from .review_csv import write_rows
@@ -1096,7 +1115,7 @@ class UpgradeRepairs:
             # 候选件在事务里写，写不成整个事务回滚、下次启动重做（`_withdraw_stale_code_evidence` 同一做法）。
             for path, (header, rows) in plan['files'].items():
                 write_rows(path, header, rows, atomic=True)
-        LOGGER.info('悬空资料候选：改挂 %s 行，撤下 %s 行，决定改挂或清掉 %s 条',
+        LOGGER.info('Dangling metadata candidates: repinned %s rows, withdrew %s rows, repinned or cleared %s decisions',
                     len(plan['repinned']), len(plan['withdrawn']), len(decisions))
 
     def _settle_javdb_records(self) -> None:
@@ -1120,9 +1139,9 @@ class UpgradeRepairs:
                 connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
                                    (JAVDB_RECORDS_KEY, str(time.time()), json.dumps(result, ensure_ascii=False)))
         except Exception:
-            LOGGER.exception('JavDB 演员页记录类型补修失败')
+            LOGGER.exception('JavDB actor page record type repair failed')
             return
-        LOGGER.info('JavDB 演员页：补记 %s 个记录类型，%s 枚入口不再给出，停用 %s 条订阅',
+        LOGGER.info('JavDB actor pages: recorded %s record types, stopped offering %s entries, disabled %s feeds',
                     len(result['recorded']), len(result['hidden']), len(result['disabled_feeds']))
 
     def _settle_resolution_tags(self) -> None:
@@ -1144,9 +1163,38 @@ class UpgradeRepairs:
                 connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
                                    (RESOLUTION_TAGS_KEY, str(time.time()), json.dumps(result, ensure_ascii=False)))
         except Exception:
-            LOGGER.exception('来源分辨率标签补修失败')
+            LOGGER.exception('Source resolution tag repair failed')
             return
-        LOGGER.info('来源分辨率标签：解除 %s 行', len(result['tags']))
+        LOGGER.info('Source resolution tags: removed %s rows', len(result['tags']))
+
+    def _convert_interface_text(self) -> None:
+        """旧任务行与补全记录里的界面文字转成 code（`interface_text_upgrade`），只做一次。
+
+        改动前的原值逐条记进回执：任务行按 id，补全记录按文件名。补全记录在回执落库之后才改写，
+        中途失败的那几个文件留着原文，界面照原文显示。出错只记日志，下次启动再试。
+        """
+        from . import interface_text_upgrade as upgrade
+        key = upgrade.RECEIPT_KEY
+        root = attempts_root(self.contract.candidate_root)
+        try:
+            with self.contract.database.read_connection() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?', (key,)).fetchone():
+                    return
+            planned = upgrade.plan_attempts(root)
+            with self.contract.database.write_transaction() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?', (key,)).fetchone():
+                    return
+                result = upgrade.convert_task_runs(connection)
+                result.update(attempts=len(planned),
+                              attempt_originals={name: text for name, (text, _parts) in planned.items()})
+                connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
+                                   (key, str(time.time()), json.dumps(result, ensure_ascii=False)))
+            upgrade.apply_attempts(root, planned)
+        except Exception:
+            LOGGER.exception('interface text conversion failed')
+            return
+        LOGGER.info('interface text converted to codes: %s task rows, %s follow-up records',
+                    result['rows'], result['attempts'])
 
     def _clear_stale_codes(self) -> None:
         """清掉旧版从文件名误认的番号（`stale_filename_codes`），只做一次。"""
@@ -1158,7 +1206,7 @@ class UpgradeRepairs:
                 write_owned_fields(connection, [row['id'] for row in rows], {'code': None}, SCAN_FILENAME)
             connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
                                (STALE_CODES_KEY, str(time.time()), json.dumps({'cleared': rows})))
-        LOGGER.info('旧版误认的番号：清掉 %s 条', len(rows))
+        LOGGER.info('Codes misread by older versions: cleared %s', len(rows))
 
     def _release_studio_misses(self) -> None:
         """旧版断网时记下的「官网未取得」各放一次重试（`studio_followup.release_unbounded_misses`）。
@@ -1175,9 +1223,9 @@ class UpgradeRepairs:
             with self.contract.database.write_transaction() as connection:
                 connection.execute('INSERT OR IGNORE INTO ledger_upgrade_repair(id,applied_at,result_json) '
                                    'VALUES(?,?,?)', (key, str(time.time()), json.dumps({'released': changed})))
-            LOGGER.info('旧的「官网未取得」放行重试：%s 条', changed)
+            LOGGER.info('Released old "official site not retrieved" records for retry: %s', changed)
         except Exception:
-            LOGGER.exception('放行旧的「官网未取得」重试失败')
+            LOGGER.exception('Failed to release old "official site not retrieved" records for retry')
 
     def _prune_task_controls(self) -> None:
         """旧版每轮任务留下的 `state/task-controls` 即时状态文件一次清掉（`task_control.prune_controls`）。
@@ -1194,9 +1242,9 @@ class UpgradeRepairs:
             with self.contract.database.write_transaction() as connection:
                 connection.execute('INSERT OR IGNORE INTO ledger_upgrade_repair(id,applied_at,result_json) '
                                    'VALUES(?,?,?)', (key, str(time.time()), json.dumps({'removed': removed})))
-            LOGGER.info('已结束任务的控制文件：清掉 %s 个', removed)
+            LOGGER.info('Control files of finished tasks: removed %s', removed)
         except Exception:
-            LOGGER.exception('清退已结束任务的控制文件失败')
+            LOGGER.exception('Failed to clean up control files of finished tasks')
 
     def _prune_repair_checkpoints(self) -> None:
         """旧版补修完不删的续跑状态一次清掉；之后每部、每批有了结论就当场删（`discard_checkpoint`）。
@@ -1234,9 +1282,9 @@ class UpgradeRepairs:
                 connection.execute('INSERT OR IGNORE INTO ledger_upgrade_repair(id,applied_at,result_json) '
                                    'VALUES(?,?,?)', (key, str(time.time()),
                                                      json.dumps({'removed': removed, 'bytes': size})))
-            LOGGER.info('补修续跑状态：清掉 %s 个文件，%s 字节', removed, size)
+            LOGGER.info('Repair resume state: removed %s files, %s bytes', removed, size)
         except Exception:
-            LOGGER.exception('清退补修续跑状态失败')
+            LOGGER.exception('Failed to clean up repair resume state')
 
     def _settle_verification(self) -> None:
         """核查差异的结算规则（ADR-0139）对存量候选跑一遍，规则版本变了才再跑。
@@ -1250,7 +1298,7 @@ class UpgradeRepairs:
             self._settle_verification_once()
         except Exception as exc:
             self.error = str(exc)
-            LOGGER.exception('核查差异存量结算失败')
+            LOGGER.exception('Verification difference settlement failed')
 
     def _settle_verification_once(self) -> None:
         from .metadata_auto_apply import _parsed_candidates, auto_apply_metadata
@@ -1279,7 +1327,7 @@ class UpgradeRepairs:
         with contract.database.write_transaction() as connection:
             connection.execute('INSERT OR IGNORE INTO ledger_upgrade_repair(id,applied_at,result_json) '
                                'VALUES(?,?,?)', (key, str(time.time()), json.dumps(result, ensure_ascii=False)))
-        LOGGER.info('核查差异存量结算：%s', result)
+        LOGGER.info('Verification difference settlement: %s', result)
 
     def _restore_receipt(self, authoritative):
         try:
@@ -1295,7 +1343,7 @@ class UpgradeRepairs:
         with self.contract.database.write_transaction(notify=False) as connection:
             stored = connection.execute('SELECT result_json FROM ledger_upgrade_repair WHERE id=?', (REVISION,)).fetchone()
             if stored is None:
-                raise ValueError('更新后的处理记录需要重新准备，请重试')
+                raise UserValueError('errors.upgradeRepairs.receiptNeedsPrepare')
             from .display_dimensions_repair import LEGACY_FIELDS, RECEIPT_KEY
             saved = json.loads(stored[0]).get(RECEIPT_KEY)
             if saved is not None:
@@ -1395,7 +1443,8 @@ class UpgradeRepairs:
                 if cost_for(row['location'], row['path'], config) != 'free':
                     deferred.append(row['id'])
                     continue
-                planned.append(Followup(display_key, MEDIA_TASK, f'{_title(row)} · 补测显示尺寸'))
+                planned.append(Followup.coded(display_key, MEDIA_TASK, run_progress(
+                    'subjectStage', subject=_title(row), stage='upgrade.displayDimensions')))
                 media_count += 1
                 if len(planned) >= MAX_FOLLOWUPS:
                     break
@@ -1414,7 +1463,7 @@ class UpgradeRepairs:
             if cost_for(row['location'], row['path'], config) != 'free':
                 deferred.append(row['id'])
                 continue
-            planned.append(Followup(key, MEDIA_TASK, _title(row)))
+            planned.append(Followup.item(key, MEDIA_TASK, _title(row)))
             media_count += 1
             if len(planned) >= MAX_FOLLOWUPS:
                 break
@@ -1464,7 +1513,7 @@ class UpgradeRepairs:
             return
         except Exception as exc:
             self.error = str(exc)
-            LOGGER.exception('升级补修派发失败')
+            LOGGER.exception('Upgrade repair dispatch failed')
 
     def _settle_queue(self, receipt) -> list[dict] | None:
         """已结束的影片补全移出回执队列，结论记进状态表；没有要结算的返回 None。
@@ -1528,14 +1577,14 @@ class UpgradeRepairs:
         store = self.contract.task_runs
         orphan = store.blocking(TASK_KEY)
         if orphan is not None:
-            store.finish(orphan.id, 'failed', error='资料派发被中断，正在重新安排')
-        run = store.start(TASK_KEY, trigger='scheduled', mutex_key=TASK_KEY, label='安排自动更新资料')
+            store.finish(orphan.id, 'failed', **run_error('dispatchInterrupted'))
+        run = store.start(TASK_KEY, trigger='scheduled', mutex_key=TASK_KEY, **run_progress('schedulingRepairs'))
         if run is None:
             return None
         planned_keys = {row.key for row in planned}
         batched = _batched(planned)
         try:
-            result = store.enqueue_followups(run.id, [(row.key, row.task_key, row.label) for row in batched])
+            result = store.enqueue_followups(run.id, [row.as_row() for row in batched])
             queued = receipt.setdefault('queued', {})
             # 回执队列按每部片记：一批里的每部片都指向这一批的任务，防重复派发与结算照旧按片。
             for run_id in result['queued']:
@@ -1549,7 +1598,7 @@ class UpgradeRepairs:
                         child = child or store.blocking(row.key)
                         if child is not None:
                             queued[key] = child.id
-            store.finish(run.id, 'succeeded', summary={'outcome': f'已安排 {len(result["queued"])} 项处理'})
+            store.finish(run.id, 'succeeded', summary=said(part('scheduled', count=len(result["queued"]))))
         except Exception as exc:
             store.finish(run.id, 'failed', error=str(exc))
             raise
@@ -1582,14 +1631,14 @@ class UpgradeRepairs:
         升级时自动补测只看本机与局域网的来源（`display_dimensions_repair.collect`）；
         网盘这一批交给用户决定什么时候做，照样受容量保护和计费来源设置约束。"""
         if not self.available:
-            raise ValueError('更新后自动处理只在本机写入端可用')
+            raise UserValueError('errors.upgradeRepairs.primaryOnly')
         from . import display_dimensions_repair as repair
         self.prepare()
         with FileLock(str(self.receipt) + '.lock', timeout=0):
             receipt = _read(self.receipt)
             display = receipt.get(repair.RECEIPT_KEY)
             if display is None:
-                raise ValueError('显示尺寸补测还没准备好，请稍后再试')
+                raise UserValueError('errors.upgradeRepairs.displayRepairNotReady')
             with self.contract.database.read_connection() as connection:
                 known = self._display_targets_known(connection)
                 extra = {asset_id: size for asset_id, size in repair.collect(connection, cloud=True).items()
@@ -1604,7 +1653,7 @@ class UpgradeRepairs:
     def retry(self) -> dict:
         """显式重试失败项；用户取消的任务保持取消。"""
         if not self.available:
-            raise ValueError('更新后自动处理只在本机写入端可用')
+            raise UserValueError('errors.upgradeRepairs.primaryOnly')
         self.prepare(retry_media=True)
         with FileLock(str(self.receipt) + '.lock', timeout=0):
             receipt = _read(self.receipt)
@@ -1728,10 +1777,10 @@ def _media_run(contract, key: str, handle) -> dict:
         if service is not None:
             paused = _read(service.receipt).get('media_paused')
             if paused:
-                raise DiskSpaceDenied(paused['message'])
+                raise DiskSpaceDenied('errors.upgradeRepairs.mediaPaused', {'message': paused['message']})
         if found is not None and mount_unreachable(found['path']):
             return _defer(contract, key, handle, [asset_id],
-                          RepairDeferred('影片所在目录读不到，挂载恢复后再补全', MOUNT_RETRY_SECONDS))
+                          RepairDeferred('deferMountMedia', MOUNT_RETRY_SECONDS))
         guard = CapacityGuard(config)
         guard.check(force=True)
         result = process_library(config, contract.db_path, contract.candidate_root, contract.cover_root,
@@ -1741,13 +1790,13 @@ def _media_run(contract, key: str, handle) -> dict:
                              state_file=state_file, resume_state=previous or None,
                              active=active,
                              report=lambda state: handle.progress(
-                                 label=f"{title} · {state.get('stage') or '更新影片资料'}"))
+                                 **_media_progress(state, 'subjectStage', subject=title)))
         guard.check(force=True)
     except DiskSpaceDenied as error:
         _pause_for_capacity(service, handle, error)
     except InterruptedError:
         if not active():
-            raise JobPaused('服务重启后继续') from None
+            raise JobPaused('errors.upgradeRepairs.resumeAfterRestart') from None
         raise
     # 走完全程只剩这部片自己的问题（坏文件探不出时长、抽不出帧）算完成；卡在来源冷却上的
     # 延后到来源放开再派，不算失败；其余未完成的按失败结算，由退避重派。
@@ -1755,11 +1804,13 @@ def _media_run(contract, key: str, handle) -> dict:
         result.get('outcome') == 'partial' and not result.get('paused_count'))
     if not finished and asset_id in result.get('paused_asset_ids', ()):
         return _defer(contract, key, handle, [asset_id],
-                      RepairDeferred('资料来源正在冷却，来源放开后再补全', COOLDOWN_RETRY_SECONDS))
+                      RepairDeferred('deferCooling', COOLDOWN_RETRY_SECONDS))
     if not finished:
-        raise RuntimeError(result.get('error') or '影片升级补全未完成，请在任务中心查看后重试')
+        if result.get('error'):
+            raise RuntimeError(result['error'])
+        raise UserRuntimeError('errors.upgradeRepairs.mediaRepairIncomplete')
     discard_checkpoint(state_file)
-    return {'outcome': '影片升级补全完成', 'name': title, 'asset_id': asset_id}
+    return {**said('videoUpgraded'), 'name': title, 'asset_id': asset_id}
 
 
 def _batch_run(contract, key: str, handle) -> dict:
@@ -1788,7 +1839,7 @@ def _batch_run(contract, key: str, handle) -> dict:
         if service is not None:
             paused = _read(service.receipt).get('media_paused')
             if paused:
-                raise DiskSpaceDenied(paused['message'])
+                raise DiskSpaceDenied('errors.upgradeRepairs.mediaPaused', {'message': paused['message']})
         if targets:
             guard = CapacityGuard(config)
             guard.check(force=True)
@@ -1797,16 +1848,18 @@ def _batch_run(contract, key: str, handle) -> dict:
                                      recheck_existing=True, job_id=job_id, state_file=state_file,
                                      resume_state=previous or None, active=active,
                                      report=lambda state: handle.progress(
-                                         label=f"{len(targets)} 部影片 · {state.get('stage') or '更新影片资料'}"))
+                                         **_media_progress(state, 'videosStage', count=len(targets))))
             guard.check(force=True)
     except DiskSpaceDenied as error:
         _pause_for_capacity(service, handle, error)
     except InterruptedError:
         if not active():
-            raise JobPaused('服务重启后继续') from None
+            raise JobPaused('errors.upgradeRepairs.resumeAfterRestart') from None
         raise
     if result.get('status') not in ('complete', 'succeeded') and result.get('outcome') != 'partial':
-        raise RuntimeError(result.get('error') or '影片升级补全未完成，请在任务中心查看后重试')
+        if result.get('error'):
+            raise RuntimeError(result['error'])
+        raise UserRuntimeError('errors.upgradeRepairs.mediaRepairIncomplete')
     cooling = [asset_id for asset_id in targets if asset_id in set(result.get('paused_asset_ids', ()))]
     settled = _settle_batch(contract, handle, rule, asset_ids, offline, cooling)
     discard_checkpoint(state_file)
@@ -1839,10 +1892,10 @@ def _settle_batch(contract, handle, rule: str, asset_ids, offline, cooling) -> d
               'retry_at': now + COOLDOWN_RETRY_SECONDS} for asset_id in cooling]
     with contract.database.write_transaction(notify=False) as connection:
         upsert_items(connection, rows, mode='finish')
-    outcome = f'影片升级补全完成 {len(done)} 部'
-    if offline or cooling:
-        outcome += f'；目录读不到或来源冷却，延后 {len(offline) + len(cooling)} 部'
-    return {'outcome': outcome, 'asset_ids': asset_ids, 'done': len(done), 'deferred': len(offline) + len(cooling)}
+    deferred = len(offline) + len(cooling)
+    outcome = joined([part('videosUpgraded', count=len(done)),
+                      part('videosDeferred', count=deferred) if deferred else []])
+    return {**said(outcome), 'asset_ids': asset_ids, 'done': len(done), 'deferred': deferred}
 
 
 def _display_run(contract, key: str, handle) -> dict:
@@ -1860,15 +1913,15 @@ def _display_run(contract, key: str, handle) -> dict:
     def available():
         checkpoint('probe')
         if service is not None and service.stopping.is_set():
-            raise JobPaused('服务重启后继续')
+            raise JobPaused('errors.upgradeRepairs.resumeAfterRestart')
         guard.check(force=True)
 
     try:
         if service is not None:
             paused = _read(service.receipt).get('media_paused')
             if paused:
-                raise DiskSpaceDenied(paused['message'])
-        handle.progress(label='补测视频显示尺寸')
+                raise DiskSpaceDenied('errors.upgradeRepairs.mediaPaused', {'message': paused['message']})
+        handle.progress(**stage_label('upgrade.displayDimensionsAll'))
         result = display_dimensions_repair.reprobe(contract, config, asset_id, checkpoint=available,
                                                    expected_generation=key.rsplit(':', 2)[1],
                                                    run_id=_run_id(handle))
@@ -1878,9 +1931,9 @@ def _display_run(contract, key: str, handle) -> dict:
         _pause_for_capacity(service, handle, error)
     except InterruptedError:
         if service is not None and service.stopping.is_set():
-            raise JobPaused('服务重启后继续') from None
+            raise JobPaused('errors.upgradeRepairs.resumeAfterRestart') from None
         raise
-    return {'outcome': 'skipped' if result.get('skipped') else '显示尺寸补测完成',
+    return {**({'outcome': 'skipped'} if result.get('skipped') else said('dimensionsMeasured')),
             'asset_id': asset_id, 'dimensions_changed': result['changed']}
 
 
@@ -1897,7 +1950,7 @@ def _defer(contract, key: str, handle, asset_ids, error: RepairDeferred) -> dict
         upsert_items(connection, [{'rule': rule, 'asset_id': asset_id, 'generation': generation, 'state': 'deferred',
                                    'run_id': _run_id(handle), 'retry_at': until} for asset_id in asset_ids],
                      mode='finish')
-    return {'outcome': f'已延后：{error}', 'deferred': len(asset_ids), 'retry_at': until}
+    return {**said(part('deferredBy', reason=[part(error.code)])), 'deferred': len(asset_ids), 'retry_at': until}
 
 
 def _pause_for_capacity(service, handle, error):
@@ -1905,7 +1958,7 @@ def _pause_for_capacity(service, handle, error):
     if service is None:
         raise error
     service.pause_media(error, run_id=_run_id(handle))
-    raise CapacityPaused(str(error)) from error
+    raise CapacityPaused(error.code, error.params) from error
 
 
 TYPE = register(FollowupType(MEDIA_TASK, '更新影片资料', True, _media_run))

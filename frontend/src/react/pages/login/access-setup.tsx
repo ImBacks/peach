@@ -16,6 +16,7 @@ import { busyProps } from '../../settings/busy-props';
 import { Help } from '../../settings/section';
 import { AuthCard, CardGroup } from '../auth-card';
 import type { PageData } from '../page-data';
+import { bodyFieldErrors, serverText } from '../../../core/server-text';
 import { t } from '../../../i18n';
 
 export const FIRST_ACCESS_URL = '/api/configuration/access/first';
@@ -51,8 +52,9 @@ export function AccessSetup({ data, navigate = go }: { data: PageData; navigate?
         navigate(answer?.url || '/');
         return;
       }
-      if (answer?.errors && Object.keys(answer.errors).length) setErrors(answer.errors);
-      else setFailure(answer?.error || t('shell:accessSetup.saveFailed'));
+      const fields = bodyFieldErrors<Errors>(answer);
+      if (fields && Object.keys(fields).length) setErrors(fields);
+      else setFailure(serverText(answer) || t('shell:accessSetup.saveFailed'));
     } catch {
       setFailure(t('shell:accessSetup.unreachable'));
     }

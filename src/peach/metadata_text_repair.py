@@ -19,6 +19,7 @@ from .javdb_identity import current_evidence
 from .metadata import extract_peach_fields, identifies_code, source_text_is_valid, validate_provider_code
 from .metadata_auto_apply import _apply_metadata_candidate, metadata_auto_apply_candidate
 from .metadata_policy import SOURCE_SPECS
+from .user_messages import UserValueError
 
 FIELDS = {'title': 'catalog_title', 'original_title': 'original_title',
           'studio': 'studio', 'series': 'series'}
@@ -296,7 +297,7 @@ def revert(connection, planned: list[dict]) -> int:
             taken = connection.execute('SELECT id FROM entity WHERE id=? OR (kind=? AND normalized_name=?)',
                                        (row['id'], row['kind'], row['normalized_name'])).fetchone()
             if taken is not None:
-                raise ValueError(f'实体 {row["id"]}「{row["canonical_name"]}」的 id 或名字已被占用，整批拒绝还原')
+                raise UserValueError("errors.metadataTextRepair.entityTaken", {"id": row["id"], "name": row["canonical_name"]})
         elif 'asset_id' in row and connection.execute(
                 'SELECT 1 FROM asset WHERE id=?', (row['asset_id'],)).fetchone() is None:
             continue

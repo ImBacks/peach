@@ -7,7 +7,7 @@ import { StatusLabel } from '../components/status-label';
 import { apiSend } from '../../api';
 import { Disclosure, ErrorText, Help, Rows, Stack } from './section';
 import { busyProps, useAction } from './use-action';
-import { t } from '../../i18n';
+import { interfaceLanguage, t } from '../../i18n';
 
 export interface RemoteReportingState {
   usage: boolean; errors: boolean; available: boolean;
@@ -50,7 +50,7 @@ export function RemoteReportingSettings({ initial, receipt }: {
         <Help>{value.fields.errors}</Help>
         <Help>{value.notice}</Help>
       </Disclosure>
-      {lastSent !== null ? <Help>{t('settings:librarySharing.lastSentAt', { date: new Date(lastSent).toLocaleDateString() })}</Help> : null}
+      {lastSent !== null ? <Help>{t('settings:librarySharing.lastSentAt', { date: new Date(lastSent).toLocaleDateString(interfaceLanguage) })}</Help> : null}
     </Stack>
     {action.error ? <Stack divided><ErrorText>{action.error}</ErrorText></Stack> : null}
   </>;

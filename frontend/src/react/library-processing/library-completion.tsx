@@ -18,6 +18,7 @@ import {
 import { ProcessingActions } from './processing-actions';
 import { confirmMeteredPreviews, startPreviews } from './metered-previews';
 import { busyProps } from '../settings/use-action';
+import { jobText } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /** 缺图判据与卡面一致；没开流量保护的影片可抽帧，有番号的影片可补发行封面。 */
@@ -89,7 +90,7 @@ function Completion({ assetIds, meteredIds, onComplete, className }: {
   // 运行时保留缺图数量；新范围等待当前任务结束，不隐式追加或替换。
   const busy = start.isPending || processingActive(state);
   const problem = start.error ? errorMessage(start.error) : job.error ? DISCONNECTED_TEXT
-    : started && state?.job_id === started && state.status === 'failed' ? state.error || t('manage:completionPrompt.failed') : '';
+    : started && state?.job_id === started && state.status === 'failed' ? jobText(state, 'error') || t('manage:completionPrompt.failed') : '';
   const later = processingActive(state) ? t('manage:completionPrompt.afterCurrentTask') : '';
   const total = new Set([...assetIds, ...meteredIds]).size;
   const metered = meteredIds.length;

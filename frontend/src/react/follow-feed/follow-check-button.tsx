@@ -7,6 +7,7 @@ import { Note } from '../components/note';
 import { busyProps } from '../settings/busy-props';
 import { fetchCheckJob, FOLLOW_CHECK_KEY, reloadFollowManage, startCheck, type CheckJob } from '../follow-manage/follow-manage';
 import { validCheckSources } from './follow-check';
+import { jobText } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /** 只检查入口所属的来源，任务状态沿用关注管理的共享查询。 */
@@ -19,7 +20,7 @@ export function FollowCheckButton({ sources, report }: { sources: readonly numbe
     start: ids => startCheck(ids),
     onError: cause => setFailure(errorMessage(cause)),
     onFinish: result => {
-      if (result.status === 'failed') setFailure(result.error || t('follow:followCheck.checkFailed'));
+      if (result.status === 'failed') setFailure(jobText(result, 'error') || t('follow:followCheck.checkFailed'));
       void reloadFollowManage();
       void queryClient.invalidateQueries({ queryKey: ['follow-feed'] });
       report(result);

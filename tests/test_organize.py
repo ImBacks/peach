@@ -315,7 +315,7 @@ class ApplyTests(unittest.TestCase):
                                   name=f'{index}.mp4', code=f'ABC-00{index}') for index in (1, 2)])
         plan = _plan(self.db_path, file_template='{number}')
         def stop(**fields):
-            raise InterruptedError('模拟整理中断')
+            raise InterruptedError('simulated organize interruption')
         with closing(sqlite3.connect(self.db_path)) as connection, self.assertRaises(InterruptedError):
             organize.apply_plan(connection, plan['rows'], generated_root=self.holder, stamp='resume', progress=stop)
         with closing(sqlite3.connect(self.db_path)) as connection:

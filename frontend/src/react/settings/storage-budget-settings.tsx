@@ -85,7 +85,7 @@ export function StorageBudgetSettings({ initial, after, receipt }: {
     </Rows> : null}
     <Stack divided>
       {policy.enabled ? <Help>{t('settings:storageLimits.limitsHelp')}</Help> : null}
-      {policy.enabled && check?.paused ? <ErrorText>{t('settings:storageLimits.pausedWithReasons', { reasons: check.reasons.join('；') })}</ErrorText> : null}
+      {policy.enabled && check?.paused ? <ErrorText>{t('settings:storageLimits.pausedWithReasons', { reasons: check.reasons.join(t('shell:format.semicolonSeparator')) })}</ErrorText> : null}
       {action.error ? <ErrorText>{action.error}</ErrorText> : null}
     </Stack>
     <Footer><Button type="submit" {...busyProps(action.busy === 'save')}>{t('settings:shared.saveSettings')}</Button></Footer>

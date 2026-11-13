@@ -18,6 +18,7 @@ import type { ActivityCounts } from '../charts/heat';
 import { queryClient } from '../query';
 import { playedFor } from '../stats/stats';
 import { interfaceLanguage, t } from '../../i18n';
+import { codedText } from '../../core/server-text';
 
 export const TASTE_URL = '/api/taste';
 export const TASTE_REFRESH_URL = '/api/taste/refresh';
@@ -40,6 +41,8 @@ export const DEFAULT_WINDOW = 'all';
 /** 排行里的一行。`entity_id` 与 `has_avatar` 决定画哪一级图，`peach_items` 决定点不点得动。 */
 export interface RankRow {
   name: string;
+  /** 口味维度的显示名 code（`name` 是服务端按中文渲染好的原文）；标签、创作者这类内容没有。 */
+  name_code?: string;
   score?: number;
   visits?: number;
   web_visits?: number;
@@ -91,6 +94,7 @@ export interface TasteSource {
   source_key: string; browser: string; profile: string; host: string; visits?: number; bookmarks?: number;
 }
 
+/** 口味总结。每个显示字段都配 `<字段>_code` 与 `<字段>_params`，由 `codedText` 取当前语言的文字。 */
 export interface TasteAnalysis {
   headline?: string;
   confidence?: { level?: string; label?: string };
@@ -99,7 +103,8 @@ export interface TasteAnalysis {
   next_steps?: { route: string; title: string; detail: string }[];
 }
 
-export interface CreatorFlow { source: string; target: string; value: number }
+/** 来源网站 → 创作者的一条流。并成「其他」的那一端带 `source_code`／`target_code`。 */
+export interface CreatorFlow { source: string; target: string; value: number; source_code?: string; target_code?: string }
 
 /** `/api/taste` 的响应。字段与 `web_stats.q_taste` 对齐。 */
 export interface TasteData {
@@ -121,6 +126,9 @@ export interface TasteData {
   stale?: boolean;
   /** 和 `stale` 同时出现：这一次重算失败了，服务端暂不再算，等「立即重试」。 */
   error?: string;
+  /** 失败原因带 code 时配上（同接口报错的 `message_code`）。 */
+  message_code?: string;
+  message_params?: Record<string, unknown>;
 }
 
 /** 看板在后台重算时隔这么久再问一次，算完换上新结果。 */
@@ -158,7 +166,10 @@ export interface TasteJob {
   checked?: number;
   total?: number | null;
   error?: string;
+  /** 没读成的来源，每个一句；`warning_codes`、`warning_params` 与它一一对应。 */
   warnings?: string[];
+  warning_codes?: string[];
+  warning_params?: Record<string, unknown>[];
 }
 
 /** `retry` 让服务端跳过失败后的等待，立刻重算一次。 */
@@ -228,9 +239,10 @@ export function historySpan(summary: TasteSummary): string {
 /** 累计时长。与统计页同一套口径。 */
 export const tasteHours = playedFor;
 
-/** 「口味维度」读数：分数为正的维度才算，和雷达、排行条画出来的是同一批。 */
+/** 「口味维度」读数：分数为正的维度才算，和雷达、排行条画出来的是同一批。名字换成当前语言。 */
 export const tasteDimensions = (rows: RankRow[]): RankRow[] =>
   rows.filter((row) => Number.isFinite(Number(row.score)) && Number(row.score) > 0)
+    .map((row) => ({ ...row, name: codedText(row, 'name') }))
     .sort((a, b) => Number(b.score) - Number(a.score));
 
 /** 一行在这一榜里的强度。浏览侧按访问次数，Peach 侧按分数，都退化到条目数。 */
@@ -316,7 +328,8 @@ function foldSide(flows: CreatorFlow[], side: 'source' | 'target', rest: (count:
 /** 来源网站 → 创作者的流向布局。值为 0 或缺一端的流先滤掉，全空时返回 `null`。 */
 export function flowGraph(rows: CreatorFlow[] = []): FlowGraph | null {
   const valid = rows.filter((row) =>
-    row.source && row.target && Number.isFinite(row.value) && row.value > 0);
+    row.source && row.target && Number.isFinite(row.value) && row.value > 0)
+    .map((row) => ({ source: codedText(row, 'source'), target: codedText(row, 'target'), value: row.value }));
   if (!valid.length) return null;
   const sourceOf = foldSide(valid, 'source', (count) => t('manage:taste.otherSites', { count: count }));
   const targetOf = foldSide(valid, 'target', (count) => t('manage:taste.otherCreators', { count: count }));

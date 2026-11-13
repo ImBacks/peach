@@ -40,6 +40,16 @@ it('无效的已保存地址保留在表单中，修正保存后清除配置提�
   expect(host.textContent).not.toContain('云下载配置需要检查');
 });
 
+it('设置块的问题带 code 时按 code 取当前语言的文字，没有 code 的照原文', async () => {
+  const host = await mount(<DownloadSettings initial={{
+    ...state(), problems: ['旧版服务端的原句', '只有原文的一句'],
+    problem_codes: [{ code: 'labels.downloadsChannels.clouddriveTokenUnreadable', params: {} }, { code: '', params: {} }],
+  } as DownloadSettingsState} receipt={vi.fn()} />);
+  expect(host.textContent).toContain('CloudDrive2 令牌无法读取，请重新填写。');
+  expect(host.textContent).not.toContain('旧版服务端的原句');
+  expect(host.textContent).toContain('只有原文的一句');
+});
+
 const unfilled = () => state({
   config: { clouddrive_address: 'http://127.0.0.1:19798', targets: {}, pikpak_root: '', wait_hours: 168 },
   pikpak_roots: ['A:\\'],

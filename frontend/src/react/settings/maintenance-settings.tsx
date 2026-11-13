@@ -20,6 +20,8 @@ import { RemoteReportingSettings } from './remote-reporting-settings';
 import { Disclosure, ErrorText, ExternalLink, Fact, FactList, Footer, Help, Rows, Section, Stack } from './section';
 import { StorageSettings } from './storage-settings';
 import { busyProps, useAction } from './use-action';
+import { localizedFact } from './coded-text';
+import { codedText, serverText } from '../../core/server-text';
 import { t } from '../../i18n';
 
 const INTERVALS = [['6', t('settings:automaticUpdates.every6Hours')], ['24', t('settings:automaticUpdates.daily')], ['168', t('settings:automaticUpdates.weekly')]] as const;
@@ -107,8 +109,8 @@ function Facts({ facts: loaded, receipt }: { facts: ConfigurationFact[]; receipt
   const action = useAction();
   const install = (tool: string) => void action.run(tool, (signal) => apiSend<{ message: string; facts: ConfigurationFact[] }>(
     '/api/configuration/media-tools', { tool }, 'POST', signal), (result) => {
-    setInstalled(result.facts);
-    receipt(result.message);
+    setInstalled(result.facts.map(localizedFact));
+    receipt(serverText(result) || result.message);
   });
   return (
     <Section guide="facts" title={t('settings:runtimeInfo.title')}>
@@ -146,12 +148,12 @@ export function UninstallSettings(
     confirmLabel: t('settings:uninstall.title'),
     onConfirm: async () => {
       const result = await apiSend<{ message: string }>('/api/configuration/uninstall', { delete_data: removeData, confirmation: '卸载 Peach' }); // i18n-exempt: 服务端校验的确认值
-      setAccepted(result.message);
+      setAccepted(serverText(result) || result.message);
     },
   });
   // 底栏左边一句说这颗按钮此刻意味着什么：拦住卸载的理由（源码安装、更新还在跑）和按下去
   // 之后的回执都在答「这颗现在能不能按」，摆在正文末尾就得先读完整段说明才找得到。
-  const status = accepted || uninstall.message;
+  const status = accepted || codedText(uninstall, 'message');
   const paths = [...new Set([uninstall.data_root, ...uninstall.directories])];
   return (
     <Section id="uninstallPeach" guide="uninstall" title={t('settings:uninstall.title')}>

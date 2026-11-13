@@ -17,6 +17,7 @@ import { Disclosure } from '../settings/section';
 import { cachedResources, rememberResources, resourcesFresh } from './resource-cache';
 import { providerIcon } from '../components/source-label';
 import { resourceNotice, resourceSize } from './resource-display';
+import { serverLabel } from '../../core/server-text';
 import { t } from '../../i18n';
 import './want-magnets.css';
 
@@ -95,7 +96,9 @@ export function WantMagnets({ want, readOnly, downloads, provider, toast, onSour
         magnet: candidate.uri, provider: configured.key, target: configured.target,
         code: want.code, title: want.title, origin: queryUrl ? `work:${want.code}` : `wishlist:${want.id}`,
       }, 'POST', signal);
-      if (!result.ok) throw new Error(result.task.failure_detail || result.task.failure_label || t('catalog:wantMagnets.addFailed'));
+      if (!result.ok) throw new Error(result.task.failure_detail
+        || (result.task.failure_label && serverLabel(`download.failure.${result.task.failure}`, result.task.failure_label))
+        || t('catalog:wantMagnets.addFailed'));
       return result;
     }, (result) => {
       setSubmitted((current) => [...current, candidate.id]);

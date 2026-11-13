@@ -120,7 +120,15 @@ def library(settings, config):
     if failed is not None:
         for key, label in (("identification", "识别失败"), ("metadata", "补资料失败")):
             groups[key] = group(label, [assets[value] for value in failed[key] if value in assets])
+    _attach_libraries(config, groups)
     return {"groups": groups, "issue_at": issue_at}
+
+
+def _attach_libraries(config, groups):
+    """媒体库列与作品列表同一个归属：只给下发的条目按路径补 `library_id`，不扫全库。"""
+    from .media_identity import ownership
+    for item in {item["id"]: item for value in groups.values() for item in value["items"]}.values():
+        item["library_id"] = ownership(config, item["path"]).get("library_id", "")
 
 
 SOURCE_CHECK_REASONS = {

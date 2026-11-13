@@ -8,7 +8,7 @@ import { confirmModal } from '@peach/legacy/ui';
 import { Button, ButtonLink } from '@/components/base/buttons/button';
 
 import { apiGet, apiSend, errorMessage } from '../../api';
-import { serverLabel } from '../../core/server-text';
+import { jobText, serverLabel, serverText } from '../../core/server-text';
 import type { ReleaseState, UpdateJob } from '../bundle';
 import { Note } from '../components/note';
 import { Progress } from '../components/progress';
@@ -17,7 +17,7 @@ import { DockerUpdateProgress, useDockerUpdate } from './docker-update';
 import { RELEASE_NOTICE_EVENT } from '../release-notice';
 import { CommandSteps, ErrorText, ExternalLink, Fact, FactList, Footer, Help, Section, Stack } from './section';
 import { busyProps, useAction } from './use-action';
-import { t } from '../../i18n';
+import { interfaceLanguage, t } from '../../i18n';
 
 const ACTIVE = new Set(['downloading', 'verifying', 'extracting', 'preparing', 'restarting', 'installing']);
 const STOPS = [65, 75, 90];
@@ -98,6 +98,7 @@ export function ReleaseUpdates({ initial, initialJob }: { initial: ReleaseState;
     (cause) => { setData({ ...initial, state: 'error' }); action.setError(errorMessage(cause)); });
 
   const error = action.error || pollError || container.error;
+  const message = serverText(data);
   const reading = job.state === 'downloading' && job.total
     ? `${((job.downloaded || 0) / 1048576).toFixed(1)} / ${(job.total / 1048576).toFixed(1)} MB`
     : `${job.progress}%`;
@@ -107,7 +108,7 @@ export function ReleaseUpdates({ initial, initialJob }: { initial: ReleaseState;
       <FactList>
         <Fact term={t('settings:releaseUpdates.currentVersion')}>{container.job.state === 'done' ? container.job.version : data.current_version}</Fact>
         <Fact term={t('settings:releaseUpdates.installation')}>{serverLabel(`release.installation.${data.installation_code}`, data.installation)}</Fact>
-        <Fact term={t('settings:releaseUpdates.channel')}>{data.channel}</Fact>
+        <Fact term={t('settings:releaseUpdates.channel')}>{serverLabel(`release.channel.${data.channel_code}`, data.channel)}</Fact>
         <Fact term={t('settings:releaseUpdates.latestVersion')}>{data.latest_version || t('settings:shared.notFound')}</Fact>
         {data.package_kind ? <Fact term={t('settings:releaseUpdates.package')}>
           {data.package_kind === 'update' ? t('settings:releaseUpdates.appUpdatePackage') : data.package_kind === 'installer' ? t('settings:releaseUpdates.macosDiskImage') : t('settings:releaseUpdates.appAndTools')}
@@ -119,24 +120,25 @@ export function ReleaseUpdates({ initial, initialJob }: { initial: ReleaseState;
         : data.package_kind === 'full' ? <Help>{t('settings:releaseUpdates.includesMediaTools')}</Help>
           : data.package_kind === 'installer' ? <Help>{t('settings:releaseUpdates.installerHelp')}</Help> : null}
       {data.state === 'unchecked' && !data.checked_at && !error && job.state === 'idle' ? null : <Stack divided>
-        {data.checked_at ? <Help>{t('settings:releaseUpdates.checkedAt', { time: new Date(data.checked_at * 1000).toLocaleString() })}</Help> : null}
+        {data.checked_at ? <Help>{t('settings:releaseUpdates.checkedAt', { time: new Date(data.checked_at * 1000).toLocaleString(interfaceLanguage) })}</Help> : null}
         {container.job.state === 'done' ? null : data.state === 'available' && !error
-          ? <Note tone="info" title={t('settings:releaseUpdates.updateAvailable')}>{data.message}</Note>
+          ? <Note tone="info" title={t('settings:releaseUpdates.updateAvailable')}>{message}</Note>
           : error || data.state === 'error'
-            ? <ErrorText>{error || data.message}</ErrorText>
-            : data.state === 'unchecked' ? null : <Help role="status">{data.message}</Help>}
+            ? <ErrorText>{error || message}</ErrorText>
+            : data.state === 'unchecked' ? null : <Help role="status">{message}</Help>}
         {/* 容器没启用 Watchtower 时没有应用内更新：在宿主机上拉镜像、重建容器，并说明怎样才能一键更新。 */}
         {data.state === 'available' && !error && !oneClick && container.job.state === 'idle' && data.steps?.length
           ? <>
-              <CommandSteps label={t('settings:releaseUpdates.updateOnHost')} steps={data.steps} />
+              <CommandSteps label={t('settings:releaseUpdates.updateOnHost')}
+                steps={data.steps.map((step) => ({ ...step, text: serverLabel(`release.dockerStep.${step.id}`, step.text) }))} />
               <Help>{data.one_click?.reason || t('settings:releaseUpdates.watchtowerHint')}</Help>
             </> : null}
         <DockerUpdateProgress job={container.job} />
-        {job.state === 'error' ? <ErrorText>{job.message}</ErrorText> : null}
+        {job.state === 'error' ? <ErrorText>{jobText(job)}</ErrorText> : null}
         {job.state !== 'idle' && job.state !== 'error' ? (
           <div aria-live="polite" className="flex flex-col gap-2">
             <Progress label={t('settings:releaseUpdates.progressLabel')} value={job.progress} stops={STOPS} />
-            <Help>{t('settings:releaseUpdates.progressSteps')} {job.message}</Help>
+            <Help>{t('settings:releaseUpdates.progressSteps')} {jobText(job)}</Help>
             <Help>{reading}</Help>
           </div>
         ) : null}

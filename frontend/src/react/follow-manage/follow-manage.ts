@@ -79,7 +79,11 @@ export interface AliasGroup {
 }
 
 /** 一条待合并的别名，带判定依据。合并永远由人点，服务端不自动升级。 */
-export interface AliasSuggestion { canonical: string; alias: string; evidence: string }
+export interface AliasSuggestion {
+  canonical: string; alias: string; evidence: string;
+  /** 依据那句的 code 与参数；有译文时显示译文。 */
+  evidence_code?: string; evidence_params?: Record<string, unknown>;
+}
 
 /** 「猜你喜欢」的一位创作者，来自用户自己浏览过的在线记录。 */
 export interface FollowGuess { name: string; visits: number; origin?: string }
@@ -163,6 +167,8 @@ export interface ResolveRow {
   kind?: string;
   line: string;
   error?: string;
+  error_code?: string;
+  error_params?: Record<string, unknown>;
   candidates?: ResolveCandidate[];
   external_searches?: { label: string; query: string; url: string; evidence: string }[];
   failures?: Record<string, string>;
@@ -182,6 +188,7 @@ export interface ResolveJob {
 export interface SuggestGroup {
   kind: string;
   label: string;
+  label_code?: string;
   items: { value: string; matched?: string; n?: number }[];
 }
 export interface SuggestData { q: string; groups: SuggestGroup[] }
@@ -471,7 +478,7 @@ export const renameAliasGroup = (key: string, name: string, signal?: AbortSignal
 
 /** 保存或清除一个站点的凭据。`values` 为空就是清除。 */
 export const saveCredential = (provider: string, values: Record<string, string>) =>
-  apiSend<{ note?: string }>(FOLLOW_CREDENTIAL_URL, { provider, values });
+  apiSend<{ note?: string; note_code?: string }>(FOLLOW_CREDENTIAL_URL, { provider, values });
 
 /** 一次批量写最多几条，与 `w_follow_status` 收 `items` 的上限相同；一页待处理也最多这么多组。 */
 export const MARK_BATCH = 1000;
@@ -587,6 +594,8 @@ export interface FeedLookup {
   known: { id: number; name: string; subscribable: boolean; following: boolean } | null;
   /** JavDB 这一趟没搜成的原因；只在库里的她能直接订时随结果一起回来，否则整次查找报错。 */
   unavailable?: string;
+  unavailable_code?: string;
+  unavailable_params?: Record<string, unknown>;
 }
 
 export const lookupFeedActor = (name: string, signal?: AbortSignal) =>

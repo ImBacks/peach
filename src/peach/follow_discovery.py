@@ -179,7 +179,7 @@ class CreatorIndex:
                                     max_bytes=48 * 1024 * 1024)
         payload = connector.fetch_json(f"https://{connector.host}/api/v1/creators")
         if not isinstance(payload, list):
-            raise FollowSourceError(f"{provider} 的创作者清单格式不符")
+            raise FollowSourceError("errors.followDiscovery.creatorListMalformed", {"provider": provider})
         rows = [
             {"id": str(row.get("id") or ""), "name": str(row.get("name") or ""),
              "service": str(row.get("service") or "")}
@@ -560,11 +560,11 @@ def discover(term: str, *, secrets_root: Path, state_root: Path,
     """
     text = (term or "").strip()
     if not text:
-        raise FollowSourceError("请先输入要查找的名字或 id")
+        raise FollowSourceError("errors.followDiscovery.termRequired")
     if len(text) > MAX_TERM_LENGTH:
-        raise FollowSourceError(f"名字或 id 最长 {MAX_TERM_LENGTH} 个字符")
+        raise FollowSourceError("errors.followDiscovery.termTooLong", {"limit": MAX_TERM_LENGTH})
     if _TERM_FORBIDDEN_RE.search(text):
-        raise FollowSourceError("名字或 id 里不能包含 / \\ ? # & < > 引号或控制字符")
+        raise FollowSourceError("errors.followDiscovery.termForbiddenCharacters")
 
     credentials = credential_store_for(secrets_root, shared_root=shared_root)
     index = CreatorIndex(state_root, transport=transport)

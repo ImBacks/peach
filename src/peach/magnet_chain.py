@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from .catalog_rules import normalise_code_key, release_code_from_text, same_release_code
 from .downloads import parse_magnet
 from .jav_cover_fetch import HostLimitedTransport
+from .metadata import relay_args
 from .javdb_public import (_CACHE_ROOT, PUBLIC_API, PublicIdentityAmbiguous, PublicRequestBudget,
                            PublicSourceUnavailable, public_cache_scope)
 from .resource_search import qualities
@@ -221,15 +222,19 @@ class Fetcher:
         return rank_candidates(found)
 
     def javdb(self, code: str) -> list[dict]:
-        """匿名 API 现取磁链区与前四页评论；快照兜底的失败也记成警告，预算跟随本轮期限。"""
+        """匿名 API 现取磁链区与前四页评论；快照兜底的失败也记成警告，预算跟随本轮期限。
+        接口要求登录时作品身份改读 javdb.com 搜索页与详情页，磁链与评论仍走接口。"""
+        from .sources.javdb import page_reader
         source = CHAIN[1]
-        budget = PublicRequestBudget(max_requests=12, max_seconds=max(1, self.deadline - time.monotonic()))
+        seconds = max(1, self.deadline - time.monotonic())
+        budget = PublicRequestBudget(max_requests=12, max_seconds=seconds)
         try:
-            with public_cache_scope(_CACHE_ROOT.get()) as reads, PUBLIC_API.request_budget(budget):
+            with (public_cache_scope(_CACHE_ROOT.get()) as reads, PUBLIC_API.request_budget(budget),
+                  page_reader(self.root, seconds=seconds) as pages, PUBLIC_API.page_reader(pages)):
                 result = PUBLIC_API.resources(code, refresh=True, review_pages=4)
         except PublicSourceUnavailable as error:
             reason = FailureReason.PARSE_ERROR if isinstance(error, PublicIdentityAmbiguous) else FailureReason.NETWORK
-            raise SourceFailure(reason, str(error)) from error
+            raise SourceFailure(reason, *relay_args(error)) from error
         stale = [f"已沿用上次结果：{read['error']}" for read in reads if read['error']]
         result["warnings"] = list(dict.fromkeys([*result["warnings"], *stale]))
         self.resource_result = result

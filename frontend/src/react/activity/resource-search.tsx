@@ -67,7 +67,7 @@ export function ResourceSearch({ initialCode, reason, choose, onSearch, onWork }
       void apiGet<MediaPage>(`/api/items?jav=1&q=${encodeURIComponent(requested)}&limit=10`, controller.signal).then(page => {
         if (controller.signal.aborted) return;
         const item = (page.items || []).find(row => sameWorkCode(row.code, requested));
-        onWork(item ? { code: item.code, title: String(item.catalog_title || item.name || ''), performers: item.performers?.join('、'),
+        onWork(item ? { code: item.code, title: String(item.catalog_title || item.name || ''), performers: item.performers ? joinList(item.performers) : undefined,
           release_date: String(item.release_date || ''), duration: item.duration, studio: item.studio,
           cover: item.has_cover ? coverUrl(item, true) : '', origin: `asset:${item.id}` } : null);
       }, () => { if (!controller.signal.aborted) onWork(null) });

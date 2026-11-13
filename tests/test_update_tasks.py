@@ -14,6 +14,7 @@ from unittest.mock import patch
 from peach import desktop_installer, job_recovery, settings_file, update_tasks
 from peach.jobs import BackgroundJob
 from peach.task_runs import TaskRunStore, stamp
+from peach.user_messages import UserValueError
 from support.ledger import fresh_ledger
 
 
@@ -495,7 +496,7 @@ class UpdateTaskTests(unittest.TestCase):
         calls = []
         def fail(body):
             calls.append(body)
-            raise ValueError('影片已移出馆藏')
+            raise UserValueError('errors.libraryProcessing.notInLibrary')
         with self.assertLogs('peach.job_recovery', level='WARNING'):
             self.assertEqual(job_recovery.resume(self.db, {'library-processing': fail}), [])
         self.assertEqual(job_recovery.read(self.db, 'library-processing')['status'], 'blocked')

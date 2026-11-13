@@ -21,7 +21,9 @@ export interface Discovery extends CoverItem {
   id: number; code: string; title: string; performers: string; release_date: string;
   studio: string; link: string; cover_url: string; has_cover: boolean; wanted: boolean;
   performer_refs?: (FaceRef & { name: string; source_actor_id?: string; source_avatar?: boolean })[];
-  asset_id?: number | null; tags?: string[]; reasons?: string[]; score?: number;
+  asset_id?: number | null; tags?: string[]; score?: number;
+  /** 口味理由，服务端按中文渲染好的原句；`reason_codes`、`reason_params` 与它一一对应。 */
+  reasons?: string[]; reason_codes?: string[]; reason_params?: Record<string, unknown>[];
   taste_score?: number | null; ranking_score?: number | null; rank?: number;
   source_score?: number | null; duration?: number | null;
   metadata_state?: 'pending' | 'ready' | 'partial' | 'unavailable' | 'stale'; metadata_message?: string;

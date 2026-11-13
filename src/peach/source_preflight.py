@@ -8,6 +8,7 @@ import time
 
 from .scraping_access import SOURCES
 from .source_checks import check_source
+from .user_messages import UserValueError
 
 #: 检查原因（`check_source` 落下的 `reason`）归到报告口径。命令行与网页都读这一张表。
 OUTCOMES = {
@@ -37,7 +38,7 @@ def check_sources(secrets_root: Path, sources: list[str] | None = None, *,
     后台任务的进度登记依赖调用方线程上下文；返回的 `sources` 仍按选择顺序排。"""
     selected = list(dict.fromkeys(sources if sources is not None else default_sources()))
     if not selected or any(source not in SOURCES for source in selected):
-        raise ValueError("请选择已登记的资料源 ID")
+        raise UserValueError("errors.sourcePreflight.unknownSource")
 
     def check(source):
         result = check_source(secrets_root, source, preflight=True)

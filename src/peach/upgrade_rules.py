@@ -21,3 +21,5 @@ DANGLING_CANDIDATES = 1
 JAVDB_ACTOR_RECORDS = 1
 #: 刮削按来源 genre 挂上的分辨率标签（`4K` 等说的是官方发行版本）解除。判据改了就加一，升级时再对存量做一遍。
 SOURCE_RESOLUTION_TAGS = 1
+#: 旧任务行与补全记录里的界面文字转成 code（ADR-0159 第五条）。模板措辞改了就加一，升级时按新措辞再认一遍。
+INTERFACE_TEXT_CODES = 1

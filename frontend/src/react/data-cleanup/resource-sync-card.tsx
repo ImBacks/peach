@@ -30,6 +30,7 @@ import {
   purgeCount, RESOURCE_APPLY_KEY, RESOURCE_SCAN_KEY, scanLine, SOURCE_LABELS, sourceMeta, startResourceApply, startResourceScan,
   type ResourceApplyState, type ResourceScanState,
 } from './resource-sync';
+import { jobText } from '../../core/server-text';
 import { t } from '../../i18n';
 
 const COMPARE = spriteGlyph('git-compare');
@@ -134,11 +135,11 @@ export function ResourceSyncCard(
   let progress = null;
   let result = null;
   if (done?.status === 'failed') {
-    result = <Note tone="error" title={t('cleanup:resourceSync.cleanupIncomplete')}>{done.error || t('cleanup:shared.checkTaskLogFiles')}</Note>;
+    result = <Note tone="error" title={t('cleanup:resourceSync.cleanupIncomplete')}>{jobText(done, 'error') || t('cleanup:shared.checkTaskLogFiles')}</Note>;
   } else if (done) {
     result = receipt(done);
   } else if (apply.running) {
-    progress = <TaskProgress embedded label={apply.job?.message || t('cleanup:resourceSync.applying')} />;
+    progress = <TaskProgress embedded label={jobText(apply.job) || t('cleanup:resourceSync.applying')} />;
   } else if (scan.start.isError) {
     result = <Note tone="error" title={t('cleanup:resourceSync.scanFailed')}>{errorMessage(scan.start.error)}</Note>;
   } else if (scan.query.isError && state) {
@@ -152,7 +153,7 @@ export function ResourceSyncCard(
   } else if (state?.status === 'failed') {
     result = <>
       {state.sources?.length ? <ScanResult scan={state} partial /> : null}
-      <Note tone="error" title={t('cleanup:resourceSync.scanFailed')}>{state.error || t('cleanup:resourceSync.backgroundScanFailed')}</Note>
+      <Note tone="error" title={t('cleanup:resourceSync.scanFailed')}>{jobText(state, 'error') || t('cleanup:resourceSync.backgroundScanFailed')}</Note>
     </>;
   } else if (state?.status === 'complete' && state.applied) {
     result = apply.job?.status === 'complete'

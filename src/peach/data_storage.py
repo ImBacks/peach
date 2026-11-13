@@ -38,8 +38,9 @@ import uuid
 
 from filelock import FileLock
 
-from . import distribution, ledger_backups, settings_file
+from . import distribution, interface_text, ledger_backups, settings_file
 from .fsutil import atomic_write_text
+from .user_messages import UserFacingError, UserInterruptedError, UserOSError, UserRuntimeError, UserTimeoutError, UserValueError
 
 USAGE_NAME = "storage-usage.json"
 REQUEST_NAME = "data-relocation-request.json"
@@ -70,44 +71,35 @@ def backup_directories(config) -> tuple[Path, ...]:
 
 @dataclass(frozen=True)
 class Category:
+    """一类存储。名字、它是什么、清理后会怎样（不能清理的写为什么不能）在
+    `server:storage.category.<key>` 的 `label`、`description`、`note`（ADR-0159）。"""
+
     key: str
-    label: str
-    #: 这一类是什么。
-    description: str
     cleanable: bool = False
-    #: 可清理的写清理之后会怎样；不能清理的写为什么不能。
-    note: str = ""
+
+    def _text(self, field: str) -> str:
+        return interface_text.text(f"server:storage.category.{self.key}.{field}")
+
+    @property
+    def label(self) -> str:
+        return self._text("label")
+
+    @property
+    def description(self) -> str:
+        return self._text("description")
+
+    @property
+    def note(self) -> str:
+        return self._text("note")
 
 
-#: 每一类都说清是什么；能清理的说清理后会怎样，不能清理的说为什么。
 #: 缩略图与预览图名字相近，区别在来源：缩略图由已下载的封面、头像缩小而来，本机随时能重算；
 #: 预览图从视频抽帧，重建要重新读取整部影片。
-CATEGORIES = (
-    Category("database", "数据库", "影片、人物、标签与观看记录",
-             note="Peach 的全部资料都在这里，删除就是清空媒体库"),
-    Category("backups", "数据库备份", "升级、迁移与整理前自动留下的数据库副本", True,
-             "每处保留最近一份，更早的无法再恢复"),
-    Category("playback", "播放缓存", "浏览器不能直接播放的影片转码后的副本", True,
-             "再次播放时重新转码"),
-    Category("thumbnails", "缩略图", "封面与头像的小尺寸副本，列表和网格里显示的就是它", True,
-             "浏览时从本机已有的封面重新缩小"),
-    Category("previews", "预览图", "从视频抽帧生成的九宫格、海报与进度条预览",
-             note="重建要重新读取整部影片，网盘里的影片会重新下载，所以不在这里清理"),
-    Category("downloads", "封面与网络资料", "从资料站下载的封面、头像、厂牌标志与网页缓存",
-             note="删除后要重新联网下载，已下架的来源再也取不回来"),
-    Category("sources", "导入资料", "从其他软件导入的资料与原始记录",
-             note="Peach 无法重新生成，删除后只能重新导入"),
-    Category("records", "任务与复核记录", "断点续跑、自动修复回执、待复核清单与归档",
-             note="删除会丢失任务进度和尚未处理的复核结论"),
-    Category("tools", "媒体工具", "FFmpeg、人脸识别等播放、抽帧与识别用到的程序",
-             note="删除后播放、预览与识别不可用，需要重新安装"),
-    Category("accounts", "登录状态", "访问令牌与资料站登录用的浏览器资料",
-             note="删除后需要重新登录各个网站与设备"),
-    Category("logs", "日志", "运行日志与崩溃记录", True,
-             "只清理已归档的日志与崩溃记录，正在写入的保留"),
-    Category("other", "其他", "数据目录里不属于以上各类的文件",
-             note="Peach 无法判断它们的用途，请自行确认后手动处理"),
-)
+CATEGORIES = tuple(Category(key, cleanable) for key, cleanable in (
+    ("database", False), ("backups", True), ("playback", True), ("thumbnails", True), ("previews", False),
+    ("downloads", False), ("sources", False), ("records", False), ("tools", False), ("accounts", False),
+    ("logs", True), ("other", False),
+))
 CATEGORY_KEYS = tuple(category.key for category in CATEGORIES)
 CLEANABLE = frozenset(category.key for category in CATEGORIES if category.cleanable)
 
@@ -180,7 +172,7 @@ def measure(config, *, should_stop: Callable[[], bool] = lambda: False,
     reported = time.monotonic()
     while stack:
         if should_stop():
-            raise InterruptedError("统计已停止")
+            raise UserInterruptedError("errors.dataStorage.measureStopped")
         if report is not None and time.monotonic() - reported >= REPORT_INTERVAL:
             reported = time.monotonic()
             report(files, size_seen)
@@ -229,7 +221,7 @@ def measure(config, *, should_stop: Callable[[], bool] = lambda: False,
     except (OSError, ValueError) as error:
         capacity = {'managed_cache_bytes': None, 'external_cache_bytes': None, 'capacity_error': str(error)}
     if storage_budget.layout(config, policy) != binding:
-        raise OSError('容量目录在统计期间发生变化，请重新统计')
+        raise UserOSError("errors.dataStorage.layoutChanged")
     storage_budget.record_history(config, data_bytes=allocated if not allocated_error else None,
                                   cache_bytes=capacity['managed_cache_bytes'])
     return {
@@ -305,7 +297,7 @@ def _clean_allocation(path, info):
 def clean(config, category: str) -> dict:
     """清理一类可重建的产物，返回删掉的文件数、字节和删不掉的数量。"""
     if category not in CLEANABLE:
-        raise ValueError("这一类不能在这里清理")
+        raise UserValueError("errors.dataStorage.categoryNotCleanable")
     generated = config.directory("generated")
     targets: list[Path] = []
     if category == "backups":
@@ -314,7 +306,7 @@ def clean(config, category: str) -> dict:
         for directory in backup_directories(config):
             decided = _backup_plan(live, directory, apply=True)
             if decided.refused:
-                raise ValueError(f"数据库备份未清理：{decided.refused}")
+                raise UserValueError("errors.dataStorage.backupNotCleaned", {"reason": decided.refused})
             removed += len(decided.remove) + len(decided.orphans)
             size += decided.removable_bytes
         if removed:
@@ -384,11 +376,11 @@ class StorageJobs:
         """`"measure"` 是重新统计；一个或几个类别键是依次清理它们，清理完统一统计一次。"""
         keys = [] if action == "measure" else [action] if isinstance(action, str) else list(action)
         if action != "measure" and (not keys or any(key not in CLEANABLE for key in keys)):
-            raise ValueError("这一类不能在这里清理")
+            raise UserValueError("errors.dataStorage.categoryNotCleanable")
         keys = [key for key in CATEGORY_KEYS if key in keys]
         with self._lock:
             if self._state["state"] != "idle":
-                raise RuntimeError("正在统计或清理，请稍候")
+                raise UserRuntimeError("errors.dataStorage.busy")
             self._state = {"state": "cleaning" if keys else "measuring", "category": keys[0] if keys else "",
                            "categories": keys, "message": "", **self._expected(config)}
             self._thread = threading.Thread(target=self._run, args=(config, keys),
@@ -524,24 +516,24 @@ def _same_volume(source: Path, target: Path) -> bool:
 def check_target(config, raw: object, *, program: Path | None = None) -> Path:
     """校验新的数据目录位置，返回规范化后的绝对路径。不合适时抛 ValueError，原因写给人看。"""
     if not isinstance(raw, str) or not raw.strip():
-        raise ValueError("请选择新的数据目录")
+        raise UserValueError("errors.dataStorage.chooseTarget")
     text = raw.strip()
     if os.name == "nt":
         pure = PureWindowsPath(text)
         if not pure.drive or not pure.root or pure.drive.startswith("\\\\"):
-            raise ValueError("请选择本机磁盘上的文件夹，例如 D:\\Peach\\peach-data")
+            raise UserValueError("errors.dataStorage.localDiskRequired")
     target = Path(text)
     if not target.is_absolute():
-        raise ValueError("请填写完整路径")
+        raise UserValueError("errors.dataStorage.fullPathRequired")
     if target.parent == target:
-        raise ValueError("请选择或新建一个专用文件夹，不要直接使用磁盘根目录")
+        raise UserValueError("errors.dataStorage.driveRootNotAllowed")
     target = target.resolve()
     source = config.data_root.resolve()
     if target == source or target.is_relative_to(source) or source.is_relative_to(target):
-        raise ValueError("新位置不能与当前数据目录相同或互相包含")
+        raise UserValueError("errors.dataStorage.overlapsCurrent")
     program = (program or Path(sys.executable).parent).resolve()
     if target.is_relative_to(program) or program.is_relative_to(target):
-        raise ValueError("新位置不能与程序目录重叠")
+        raise UserValueError("errors.dataStorage.overlapsProgram")
     for rows in (*config.locations.values(), *config.mounts.values()):
         for value in rows:
             media = Path(value)
@@ -549,19 +541,19 @@ def check_target(config, raw: object, *, program: Path | None = None) -> Path:
                 continue
             media = media.resolve()
             if target.is_relative_to(media) or media.is_relative_to(target):
-                raise ValueError("新位置不能与媒体目录重叠")
+                raise UserValueError("errors.dataStorage.overlapsMedia")
     if target.exists():
         if not target.is_dir():
-            raise ValueError("这个位置已有同名文件")
+            raise UserValueError("errors.dataStorage.fileExists")
         if not _vacant(target):
-            raise ValueError("请选择空文件夹，或新建一个文件夹")
+            raise UserValueError("errors.dataStorage.folderNotEmpty")
     ancestor = _existing_ancestor(target)
     probe = ancestor / f".peach-write-test-{uuid.uuid4().hex}"
     try:
         probe.write_bytes(b"")
         probe.unlink()
     except OSError:
-        raise ValueError("当前用户无法写入这个位置") from None
+        raise UserValueError("errors.dataStorage.notWritable") from None
     return target
 
 
@@ -570,7 +562,8 @@ def check_space(source: Path, target: Path, needed: int) -> None:
         return
     free = shutil.disk_usage(_existing_ancestor(target)).free
     if free < needed + SPACE_MARGIN:
-        raise ValueError(f"新位置所在磁盘剩余 {format_size(free)}，迁移需要约 {format_size(needed + SPACE_MARGIN)}")
+        raise UserValueError("errors.dataStorage.notEnoughSpace",
+                             {"free": format_size(free), "needed": format_size(needed + SPACE_MARGIN)})
 
 
 def read_result(config) -> dict | None:
@@ -596,13 +589,13 @@ def request(config, raw: object) -> dict:
         raise ValueError(message)
     from . import standalone_update
     if standalone_update.public().get("state") in standalone_update.ACTIVE | {"ready"}:
-        raise ValueError("更新任务尚未结束，请完成后再迁移")
+        raise UserValueError("errors.dataStorage.updateRunning")
     if JOBS.busy():
-        raise ValueError("正在统计或清理，请完成后再迁移")
+        raise UserValueError("errors.dataStorage.busyBeforeMigration")
     target = check_target(config, raw)
     usage = read_usage(config)
     if usage is None:
-        raise ValueError("请先统计占用空间")
+        raise UserValueError("errors.dataStorage.measureFirst")
     source = config.data_root.resolve()
     check_space(source, target, int(usage.get("total_bytes") or 0))
     path = config.directory("state") / REQUEST_NAME
@@ -671,7 +664,7 @@ def poll(tray) -> None:
             path.unlink()
             return
         if data["source"] != str(config.data_root.resolve()):
-            raise ValueError("数据目录已变更，请重新选择")
+            raise UserValueError("errors.dataStorage.sourceChanged")
         check_target(config, data["target"])
         token = update_tasks.reserve(database)
         update_tasks.wait_quiescent(database)
@@ -712,7 +705,7 @@ def poll_headless(stop: Callable[[], None], restart: Callable[[dict[str, str]], 
             path.unlink()
             return False
         if data["source"] != str(config.data_root.resolve()):
-            raise ValueError("数据目录已变更，请重新选择")
+            raise UserValueError("errors.dataStorage.sourceChanged")
         check_target(config, data["target"])
         token = update_tasks.reserve(database)
         update_tasks.wait_quiescent(database)
@@ -811,9 +804,9 @@ def _shell_copy(source: Path, target: Path) -> None:
                           False, None, "正在迁移 Peach 数据")
     code = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
     if operation.fAnyOperationsAborted:
-        raise RuntimeError("迁移已取消")
+        raise UserRuntimeError("errors.dataStorage.migrationCanceled")
     if code:
-        raise OSError(f"复制没有完成（代码 0x{code:X}）")
+        raise UserOSError("errors.dataStorage.copyIncomplete", {"code": f"{code:X}"})
 
 
 def _python_copy(source: Path, target: Path) -> None:
@@ -851,7 +844,7 @@ def rewrite_ledger_paths(database: Path, old: Path, new: Path) -> int:
                         connection.execute(f"UPDATE {table} SET {column}=? WHERE rowid=?", (moved, rowid))
                         changed += 1
             if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise RuntimeError("数据库检查未通过")
+                raise UserRuntimeError("errors.dataStorage.databaseCheckFailed")
     finally:
         connection.close()
     return changed
@@ -886,7 +879,7 @@ def _rename(source: Path, target: Path, *, timeout: float = 30) -> None:
             time.sleep(.5)
 
 
-class MovedWithoutRewrite(RuntimeError):
+class MovedWithoutRewrite(UserFacingError, RuntimeError):
     """数据已经到了新位置并记下了位置，只是账本里的路径没改写成。迁移算完成，原因要告诉人。"""
 
 
@@ -916,7 +909,7 @@ def relocate(config, target: Path, *, bootstrap: Path,
             except OSError:
                 # 改不回去时数据已经整个在新位置：照样记下位置，否则下次启动会进首次设置页。
                 _point(source, target, bootstrap)
-                raise MovedWithoutRewrite(f"预览图路径未能改写（{exc}），下次处理馆藏时会重新登记") from exc
+                raise MovedWithoutRewrite("errors.dataStorage.pathsNotRewritten", {"error": str(exc)}) from exc
             raise
         copied = False
     else:
@@ -928,8 +921,9 @@ def relocate(config, target: Path, *, bootstrap: Path,
             (copy or (_shell_copy if sys.platform == "win32" else _python_copy))(source, target)
             actual = count_files(target)
             if actual != expected:
-                raise RuntimeError(f"复制结果不完整：原目录 {expected[0]} 个文件、{format_size(expected[1])}，"
-                                   f"新位置 {actual[0]} 个文件、{format_size(actual[1])}")
+                raise UserRuntimeError("errors.dataStorage.copyMismatch", {
+                    "sourceFiles": expected[0], "sourceSize": format_size(expected[1]),
+                    "targetFiles": actual[0], "targetSize": format_size(actual[1])})
             rewrite_ledger_paths(target / database, source, target)
         except BaseException:
             shutil.rmtree(target, ignore_errors=True)
@@ -998,11 +992,11 @@ def apply(request_path: Path, wait_pid: int | None, *, environ: dict[str, str] |
         deadline = time.monotonic() + wait
         while wait_pid is not None and process_alive(wait_pid):
             if time.monotonic() > deadline:
-                raise TimeoutError("托盘尚未退出")
+                raise UserTimeoutError("errors.dataStorage.trayStillRunning")
             time.sleep(.25)
         old = settings_file.load_config(environ=dict(environ, PEACH_DATA_ROOT=str(source)))
         if old.data_root.resolve() != source:
-            raise ValueError("数据目录已变更，请重新选择")
+            raise UserValueError("errors.dataStorage.sourceChanged")
         target = check_target(old, target_raw, program=program)
         Path(request_path).unlink(missing_ok=True)
         if data.get("token"):

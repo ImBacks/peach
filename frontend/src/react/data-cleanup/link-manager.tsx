@@ -38,6 +38,7 @@ import {
   LINK_PRUNE_KEY, LINKS_KEY, pruneText, startLinkCheck, startLinkPrune,
   type LinkCheckState, type LinkPruneState, type LinkRow,
 } from './links';
+import { jobText, serverLabel } from '../../core/server-text';
 import { t } from '../../i18n';
 
 const RETRY = spriteGlyph('rotate-cw');
@@ -92,7 +93,7 @@ function LinkTable(
         {/^(?:HTTP\s+)?[1-5]\d{2}$/.test(item.note.trim())
           ? <StatusLabel tone={confirmed || /^(?:HTTP\s+)?5\d{2}$/.test(item.note.trim()) ? 'error' : 'warning'} data-link-code="">{item.note.trim()}</StatusLabel>
           : <div className="flex flex-col items-start gap-1"><StatusLabel tone={confirmed ? 'error' : 'warning'}>{confirmed ? t('cleanup:links.dead') : t('cleanup:links.inconclusive')}</StatusLabel>
-              <ErrorExcerpt text={item.note} className="tabular-nums text-text-secondary" /></div>}
+              <ErrorExcerpt text={serverLabel(item.note_code ?? '', item.note, item.note_params)} className="tabular-nums text-text-secondary" /></div>}
       </div> },
     { id: 'url', label: t('cleanup:links.columnUrl'), width: 360, min: 180, value: (item) => item.url,
       render: (item) => <a href={item.url} target="_blank" rel="noopener noreferrer" title={item.url} data-link-address=""
@@ -172,7 +173,7 @@ export function LinkManager() {
   let progress: ReactNode = null;
   let result: ReactNode = null;
   if (pruned?.status === 'failed') {
-    result = <Note tone="error" title={t('cleanup:links.pruneIncomplete')}>{pruned.error || t('cleanup:links.checkTaskLog')}</Note>;
+    result = <Note tone="error" title={t('cleanup:links.pruneIncomplete')}>{jobText(pruned, 'error') || t('cleanup:links.checkTaskLog')}</Note>;
   } else if (pruned && !gone.length && !unclear.length) {
     result = <Note tone="success" title={t('cleanup:links.pruneDone')}>{pruneText(pruned)}</Note>;
   } else if (startError) {
@@ -180,14 +181,14 @@ export function LinkManager() {
   } else if (check.query.isError && state) {
     result = <Note tone="neutral" title={t('cleanup:shared.taskStatus')}>{DISCONNECTED}</Note>;
   } else if (state?.status === 'failed') {
-    result = <Note tone="error" title={t('cleanup:links.checkFailed')}>{state.error || t('cleanup:links.checkFailed')}</Note>;
+    result = <Note tone="error" title={t('cleanup:links.checkFailed')}>{jobText(state, 'error') || t('cleanup:links.checkFailed')}</Note>;
   } else if (state && state.status !== 'idle') {
     progress = <>
       {state.status === 'running'
         ? <TaskProgress embedded label={checkLine(state)} value={Math.min(state.checked || 0, state.total || 0)} total={state.total} />
         : null}
       {removing
-        ? <TaskProgress embedded label={prune.job?.message || t('cleanup:links.pruning')}
+        ? <TaskProgress embedded label={jobText(prune.job) || t('cleanup:links.pruning')}
             value={Math.min(prune.job?.checked || 0, prune.job?.total || 0)} total={prune.job?.total} />
         : null}
     </>;

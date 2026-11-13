@@ -29,6 +29,7 @@ from .platform import (is_windows_path, location_mounts, location_roots, resolve
                        translate_ledger_path, within_root)
 from .review_csv import write_rows
 from .fsutil import atomic_write_text
+from .user_messages import UserFacingError, UserOSError
 
 #: 计划 CSV 的列。`reason` 只在 `action=skip` 时有值。
 PLAN_FIELDS = ["asset_id", "location", "current_path", "target_path", "action", "reason"]
@@ -61,11 +62,11 @@ VERIFIED_RENAME_LOCATIONS = frozenset({"pikpak"})
 _verified_renames: dict[str, Callable[[str, str], None]] = {}
 
 
-class OrganizeError(ValueError):
+class OrganizeError(UserFacingError, ValueError):
     """整理本身拒绝执行。消息直接给用户看；接口按参数错误回 400。"""
 
 
-class UnverifiedRename(OSError):
+class UnverifiedRename(UserFacingError, OSError):
     """来源的改名须经官方核验，而当前进程没有注入核验通道。"""
 
 
@@ -73,7 +74,7 @@ class UnverifiedRename(OSError):
 def verified_renames(location: str, rename: Callable[[str, str], None]):
     """在这段上下文里，`location` 的改名交给 `rename`（它自己确认云端结果）。"""
     if location in _verified_renames:
-        raise RuntimeError(f"来源 {location} 已注入核验改名")
+        raise RuntimeError(f"verified rename already injected for location {location}")
     _verified_renames[location] = rename
     try:
         yield
@@ -103,8 +104,7 @@ def refuse_unverified(paths: Iterable[str]) -> None:
     blocked = sorted({location for location in locations
                       if unverified_location(location)})
     if blocked:
-        raise OrganizeError(f"来源 {'、'.join(blocked)} 的挂载改名无法核验云端结果，整批未执行；"
-                            "须经官方核验通道（如 organize_library_dirs.py --pikpak-webdav）")
+        raise OrganizeError("errors.organize.unverifiedBatch", {"locations": '、'.join(blocked)})
 
 
 def _definition(width, height) -> str:
@@ -191,12 +191,12 @@ def _extension(name: str) -> str:
 def scope_path(location: str, path: str = '', roots=None) -> str:
     """将指定目录核对并转换为账本路径；空值表示整个来源。"""
     if not isinstance(path, str):
-        raise OrganizeError('整理路径必须是目录路径')
+        raise OrganizeError('errors.organize.scopeNotDirectory')
     text = path.strip()
     if not text:
         return ''
     if '..' in PureWindowsPath(text).parts or '\x00' in text:
-        raise OrganizeError('整理路径不能包含上级目录跳转或空字符')
+        raise OrganizeError('errors.organize.scopeTraversal')
     declared = location_roots() if roots is None else roots
     if resolve_root(text, declared)[0] != location:
         local = Path(text)
@@ -208,10 +208,10 @@ def scope_path(location: str, path: str = '', roots=None) -> str:
                     break
     candidate = PureWindowsPath(text)
     if not candidate.is_absolute() or '..' in candidate.parts:
-        raise OrganizeError('整理路径须为所选来源内的绝对目录路径，不能包含上级目录跳转')
+        raise OrganizeError('errors.organize.scopeNotAbsolute')
     canonical = ntpath.normpath(text)
     if resolve_root(canonical, declared)[0] != location:
-        raise OrganizeError('整理路径不在所选来源内')
+        raise OrganizeError('errors.organize.scopeOutsideLocation')
     return canonical
 
 
@@ -353,14 +353,14 @@ def _rename(source: str, target: str) -> None:
     if location in VERIFIED_RENAME_LOCATIONS:
         verified = _verified_renames.get(location)
         if verified is None:
-            raise UnverifiedRename(f"来源 {location} 的挂载改名无法核验云端结果，须经官方核验通道")
+            raise UnverifiedRename("errors.organize.unverifiedRename", {"location": location})
         verified(str(source), str(target))
         return
     from .smb_media import resolve
     remote_source, remote_target = resolve(source), resolve(target)
     if remote_source is not None or remote_target is not None:
         if remote_source is None or remote_target is None:
-            raise OSError('SMB 整理仅支持同一媒体根目录')
+            raise UserOSError('errors.organize.smbSameRootOnly')
         remote_target.parent.mkdir(parents=True, exist_ok=True)
         remote_source.rename(remote_target)
         return
@@ -414,7 +414,7 @@ def _move_one(connection: sqlite3.Connection, asset_id: int,
         return MoveFailure(f"改名失败：{error.strerror or error}", retry_after=transient_delay(error))
     try:
         if not _update_row(connection, asset_id, old_path, new_path):
-            raise OrganizeError("数据库里这一行已经变了")
+            raise OrganizeError("errors.organize.rowChanged")
         connection.commit()
     except Exception as error:
         connection.rollback()

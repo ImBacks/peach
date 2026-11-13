@@ -330,7 +330,7 @@ class FakeSite:
     def get(self, url: str) -> str:
         self.asked.append(url)
         if url not in self.pages:
-            raise LookupError(f"没有这一页 {url}")
+            raise LookupError(f"no page {url}")
         return self.pages[url]
 
 

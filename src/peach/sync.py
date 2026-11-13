@@ -165,7 +165,7 @@ def device_id(state_dir: Path) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(generated, encoding="utf-8")
     except OSError:
-        LOGGER.warning("无法保存 device-id，本次运行使用临时标识")
+        LOGGER.warning("Could not save device-id; using a temporary id for this run")
     return generated
 
 
@@ -468,7 +468,7 @@ class LedgerSync:
             return "pushed"
         if decision.action == "conflict":
             self.status, self.detail = "conflict", decision.reason
-            LOGGER.error("数据库同步冲突：%s", decision.reason)
+            LOGGER.error("Database sync conflict: %s", decision.reason)
             return "conflict"
         self.status = decision.action
         return decision.action

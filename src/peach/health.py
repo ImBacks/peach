@@ -59,6 +59,16 @@ def database_status(path) -> str:
     return inspect_database(path)["database"]
 
 
+def _web_ready(settings: PeachSettings) -> bool:
+    """页面与界面文字都在：后端渲染的文字和前端读的是同一份语言资源（ADR-0159）。"""
+    from .interface_text import InterfaceTextMissing, ensure_available
+    try:
+        ensure_available()
+    except InterfaceTextMissing:
+        return False
+    return settings.page_path.is_file()
+
+
 def readiness(settings: PeachSettings, *, background_ready: bool | None = None) -> dict:
     """服务能不能用：已配置、页面在、账本可读且结构是最新的，后台任务按需也算进去。
 
@@ -67,9 +77,9 @@ def readiness(settings: PeachSettings, *, background_ready: bool | None = None) 
     才启动的 Watchtower 也跟着卡住（ADR-0149）。
     """
     if not settings.configured and distribution.docker():
-        return {"ready": True, "setup": True, "checks": {"web": settings.page_path.is_file()}}
+        return {"ready": True, "setup": True, "checks": {"web": _web_ready(settings)}}
     checks = {"configured": bool(settings.configured),
-              "web": settings.page_path.is_file(), "database": False, "schema": False}
+              "web": _web_ready(settings), "database": False, "schema": False}
     inspected = inspect_database(settings.db_path)
     checks.update(database=inspected["readable"], schema=inspected["schema"] == "current")
     if background_ready is not None:

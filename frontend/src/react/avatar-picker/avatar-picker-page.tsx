@@ -30,7 +30,7 @@ import { CropFrame } from '../crop/crop-frame';
 import { queryClient } from '../query';
 import { busyProps } from '../settings/use-action';
 import {
-  avatarChoicesKey, baseLabel, baseVersion, choiceDetail, choiceFrame, choiceImageUrl, cropNote,
+  avatarChoicesKey, baseLabel, baseVersion, choiceDetail, choiceFrame, choiceImageUrl, choiceLabel, cropNote,
   fetchAvatarChoices, fetchCodeCover, frameAddress, frameChoice, frameFile, framesItself, indexNote,
   pickerNote, sendAvatarPick, sharedCast,
   type AvatarChoice, type AvatarSubmission,
@@ -230,7 +230,7 @@ function PickerBody({ kind, entityId, name, onPicked, close }: AvatarPickerProps
                 <ChoiceImage key={imageAttempts[choice.ref] || 0}
                   src={choiceImageUrl(kind, entityId, choice.ref, baseVersion(choice, choice.ref))}
                   choice={choice} onUnavailable={() => setLostChoices(previous => new Set(previous).add(choice.ref))} />
-                <span className="truncate px-1">{choice.label}</span>
+                <span className="truncate px-1">{choiceLabel(choice)}</span>
                 {choice.current
                   ? <span className="absolute top-1 left-1"><Chip variant="caption" color="gray">{t('catalog:avatarPicker.inUse')}</Chip></span>
                   : null}
@@ -350,7 +350,7 @@ function CropStep({ kind, entityId, choice, busy, back, confirm }: {
       <div ref={frame} className="flex min-h-0 flex-1 flex-col items-center gap-4 overflow-y-auto border-t border-separator-border px-5 py-4">
         {src ? (
           <CropFrame src={src} aspect={1} box={box} size={size}
-            label={t('catalog:avatarPicker.cropFrame', { label: choice.label })}
+            label={t('catalog:avatarPicker.cropFrame', { label: choiceLabel(choice) })}
             onSize={(next) => {
               setSize(next);
               /* 这一格自己那张图从取景区里落默认框：检出脸就正好是批处理会截的那一块。

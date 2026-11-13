@@ -14,6 +14,7 @@ from concurrent import futures
 import grpc
 
 from peach import downloads as dl
+from peach import interface_text
 from peach import downloads_clouddrive as cd
 from peach import downloads_clouddrive_pb2 as pb
 from peach.push_discovery import CloudPrefix
@@ -233,10 +234,15 @@ class SubmitTests(_Server):
         with self.assertRaises(dl.DownloadError) as caught:
             cd.CloudDriveProvider(self.address, "wrong").submit(MAGNET, TARGET)
         self.assertEqual(caught.exception.failure, "config")
+        self.assertEqual(caught.exception.code, "errors.downloadsClouddrive.tokenRejected")
+        self.assertEqual(caught.exception.params["action"], {"code": "labels.downloadsClouddrive.action.findTarget"})
+        self.assertTrue(caught.exception.detail.startswith("CloudDrive2 拒绝了这个 API 令牌（查找目标目录）："))
         self.server.stop(None)
         with self.assertRaises(dl.DownloadError) as caught:
             self.provider.status(dl.DownloadTask(1, HASH, "115", MAGNET.uri, "", TARGET, dl.SUBMITTED))
         self.assertEqual(caught.exception.failure, "network")
+        english = interface_text.text(f"server:{caught.exception.code}", caught.exception.params, language="en")
+        self.assertTrue(english.startswith("Cannot reach CloudDrive2 while finding the target directory: "))
 
 
 class TrackingTests(_Server):
@@ -283,6 +289,7 @@ class CheckTests(_Server):
     def test_the_check_reports_permissions_folder_and_quota(self):
         report = cd.check(self.address, TOKEN, TARGET)
         self.assertEqual(report["missing"], ["取消离线任务"])
+        self.assertEqual(report["missing_codes"], ["labels.downloadsClouddrive.permission.modifyOffline"])
         self.assertEqual(report["folder"], {"path": TARGET, "can_offline": True, "cloud": "115open"})
         self.assertEqual(report["quota"], {"total": 1500, "used": 3, "left": 1497})
         self.assertEqual(report["problems"], [])
@@ -294,6 +301,7 @@ class CheckTests(_Server):
         report = cd.check(self.address, "", TARGET)
         self.assertFalse(report["ok"])
         self.assertIn("API 令牌", report["problems"][0])
+        self.assertEqual(report["problem_codes"], [{"code": "errors.downloadsClouddrive.tokenMissing", "params": {}}])
         self.assertEqual(self.fake.calls, [])
 
     def test_a_blank_address_takes_the_first_local_address_that_answers(self):
@@ -391,6 +399,8 @@ class SuggestionTests(_Server):
         self.assertEqual(len(report["problems"]), 1)
         self.assertIn("「推送发现」", report["problems"][0])
         self.assertIn("/115假", report["problems"][0])
+        self.assertEqual(report["problem_codes"], [
+            {"code": "labels.downloadsClouddrive.no115Prefix", "params": {"known": "/115假"}}])
         report = cd.check(self.address, TOKEN, "", hints=self.hints(prefixes=(), pikpak_root="A:\\"))
         self.assertIn("没有登记云端路径前缀", report["problems"][0])
 

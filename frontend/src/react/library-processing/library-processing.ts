@@ -7,6 +7,7 @@ import { apiGet } from '../../api';
 import { elapsedText, progressText } from '../activity/tasks';
 import { queryClient } from '../query';
 import { joinList, quoted, t } from '../../i18n';
+import { stageText } from '../../core/server-text';
 
 export const LIBRARY_PROCESSING_URL = '/api/library-processing';
 
@@ -44,6 +45,7 @@ export interface LibraryProcessingData {
   eta_initial?: boolean;
   job_id?: string;
   stage?: string;
+  stage_code?: string;
   requested_stage?: string;
   steps?: { id: string; label: string; status: 'pending' | 'current' | 'complete' }[];
   checked?: number;
@@ -61,6 +63,9 @@ export interface LibraryProcessingData {
   performer_profile_conflicts?: number;
   performer_profile_failed?: number;
   error?: string;
+  /** `error` 的 code 与参数；有译文时显示译文。 */
+  error_code?: string;
+  error_params?: Record<string, unknown>;
   issue_count?: number;
   /** `issue_count` 里卡在来源限流上的那些，等来源放开再跑一次就有。 */
   paused_count?: number;
@@ -267,7 +272,7 @@ export function notesLine(notes: Record<string, number>): string {
 export function currentLine(state: LibraryProcessingData): string {
   if (state.status === 'paused') return t('manage:taskStatus.paused');
   if (state.status === 'pausing') return t('manage:taskStatus.pausing');
-  const action = ACTION_LABELS[state.current_action || ''] || state.stage || t('manage:scanFetch.processing');
+  const action = ACTION_LABELS[state.current_action || ''] || stageText(state) || t('manage:scanFetch.processing');
   const waited = state.waited_seconds ? t('manage:scanFetch.waited', { elapsed: elapsedText(state.waited_seconds) }) : '';
   return state.current_asset_name
     ? t('manage:scanFetch.currentLine', { file: state.current_asset_name, action, waited })
@@ -277,7 +282,7 @@ export function currentLine(state: LibraryProcessingData): string {
 /** 已知总量显示实际完成数；扫描目录期间显示持续发现的文件数。 */
 export function processingLine(state: LibraryProcessingData): string {
   const count = state.total ? t('manage:scanFetch.progressCount', { progress: progressText(state.checked, state.total) })
-    : state.current_action === 'scanning_files' || state.stage === '扫描文件' // i18n-exempt: 服务端阶段名
+    : state.current_action === 'scanning_files' || state.stage_code === 'library.scanFiles'
       ? t('manage:scanFetch.filesFound', { count: state.scanned || 0 }) : '';
   return currentLine(state) + (count ? ` · ${count}` : '');
 }

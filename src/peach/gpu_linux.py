@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import time
 
+from .user_messages import UserValueError
+
 
 class LinuxGpuCounters:
     def __init__(self, *, proc=Path('/proc'), devices=Path('/dev/dri'), clock=time.monotonic):
@@ -32,7 +34,7 @@ class LinuxGpuCounters:
                 continue
             client = fields.get('drm-client-id')
             if client is None or not client.isdigit():
-                raise ValueError('GPU 驱动未提供可去重的 DRM 客户端编号')
+                raise UserValueError('errors.gpuLinux.clientIdMissing')
             device = fields.get('drm-pdev', fields['drm-driver'])
             engines = {}
             for key, value in fields.items():
@@ -42,10 +44,10 @@ class LinuxGpuCounters:
                 match = re.fullmatch(r'(\d+)\s+ns', value)
                 capacity = fields.get(f'drm-engine-capacity-{name}', '1')
                 if match is None or not capacity.isdigit() or int(capacity) <= 0:
-                    raise ValueError('GPU 引擎时间或容量格式无效')
+                    raise UserValueError('errors.gpuLinux.engineFormatInvalid')
                 engines[f'{device}:{name}'] = (int(match[1]), int(capacity))
             if not engines:
-                raise ValueError('GPU 驱动未提供 DRM 引擎忙碌时间')
+                raise UserValueError('errors.gpuLinux.engineTimeMissing')
             clients[(device, client)] = engines
         return clients
 

@@ -14,6 +14,7 @@ import { selectRange } from '../../selection';
 import { queryClient } from '../query';
 import { localTime } from '../time';
 import { t } from '../../i18n';
+import { partsLabel, type TextPart } from '../../core/server-text';
 
 export const REVIEW_URL = '/api/review';
 export const REVIEW_DECISION_URL = '/api/review/decision';
@@ -105,6 +106,8 @@ export interface ReviewRow {
   /** 竖线分隔的候选标签。 */
   tags?: string;
   reason?: string;
+  /** 服务端拼的证据句（`reason`）按段的 code；`text` 是来源原文。 */
+  reason_parts?: TextPart[];
   evidence?: string;
   note?: string;
   decision_note?: string;
@@ -275,8 +278,9 @@ export function rowTitle(category: ReviewCategory, row: ReviewRow): string {
   return field ? `${subject} · ${field}` : subject;
 }
 
+/** 证据句逐段取译文（`partsLabel`）：缺一段译文就整句用服务端原文。 */
 export const rowEvidence = (row: ReviewRow): string =>
-  row.reason || row.evidence || row.note || row.decision_note || '';
+  partsLabel(row.reason_parts, row.reason || '') || row.evidence || row.note || row.decision_note || '';
 
 export const rowTags = (row: ReviewRow): string[] =>
   String(row.tags || '').split('|').filter(Boolean);

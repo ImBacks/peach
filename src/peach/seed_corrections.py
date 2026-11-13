@@ -6,6 +6,7 @@ import sqlite3
 
 from . import seed_validation as validation
 from .performer_profiles import read_profile
+from .user_messages import UserValueError
 
 
 def check_history(connection: sqlite3.Connection, pack: dict, *, content_digest: str | None = None) -> None:
@@ -16,14 +17,14 @@ def check_history(connection: sqlite3.Connection, pack: dict, *, content_digest:
     incoming = {row["id"]: validation.canonical(row) for row in pack.get("withdrawals", [])}
     for version, previous_revision, digest, withdrawals in rows:
         if version == pack["version"] and digest != content_digest:
-            raise ValueError("同版本种子内容与已导入历史不同")
+            raise UserValueError("errors.seedCorrections.contentChanged")
         if previous_revision > revision or (revision and previous_revision == revision and version != pack["version"]):
-            raise ValueError("种子 revision 不得回退或复用")
+            raise UserValueError("errors.seedCorrections.revisionReused")
         if not revision and not previous_revision and version > pack["version"]:
-            raise ValueError("旧格式种子版本不得回退")
+            raise UserValueError("errors.seedCorrections.legacyVersionBack")
         for old in json.loads(withdrawals):
             if incoming.get(old["id"]) != validation.canonical(old):
-                raise ValueError("种子必须原样继承全部历史撤销")
+                raise UserValueError("errors.seedCorrections.withdrawalsMissing")
 
 
 def remember(connection: sqlite3.Connection, pack: dict, stamp: str) -> None:

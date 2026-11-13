@@ -127,3 +127,17 @@ GitHub 的字段与模板机制见 [Issue types](https://docs.github.com/en/issu
 - 文档、注释、界面文字和测试名一律用中文；代码标识、命令、协议名和库名保留英文。
 - 只写现在的状态，不写「改动前后」的对比，也不保留被否掉的做法。`tests/test_copy_final_state.py` 会检查这一条；确实需要记录的事故原文，逐行加 `copy-lint-disable-line` 放行。
 - 不要提交媒体、数据库、凭据、日志、构建缓存和个人信息（局域网地址、主机名、账号名、个人目录）。
+
+## 翻译
+
+界面翻译在 [Hosted Weblate](https://hosted.weblate.org/projects/peach/) 上进行，不用改代码，注册 Weblate 账号即可参与。
+
+- 源语言是简体中文。英文由改代码的人随功能写进仓库；现有英文是 AI 初稿，在 Weblate 上带「AI draft」标签。发现不准确的地方，可以提建议，也可以给别人的建议投票，由审核者采纳。
+- 其他语言直接在 Weblate 上翻译，没有的语言可以新建。翻到能用后，由维护者登记到设置的界面语言里。
+- 术语按项目术语表（Weblate 上的 Glossary 组件）翻译，不用标为禁用的写法。对术语有不同意见，在该条目下评论并说明理由。
+- `{{count}}` 这类插值占位原样保留，不翻译，也不增删。占位不对的译文，Weblate 不会保存。
+- 译文文件不要绕过 Weblate 直接改了提 PR，否则改动会和 Weblate 上的译文冲突。改代码时新增的界面文字按上一节，在同一个 PR 里写中文和英文。
+
+Weblate 以 PR 的形式把译文推回仓库，提交作者是各位译者。这类 PR 只改 `resources/locales/` 下的译文文件，CI 通过后由维护者合入；不要压缩合并，以保留每位译者的署名。
+
+Interface translation happens on [Hosted Weblate](https://hosted.weblate.org/projects/peach/); no code changes are needed. Simplified Chinese is the source language. English is written into the repository together with each feature; the current English is an AI draft and carries the "AI draft" label on Weblate, so suggest improvements or vote on other people's suggestions, and reviewers approve them. Other languages are translated directly on Weblate, and you can start a new one there; once it is usable, the maintainer adds it to the interface language setting. Follow the project glossary (the Glossary component on Weblate) and avoid terms marked forbidden; if you disagree with a term, comment on it and explain why. Keep placeholders such as `{{count}}` exactly as they are; Weblate rejects translations with broken placeholders. Do not edit translation files in a PR that bypasses Weblate. Weblate sends translations back as pull requests authored by the translators; they only touch files under `resources/locales/`, and the maintainer merges them once CI passes, without squashing, so every translator keeps the credit.

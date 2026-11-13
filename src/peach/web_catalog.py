@@ -43,6 +43,7 @@ from .regions import infer_region, normalize_region, region_label
 from .web_activity import DEFAULT_PROFILE_ID
 from .web_state import WebContract
 from .western_artwork import artwork_key
+from .user_messages import UserValueError
 
 
 GROUP_TABLES = ('asset', 'asset_entity', 'entity')
@@ -279,7 +280,7 @@ def release_year_filter(value, *, trash=False):
         return [], []
     years = sorted(set(str(value).split(',')))
     if any(year != 'none' and (not re.fullmatch(r'[1-9][0-9]{3}', year)) for year in years):
-        raise ValueError('发行年份须为四位年份或未知年份')
+        raise UserValueError('api.catalog.invalidReleaseYear')
     return [RELEASE_YEAR_SQL + ' IN (' + ','.join('?' for _ in years) + ')'], [
         '' if year == 'none' else year for year in years]
 
@@ -1644,7 +1645,7 @@ def w_item_tag(contract: WebContract, body):
     if operation == "add":
         canonical = current_tags([tag])
         if not canonical:
-            raise ValueError("该标签不在当前词表中")
+            raise UserValueError("api.catalog.tagNotInVocabulary")
         tag = canonical[0]
     normalized = normalize_entity_name(tag)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

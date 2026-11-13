@@ -273,7 +273,7 @@ class PosixShapeTests(_ScanCase):
             saved.clear()
             saved.update(json.loads(json.dumps(state)))
             if state.get('files') == 2:
-                raise InterruptedError('模拟服务退出')
+                raise InterruptedError('simulated service exit')
         options = dict(declared_roots={'local': ('R:\\media',)},
                        mounts={'local': (self.media,)}, windows=False)
         with self.assertRaises(InterruptedError):
@@ -318,7 +318,7 @@ class PosixShapeTests(_ScanCase):
         def save(state):
             saved.update(json.loads(json.dumps(state)))
             if state.get('cursor'):
-                raise InterruptedError('模拟文件批次提交后退出')
+                raise InterruptedError('simulated exit after a file batch commit')
         options = dict(declared_roots={'local': ('R:\\media',)}, mounts={'local': (self.media,)}, windows=False)
         with patch.object(scan, 'BATCH_SIZE', 1), self.assertRaises(InterruptedError):
             self._scan('R:\\media', save_checkpoint=save, **options)

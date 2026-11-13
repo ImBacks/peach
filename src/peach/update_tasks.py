@@ -15,9 +15,10 @@ from weakref import WeakValueDictionary
 from filelock import FileLock, Timeout
 
 from .fsutil import atomic_write_text
+from .user_messages import UserFacingError
 
 
-class UpdateBusy(ValueError):
+class UpdateBusy(UserFacingError, ValueError):
     """任务或安装事务占用数据目录，调用方应保留当前程序。"""
 
 
@@ -52,10 +53,17 @@ def _read(path: Path) -> dict:
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        raise UpdateBusy("任务保护状态无法读取，请检查数据目录后重试。") from exc
+        raise UpdateBusy("errors.updateTasks.stateUnreadable") from exc
     if not isinstance(value, dict):
-        raise UpdateBusy("任务保护状态无效，请检查数据目录后重试。")
+        raise UpdateBusy("errors.updateTasks.stateInvalid")
     return value
+
+
+def _busy(data: dict, code: str) -> UpdateBusy:
+    """预约期间拒绝新任务：预约者写下了自己的那句话（`reserve(busy=...)`）就照转，否则用 `code`。"""
+    if data.get("busy"):
+        return UpdateBusy("errors.updateTasks.reservedBusy", {"message": str(data["busy"])})
+    return UpdateBusy(code)
 
 
 def _alive(data: dict) -> bool:
@@ -83,7 +91,7 @@ def gate(root: Path):
     try:
         stack.enter_context(_mutex(root))
     except Timeout:
-        raise GateBusy("任务闸门正忙，稍后自动重试。") from None
+        raise GateBusy("errors.updateTasks.gateBusy") from None
     with stack:
         yield
 
@@ -94,7 +102,7 @@ def admission(db: Path):
     root = state_for(db)
     with gate(root):
         if data := _maintenance(root):
-            raise UpdateBusy(data.get("busy") or "正在准备安装更新，暂时不能启动新任务。请等待安装完成。")
+            raise _busy(data, "errors.updateTasks.preparingInstall")
         yield
 
 
@@ -126,7 +134,7 @@ def reserve(db: Path, *, owner: int | None = None, busy: str | None = None) -> s
     root = state_for(db)
     with _mutex(root):
         if data := _maintenance(root):
-            raise UpdateBusy(data.get("busy") or "已有更新安装正在进行，请等待完成。")
+            raise _busy(data, "errors.updateTasks.installInProgress")
         token = uuid.uuid4().hex
         atomic_write_text(root / "install.json", json.dumps({
             "pid": owner if owner is not None else os.getpid(), "token": token,
@@ -159,7 +167,7 @@ def is_pausing(db: Path) -> bool:
 def check_pause(db: Path | None) -> None:
     if db is not None and is_pausing(db):
         from .jobs import JobPaused
-        raise JobPaused('任务已暂停，安装完成后自动继续。')
+        raise JobPaused('errors.updateTasks.pausedForInstall')
 
 
 def running(db: Path, *, own_files=(), own_runs=(), task_rows: bool = True) -> list[str]:
@@ -201,7 +209,7 @@ def _running(db: Path, *, own_files=(), own_runs=(), task_rows: bool = True) -> 
             try:
                 pid = int(path.read_text(encoding="ascii").strip())
             except (OSError, ValueError):
-                raise UpdateBusy("批处理进程状态无法确认，安装已取消。") from None
+                raise UpdateBusy("errors.updateTasks.batchStateUnknown") from None
             paused = _read(root / 'paused' / f'{pid}.json')
             if process_alive(pid) and not paused:
                 labels.append(path.stem)
@@ -241,7 +249,7 @@ def transfer(db: Path, token: str, owner: int) -> None:
     with _mutex(root):
         data = _read(root / "install.json")
         if not token or data.get("token") != token:
-            raise UpdateBusy("更新安装预约已失效，请重新准备更新。")
+            raise UpdateBusy("errors.updateTasks.reservationExpired")
         atomic_write_text(root / "install.json", json.dumps({"pid": owner, "token": token}))
 
 

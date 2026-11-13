@@ -16,6 +16,7 @@ import { Button } from '@/components/base/buttons/button';
 
 import { apiGet, apiSend, errorMessage } from '../../api';
 import { javTitleParts } from '../../core/jav-title';
+import { serverLabel } from '../../core/server-text';
 import { entityDisplayName } from '../../core/entity-names';
 import { useEntityNames } from '../use-entity-names';
 import type { DownloadsSnapshot, DownloadTask } from '../bundle';
@@ -55,8 +56,18 @@ const taskName = (task: DownloadTask) => {
   return [code, title].filter(Boolean).join(' · ') || t('manage:downloadsPanel.magnetHash', { hash: task.info_hash?.slice(0, 8) ?? task.id });
 };
 
-export const failureText = (task: DownloadTask) =>
-  task.failure_label ? [task.failure_label, task.failure_detail].filter(Boolean).join('：') : '';
+/** 状态、失败类别与整理状态按 id 取当前界面语言；没有译文的照用服务端的中文名。
+ *  整理状态排了自动重试时服务端给 `postprocess_label_code`（第几次），优先用它。 */
+const stateLabel = (task: DownloadTask) => serverLabel(`download.state.${task.state}`, task.state_label);
+const postprocessLabel = (task: DownloadTask) =>
+  serverLabel(task.postprocess_label_code || `download.postprocess.${task.postprocess_state}`, task.postprocess_label,
+    task.postprocess_label_params);
+
+export const failureText = (task: DownloadTask) => {
+  if (!task.failure_label) return '';
+  const label = serverLabel(`download.failure.${task.failure}`, task.failure_label);
+  return task.failure_detail ? t('shell:format.labelValue', { label, value: task.failure_detail }) : label;
+};
 
 // 服务端的入库后处理说明是中文原文（后端文案阶段再本地化），这里只把两句内部用语换成用户读得懂的说法。
 const postprocessDetail = (task: DownloadTask) => (task.postprocess_detail || '')
@@ -154,10 +165,10 @@ function TaskCard({ task, writable }: { task: DownloadTask; writable: boolean })
               className="block truncate rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus-ring">{taskName(task)}</a> : taskName(task)}
           </strong>
           <div className="flex shrink-0 items-center gap-2">
-            <Chip color={STATE_COLORS[task.state] ?? 'neutral'}>{task.state_label}</Chip>
+            <Chip color={STATE_COLORS[task.state] ?? 'neutral'}>{stateLabel(task)}</Chip>
             {task.state === 'ingested'
             ? <Chip color={task.postprocess_state === 'complete' ? 'lime'
-              : task.postprocess_state === 'failed' ? 'rose' : task.postprocess_state === 'running' ? 'blue' : 'neutral'}>{task.postprocess_label}</Chip>
+              : task.postprocess_state === 'failed' ? 'rose' : task.postprocess_state === 'running' ? 'blue' : 'neutral'}>{postprocessLabel(task)}</Chip>
             : null}
           </div>
         </div>

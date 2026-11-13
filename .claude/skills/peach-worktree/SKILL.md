@@ -57,6 +57,6 @@ description: Peach 代码任务开工，以及创建、提交、集成或回收�
 
 ## 回收与顶层归置
 
-用 `prune` 预演，`prune --apply` 仅回收入口判定安全的目录。脏文件、锁定活动树、忽略的 build 文件或占用进程均保留；不能因分支已合入就解锁或删除。检查失败不绕过门槛。
+用 `prune` 预演，`prune --apply` 仅回收入口判定安全的目录，`create` 每天顺带跑一次。脏文件、活动锁、build 会话文件或占用进程均保留，不因分支已合入就解锁；`create` 的锁闲置 7 天过期，其它锁不碰。闲置树的会话文件移进 attic 后回收，留下的删 `node_modules`。检查失败不绕过门槛。
 `residue`、`failed`、`holders`、`swept` 以入口结果解释：只按 PID 清理本任务残留，未登记目录只自动删空目录，有文件留待确认。完成回收后核对注册列表与目录状态。
 项目父目录只放 `peach-app`、`peach-data`、`peach-sync`、`peach-worktrees` 与 `attic`；归档按用途放 attic 子目录，不新增 peach 前缀落点。归档中的账本、复核产物与可能含凭据的工具状态仍受保护，删除单独授权。

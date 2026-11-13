@@ -125,7 +125,7 @@ def resolve(ref: str, connection: sqlite3.Connection, entity_id: int, *, project
     listed = choices(connection, entity_id, project=project)
     allowed = {base for choice in listed for base in (choice.bases or (choice.ref,))}
     if ref not in allowed:
-        raise PickerError("这张备选图片不属于当前创作者")
+        raise PickerError("errors.avatarOnline.notThisCreator")
     if ref.startswith("follow-link:"):
         row = connection.execute("SELECT url FROM entity_link WHERE id=? AND entity_id=?",
                                  (int(ref.split(":")[1]), entity_id)).fetchone()
@@ -147,8 +147,8 @@ def resolve(ref: str, connection: sqlite3.Connection, entity_id: int, *, project
             body = media(item, index)
         provider = "follow-content"
     if not body:
-        raise PickerError("这张图未取得，请稍后重试")
+        raise PickerError("errors.avatarOnline.imageNotFound")
     if len(body) > MAX_IMAGE_BYTES:
-        raise PickerError("图片超过大小上限")
+        raise PickerError("errors.avatarOnline.imageOverLimit")
     body = prepare_image(body)
     return body, {"source": "avatar picker", "provider": provider, "external_id": ref}

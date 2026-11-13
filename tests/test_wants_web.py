@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from peach import feed_followup, wants, web_wants  # noqa: E402
 from peach.web_contract import WebContract  # noqa: E402
 from peach.web_router import dispatch_api_get, dispatch_api_post  # noqa: E402
+from peach.user_messages import UserValueError
 from support.ledger import fresh_ledger  # noqa: E402
 
 
@@ -171,7 +172,7 @@ class MagnetLookupTests(unittest.TestCase):
         from peach.wants_magnets import MagnetSearch
         from peach.sources import SourceFailure, FailureReason
         def refused(root, code):
-            raise SourceFailure(FailureReason.AUTH_REQUIRED, 'javdb 要求登录')
+            raise SourceFailure(FailureReason.AUTH_REQUIRED, 'errors.javdb.loginRequired')
         result = MagnetSearch(self.root, fetcher=refused).query('DEMO-001')
         self.assertEqual(result['state'], 'error')
         self.assertIn('登录', result['error'])
@@ -246,7 +247,7 @@ class WantWebFixture(unittest.TestCase):
     def _collect(self, provider, code):
         self.collected.append(code)
         if code in self.collect_misses:
-            raise ValueError("来源链上都没有这个番号的资料")
+            raise UserValueError("errors.feedFollowup.noMetadata", {"chain": "r18dev、javdb"})
         return ({"title": f"{code} 的标题", "studio": "示例厂牌", "release_date": "2026-09-20",
                  "performers": [{"name": "深田えいみ"}]}, "https://images.example.test/cover.jpg")
 
@@ -319,7 +320,7 @@ class WantListTests(WantWebFixture):
         self.post("/api/wants", {"action": "add", "code": "SSIS-951"})
         self.settle()
         item = self.get()["items"][0]
-        self.assertEqual(item["scrape_error"], "来源链上都没有这个番号的资料")
+        self.assertEqual(item["scrape_error"], "来源链 r18dev、javdb 上都没有这个番号的资料")
         self.assertEqual(self.contract.task_runs.query(task_key='want-scrape')[0].result_summary['incomplete'], 1)
         with self.contract.database.read_connection() as connection:
             self.assertEqual(web_wants.backlog(connection, self.contract.cover_root), [])

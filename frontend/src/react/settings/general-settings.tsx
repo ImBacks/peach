@@ -6,6 +6,7 @@ import { Button } from '@/components/base/buttons/button';
 import { Switch } from '@/components/base/switch/switch';
 
 import { apiSend } from '../../api';
+import { codedText } from '../../core/server-text';
 import type { ConfigurationGroupProps, StartupState } from '../bundle';
 import { groupRoot } from './configuration-panel';
 import { AutomaticUpdates } from './maintenance-settings';
@@ -34,6 +35,8 @@ export function StartupSettings({ startup, receipt }: { startup: StartupState; r
   // 桌面快捷方式只有 Windows 有，桌面上已经摆着另一份安装的图标时也不给动；两种情况后端
   // 都在 desktop_message 里说了原因，所以按它有没有内容判禁用，不在前端判平台。
   const desktopReady = startup.available && !startup.desktop_message;
+  const desktopMessage = codedText(startup, 'desktop_message');
+  const message = codedText(startup, 'message');
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,13 +54,13 @@ export function StartupSettings({ startup, receipt }: { startup: StartupState; r
         <SettingsRow label={t('settings:startup.trayOnly')} description={t('settings:startup.trayOnlyHelp')}>
           <Switch aria-label={t('settings:startup.trayOnly')} isSelected={silent} isDisabled={!startup.available || !enabled} onChange={setSilent} />
         </SettingsRow>
-        <SettingsRow label={t('settings:startup.desktopShortcut')} description={startup.desktop_message || undefined}>
+        <SettingsRow label={t('settings:startup.desktopShortcut')} description={desktopMessage || undefined}>
           <Switch aria-label={t('settings:startup.desktopShortcut')} isSelected={desktop} isDisabled={!desktopReady} onChange={setDesktop} />
         </SettingsRow>
       </Rows>
-      {startup.message || action.error ? (
+      {message || action.error ? (
         <Stack divided>
-          {startup.message ? <Help>{startup.message}</Help> : null}
+          {message ? <Help>{message}</Help> : null}
           {action.error ? <ErrorText>{action.error}</ErrorText> : null}
         </Stack>
       ) : null}

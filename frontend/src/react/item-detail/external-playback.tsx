@@ -6,8 +6,11 @@ import { SelectField } from '../settings-panel/legacy-controls';
 import { ErrorText, Help } from '../settings/section';
 import { busyProps, useAction } from '../settings/use-action';
 import { t } from '../../i18n';
+import { serverLabel } from '../../core/server-text';
 
 const TARGET_KEY = 'peach.playback-target.v1';
+/** 本机播放器：`label` 是播放器名或服务端按 zh-CN 渲染的「系统默认播放器」，后者带 `label_code`。 */
+type LocalPlayer = { id: string; label: string; label_code?: string };
 const NETWORK_TARGETS = [['m3u', t('catalog:externalPlayback.m3uPlaylist')], ['url', t('catalog:externalPlayback.streamUrlVr')]] as const;
 
 function savedTarget() {
@@ -16,7 +19,7 @@ function savedTarget() {
 }
 
 export function ExternalPlayback({ id, onOpened }: { id: number; onOpened?(): void }) {
-  const [players, setPlayers] = useState<{ id: string; label: string }[] | null>(null);
+  const [players, setPlayers] = useState<LocalPlayer[] | null>(null);
   const [player, setPlayer] = useState(savedTarget);
   const [links, setLinks] = useState<{ url: string; playlist: string } | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -24,7 +27,7 @@ export function ExternalPlayback({ id, onOpened }: { id: number; onOpened?(): vo
   const action = useAction();
   useEffect(() => {
     const controller = new AbortController();
-    apiGet<{ players: { id: string; label: string }[] }>('/api/local-players', controller.signal).then(result => {
+    apiGet<{ players: LocalPlayer[] }>('/api/local-players', controller.signal).then(result => {
       if (controller.signal.aborted) return;
       setPlayers(result.players);
       setPlayer(current => {
@@ -65,7 +68,7 @@ export function ExternalPlayback({ id, onOpened }: { id: number; onOpened?(): vo
   return <div data-local-playback="">
     <div data-local-playback-row="">
       <SelectField id={`external-player-${id}`} label={t('catalog:externalPlayback.externalPlayer')}
-        options={[...(players || []).map(item => [`local:${item.id}`, item.label] as const), ...NETWORK_TARGETS]}
+        options={[...(players || []).map(item => [`local:${item.id}`, serverLabel(item.label_code ?? '', item.label)] as const), ...NETWORK_TARGETS]}
         value={player} disabled={players === null || !!action.busy} epoch={epoch * 2 + Number(players !== null)} onPick={value => {
           setPlayer(value);
           setLinks(null);

@@ -31,12 +31,14 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .follow_secrets import CredentialStore
 from .fsutil import atomic_write_text
 from .push_discovery import CloudPathError, CloudPrefix, map_cloud_path, normalise_prefix
+from . import interface_text
+from .user_messages import UserFacingError, UserValueError, nested_message
 from .repository import LedgerDatabase, in_background
 from .task_retry import RETRY_DELAYS, retry_delay
 
@@ -63,17 +65,19 @@ POSTPROCESS_QUEUED = "queued"
 POSTPROCESS_RUNNING = "running"
 POSTPROCESS_COMPLETE = "complete"
 POSTPROCESS_FAILED = "failed"
-POSTPROCESS_LABELS = {
-    POSTPROCESS_NOT_REQUESTED: "整理未开始", POSTPROCESS_PENDING: "等待整理",
-    POSTPROCESS_QUEUED: "整理已排队", POSTPROCESS_RUNNING: "整理中",
-    POSTPROCESS_COMPLETE: "整理完成", POSTPROCESS_FAILED: "整理失败",
-}
+POSTPROCESS_STATES = (POSTPROCESS_NOT_REQUESTED, POSTPROCESS_PENDING, POSTPROCESS_QUEUED, POSTPROCESS_RUNNING,
+                      POSTPROCESS_COMPLETE, POSTPROCESS_FAILED)
+STATES = (CANDIDATE, SELECTED, SUBMITTED, REMOTE_RUNNING, REMOTE_DONE, LANDED, INGESTED, FAILED, CANCELLED, STALLED,
+          SUBMIT_PENDING)
 
-STATE_LABELS = {
-    CANDIDATE: "待选择的资源", SELECTED: "已选定", SUBMITTED: "已提交", REMOTE_RUNNING: "网盘下载中",
-    REMOTE_DONE: "网盘下载完成", LANDED: "文件已可访问", INGESTED: "已入库",
-    FAILED: "失败", CANCELLED: "已取消", STALLED: "长时间未完成", SUBMIT_PENDING: "等待自动重新提交",
-}
+
+def state_label(state: str) -> str:
+    """下载状态的名字，在 `server:download.state.<state>`（ADR-0159）；认不得的状态照原样。"""
+    return interface_text.label(f"server:download.state.{state}", state)
+
+
+def postprocess_label(state: str) -> str:
+    return interface_text.label(f"server:download.postprocess.{state}", state)
 #: 轮询要看的状态。远端完成与已落地还在等账本里出现那个文件；等待重新提交的还要再交一次。
 TRACKED_STATES = frozenset({SUBMIT_PENDING, SUBMITTED, REMOTE_RUNNING, REMOTE_DONE, LANDED})
 #: 可以再提交一次的状态。已入库的不必，在跑的接管就行。
@@ -83,22 +87,18 @@ RESUBMITTABLE_STATES = frozenset({FAILED, CANCELLED, STALLED})
 @dataclass(frozen=True)
 class FailureKind:
     key: str
-    label: str
     retryable: bool = False
+
+    @property
+    def label(self) -> str:
+        """失败类别的名字，在 `server:download.failure.<key>`。"""
+        return interface_text.text(f"server:download.failure.{self.key}")
 
 
 FAILURE_KINDS: dict[str, FailureKind] = {kind.key: kind for kind in (
-    FailureKind("config", "配置或登录有误"),
-    FailureKind("quota", "下载额度已用完"),
-    FailureKind("rejected", "网盘拒绝下载该资源"),
-    FailureKind("invalid_link", "链接无效"),
-    FailureKind("no_source", "没有可用下载源或进度长时间未更新"),
-    FailureKind("not_accepted", "网盘没有收下任务"),
-    FailureKind("removed", "网盘任务被删除"),
-    FailureKind("duplicate", "下载任务已存在"),
-    FailureKind("not_landed", "目标目录中未找到下载文件"),
-    FailureKind("mismatch", "下载内容与目标作品不符"),
-    FailureKind("network", "网络暂时不可用", retryable=True),
+    FailureKind("config"), FailureKind("quota"), FailureKind("rejected"), FailureKind("invalid_link"),
+    FailureKind("no_source"), FailureKind("not_accepted"), FailureKind("removed"), FailureKind("duplicate"),
+    FailureKind("not_landed"), FailureKind("mismatch"), FailureKind("network", retryable=True),
 )}
 
 
@@ -107,23 +107,51 @@ def never_seen(task: "DownloadTask") -> bool:
     return task.progress is None and not task.remote_id
 
 
-class DownloadError(RuntimeError):
-    """一次远端操作失败。`detail` 是给用户看的中文原因，不含凭据。
+class DownloadError(UserFacingError, RuntimeError):
+    """一次远端操作失败。`failure` 是故障类别；原因写成 code 与参数，不含凭据。
 
+    `detail` 是按 zh-CN 渲染的那一句，任务行的失败原因与设置页的检查报告照旧读它。
     `block` 只给 115 的违规拦截（`50038`）：这类失败不重试，同一 infohash 以后直接拒收。
     """
 
-    def __init__(self, failure: str, detail: str, *, block: bool = False):
+    def __init__(self, failure: str, code: str, params: Mapping[str, Any] | None = None, *,
+                 block: bool = False):
         if failure not in FAILURE_KINDS:
-            raise ValueError(f"未知的失败类别：{failure}")
-        super().__init__(detail)
+            raise ValueError(f"unknown failure kind: {failure}")
+        super().__init__(code, params)
         self.failure = failure
-        self.detail = detail
+        self.detail = self.message
         self.block = block
 
     @property
     def retryable(self) -> bool:
         return FAILURE_KINDS[self.failure].retryable
+
+
+class Problem(str):
+    """设置块与检查报告里的一条问题（ADR-0159）：值是按 zh-CN 渲染的原句，`code`、`params` 给页面取译文。
+
+    仍是 `str`：去重、比对与老前端读 `problems` 都照旧；`problem_codes` 把它们并行列给页面。
+    """
+
+    code: str
+    params: dict
+
+    def __new__(cls, code: str, params: Mapping[str, Any] | None = None) -> "Problem":
+        values = dict(params or {})
+        problem = super().__new__(cls, interface_text.text(f"server:{code}", values))
+        problem.code, problem.params = code, values
+        return problem
+
+    @classmethod
+    def of(cls, error: UserFacingError) -> "Problem":
+        return cls(error.code, error.params)
+
+
+def problem_codes(problems) -> list[dict]:
+    """与 `problems` 一一对应的 code 与参数；不带 code 的旧原句给空 code，页面照原文显示。"""
+    return [{"code": getattr(problem, "code", ""), "params": dict(getattr(problem, "params", {}))}
+            for problem in problems]
 
 
 #: 115 对违规内容的离线拦截码。CloudDrive2 把 115 的原文放进 `errorMessage`，
@@ -133,18 +161,19 @@ BLOCKED_PATTERN = re.compile(r"50038|违规|敏感")
 
 def classify_remote_message(message: str) -> DownloadError:
     """远端只给一句话时按字面归类。认不出的归「资源被拒」，原文照抄给用户。"""
-    text = str(message or "").strip() or "远端没有给出原因"
+    text = str(message or "").strip()
+    if not text:
+        return DownloadError("rejected", "errors.downloads.remoteRejectedNoReason")
     lowered = text.casefold()
     if BLOCKED_PATTERN.search(text):
-        return DownloadError("rejected", f"115 拦截了这个资源（违规内容，50038），不会重试：{text}",
-                             block=True)
+        return DownloadError("rejected", "errors.downloads.remoteBlocked", {"text": text}, block=True)
     if any(word in lowered for word in ("配额", "quota", "次数", "上限", "limit")):
-        return DownloadError("quota", f"离线配额不够：{text}")
+        return DownloadError("quota", "errors.downloads.remoteQuota", {"text": text})
     if any(word in lowered for word in ("已存在", "exist", "重复", "duplicate")):
-        return DownloadError("duplicate", f"远端已有同一个任务：{text}")
+        return DownloadError("duplicate", "errors.downloads.remoteDuplicate", {"text": text})
     if any(word in lowered for word in ("链接", "无效", "invalid", "url", "格式")):
-        return DownloadError("invalid_link", f"远端不认这个链接：{text}")
-    return DownloadError("rejected", f"远端拒绝了这个任务：{text}")
+        return DownloadError("invalid_link", "errors.downloads.remoteInvalidLink", {"text": text})
+    return DownloadError("rejected", "errors.downloads.remoteRejected", {"text": text})
 
 
 # ---------------------------------------------------------------- 磁力
@@ -171,7 +200,7 @@ def normalise_info_hash(raw: str) -> str:
             return base64.b32decode(text.upper()).hex()
         except binascii.Error:
             pass
-    raise ValueError("磁力链接里的 infohash 不是 40 位十六进制或 32 位 base32")
+    raise UserValueError("errors.downloads.infohashInvalid")
 
 
 _TRACKER = re.compile(r"^(?:udp|https?|wss?)://[A-Za-z0-9.\-]+(?::\d{1,5})?(?:/[!-~]*)?$")
@@ -205,7 +234,7 @@ def parse_magnet(raw: str) -> Magnet:
     """解析用户粘贴的磁力，或一个裸 infohash。只认 `urn:btih`，v2 的 `btmh` 不在幂等键口径内。"""
     text = str(raw or "").strip()
     if not text:
-        raise ValueError("请粘贴磁力链接")
+        raise UserValueError("errors.downloads.magnetRequired")
     if not text.casefold().startswith("magnet:"):
         info_hash = normalise_info_hash(text)
         return Magnet(info_hash, f"magnet:?xt=urn:btih:{info_hash}")
@@ -215,7 +244,7 @@ def parse_magnet(raw: str) -> Magnet:
             info_hash = normalise_info_hash(value[len("urn:btih:"):])
             name = (query.get("dn") or [""])[0].strip()
             return Magnet(info_hash, clean_magnet(text), name[:300])
-    raise ValueError("磁力链接里没有 urn:btih，Peach 只接受 BitTorrent 磁力")
+    raise UserValueError("errors.downloads.magnetNotBittorrent")
 
 
 def magnet_info_hash(uri: str) -> str:
@@ -239,6 +268,13 @@ class RemoteStatus:
     message: str = ""
     #: 提交时远端目录里已有同一 infohash 的任务，接过来跟踪，没有调提交接口。
     adopted: bool = False
+    #: 远端只报失败、没给原文时，渠道自己写的原因 code；有它就不再按 `message` 的字面归类。
+    message_code: str = ""
+
+    def failure(self) -> "DownloadError":
+        if self.message_code:
+            return DownloadError("rejected", self.message_code)
+        return classify_remote_message(self.message)
 
 
 RUNNING, DONE, ERROR, MISSING = "running", "done", "error", "missing"
@@ -346,10 +382,17 @@ class DownloadTask:
     postprocess_retries: int = 0
 
     @property
-    def postprocess_label(self) -> str:
+    def postprocess_label_code(self) -> tuple[str, dict]:
+        """整理状态显示名的 code 与参数：排了自动重试的说第几次，其余按状态取。"""
         if self.postprocess_state == POSTPROCESS_PENDING and self.next_check_at:
-            return f"等待自动重试（{self.postprocess_retries}/{len(RETRY_DELAYS)}）"
-        return POSTPROCESS_LABELS.get(self.postprocess_state, self.postprocess_state)
+            return "labels.downloads.postprocessRetrying", {
+                "retries": self.postprocess_retries, "limit": len(RETRY_DELAYS)}
+        return f"download.postprocess.{self.postprocess_state}", {}
+
+    @property
+    def postprocess_label(self) -> str:
+        code, params = self.postprocess_label_code
+        return interface_text.label(f"server:{code}", self.postprocess_state, params)
 
     @property
     def location(self) -> str:
@@ -384,7 +427,7 @@ class DownloadTask:
             "source_uri": self.source_uri, "display_name": self.display_name,
             "target": self.target, "code": self.code, "title": self.title, "origin": self.origin,
             "display_code": display_code, "display_title": display_title,
-            "state": self.state, "state_label": STATE_LABELS.get(self.state, self.state),
+            "state": self.state, "state_label": state_label(self.state),
             "failure": self.failure, "failure_label": kind.label if kind else None,
             "failure_detail": self.failure_detail,
             "progress": self.progress, "remote_name": self.remote_name,
@@ -393,6 +436,8 @@ class DownloadTask:
             "finished_at": self.finished_at, "blocked": bool(self.blocked_at),
             "postprocess_state": self.postprocess_state,
             "postprocess_label": self.postprocess_label,
+            "postprocess_label_code": self.postprocess_label_code[0],
+            "postprocess_label_params": self.postprocess_label_code[1],
             "postprocess_detail": self.postprocess_detail,
             "postprocess_run_id": self.postprocess_run_id,
             "postprocessed_at": self.postprocessed_at,
@@ -591,7 +636,9 @@ class DownloadStore:
         detail = f'{type(error).__name__}: {error}'
         if delay is None:
             if task.postprocess_retries >= len(RETRY_DELAYS):
-                detail = f'自动重试 {task.postprocess_retries} 次后仍未完成；{detail}'
+                # 任务表只有原句一列，存按 zh-CN 渲染的那句（ADR-0159 延后：要存 code 得加列）。
+                detail = interface_text.text("server:labels.downloads.postprocessRetriesExhausted",
+                                             {"retries": task.postprocess_retries, "detail": detail})
             self.postprocess(task_id, POSTPROCESS_FAILED, detail=detail)
             return False
         with self.database.write_transaction(notify=False) as connection:
@@ -615,7 +662,7 @@ def normalise_target(raw: str) -> str:
     """网盘里的目标目录统一成 `/a/b`。CloudDrive2 与 PikPak 都是 POSIX 口径。"""
     text = normalise_prefix(raw)
     if text == "/" or any(part in {".", ".."} for part in text.split("/")):
-        raise ValueError("目标目录要写成网盘里的一个具体文件夹，不能是网盘根目录")
+        raise UserValueError("errors.downloads.targetIsRoot")
     return text
 
 
@@ -639,19 +686,19 @@ def clean_address(raw) -> str:
         return ""
     if "://" not in text:
         text = "http://" + text
-    message = "CloudDrive2 地址只写协议、主机和端口，例如 http://127.0.0.1:19798"
+    message = "errors.downloads.addressFormat"
     if len(text) > 2048 or "\\" in text or any(char.isspace() or ord(char) < 32 for char in text):
-        raise ValueError(message)
+        raise UserValueError(message)
     try:
         parts = urlsplit(text)
         port = parts.port
     except ValueError:
-        raise ValueError("CloudDrive2 地址的端口必须是 1–65535 的整数，IPv6 地址须放在方括号内") from None
+        raise UserValueError("errors.downloads.addressPortInvalidIpv6") from None
     if parts.scheme not in {"http", "https"} or not parts.hostname or parts.path not in {"", "/"} \
             or parts.query or parts.fragment or parts.username is not None or parts.password is not None:
-        raise ValueError(message)
+        raise UserValueError(message)
     if port == 0 or parts.netloc.endswith(":"):
-        raise ValueError("CloudDrive2 地址的端口必须是 1–65535 的整数")
+        raise UserValueError("errors.downloads.addressPortInvalid")
     return f"{parts.scheme}://{parts.netloc}"
 
 
@@ -667,15 +714,15 @@ class DownloadSettings:
         except FileNotFoundError:
             return DownloadConfig()
         except (OSError, ValueError):
-            LOGGER.warning("云下载设置读不出来，按默认值跑：%s", self.path)
-            return DownloadConfig(problems=("云下载设置无法读取，请检查设置文件或重新填写。",))
+            LOGGER.warning("Could not read cloud download settings, using defaults: %s", self.path)
+            return DownloadConfig(problems=(Problem("labels.downloads.settingsUnreadable"),))
         if not isinstance(payload, dict):
-            return DownloadConfig(problems=("云下载设置格式不符，请检查设置文件或重新填写。",))
+            return DownloadConfig(problems=(Problem("labels.downloads.settingsMalformed"),))
         try:
             return self._parse(payload, declared_roots=None, saved=True)
         except ValueError:
-            LOGGER.warning("云下载设置有不合法的值，按默认值跑：%s", self.path)
-            return DownloadConfig(problems=("云下载设置含有无效值，请检查目标目录和等待上限。",))
+            LOGGER.warning("Cloud download settings contain invalid values, using defaults: %s", self.path)
+            return DownloadConfig(problems=(Problem("labels.downloads.settingsInvalid"),))
 
     def _parse(self, body: dict, *, declared_roots, saved: bool = False) -> DownloadConfig:
         from .media_sources import SOURCE_REGISTRY
@@ -689,15 +736,17 @@ class DownloadSettings:
         if root and declared_roots is not None:
             known = {str(item).casefold(): str(item) for item in declared_roots.get("pikpak", ())}
             if root.casefold() not in known:
-                shown = "、".join(known.values()) or "（设置文件里没有 pikpak 来源）"
-                raise ValueError(f"{root} 不是已声明的 PikPak 媒体根；已知：{shown}")
+                if not known:
+                    raise UserValueError("errors.downloads.notPikpakRootNoneDeclared", {"root": root})
+                raise UserValueError("errors.downloads.notPikpakRoot",
+                                     {"root": root, "known": "、".join(known.values())})
             root = known[root.casefold()]
         try:
             hours = int(body.get("wait_hours") or DEFAULT_WAIT_HOURS)
         except (TypeError, ValueError) as error:
-            raise ValueError("等待上限要写成小时数") from error
+            raise UserValueError("errors.downloads.waitHoursNotNumber") from error
         if not 1 <= hours <= MAX_WAIT_HOURS:
-            raise ValueError(f"等待上限在 1 到 {MAX_WAIT_HOURS} 小时之间")
+            raise UserValueError("errors.downloads.waitHoursOutOfRange", {"max": MAX_WAIT_HOURS})
         problems = ()
         try:
             address = clean_address(body.get("clouddrive_address"))
@@ -705,12 +754,12 @@ class DownloadSettings:
             if not saved:
                 raise
             address = str(body.get("clouddrive_address") or "").strip()
-            problems = (str(error),)
+            problems = (Problem.of(error) if isinstance(error, UserFacingError) else str(error),)
         return DownloadConfig(address, targets, root, hours, problems)
 
     def save(self, body: dict, declared_roots) -> DownloadConfig:
         if not isinstance(body, dict):
-            raise ValueError("设置必须是一个对象")
+            raise ValueError("settings must be an object")
         config = self._parse(body, declared_roots=declared_roots)
         atomic_write_text(self.path, json.dumps(config.payload(), ensure_ascii=False, indent=2) + "\n")
         return config
@@ -768,16 +817,16 @@ class DownloadService:
                code: str | None = None, title: str | None = None,
                origin: str | None = None, dedupe_code: bool = False) -> SubmitResult:
         if not self.available:
-            raise ValueError("云下载只在允许修改数据库的设备上可用")
+            raise UserValueError("errors.downloads.writerOnly")
         magnet = parse_magnet(source)
         channels = self.channel_snapshot()["providers"]
         channel = next((row for row in channels if row["key"] == provider), None)
         if channel is None or (self.channel_catalog is not None and not channel["configured"]):
-            raise ValueError("请选择媒体库中可用的云下载渠道")
+            raise UserValueError("errors.downloads.channelUnavailable")
         folder = normalise_target(target or channel["target"])
         if provider.startswith("clouddrive:") and not (
                 folder == channel["target"] or folder.startswith(channel["target"].rstrip("/") + "/")):
-            raise ValueError("下载目标目录必须位于所选媒体库内")
+            raise UserValueError("errors.downloads.targetOutsideLibrary")
         with self._submit_lock:
             now = self.clock()
             if dedupe_code and code and (existing := self.store.active_by_code(code)) is not None:
@@ -836,7 +885,8 @@ class DownloadService:
                     self._reschedule(task, now, error.detail)
                     return
                 if error.retryable:
-                    error = DownloadError(error.failure, f"{error.detail}（自动重试 {task.checks} 次后仍未提交）")
+                    error = DownloadError(error.failure, "errors.downloads.retriesExhausted",
+                                          {"detail": nested_message(error), "checks": task.checks})
                 self._fail(task, error, now)
                 self.store.record_submission(task=task, outcome="failed", now=now,
                                              failure=error.failure, detail=error.detail)
@@ -876,17 +926,17 @@ class DownloadService:
 
     def cancel(self, task_id: int) -> DownloadTask:
         if not self.available:
-            raise ValueError("云下载只在允许修改数据库的设备上可用")
+            raise UserValueError("errors.downloads.writerOnly")
         task = self.store.get(int(task_id))
         if task is None:
-            raise ValueError("没有这个下载任务")
+            raise UserValueError("errors.downloads.taskNotFound")
         if task.state not in TRACKED_STATES:
-            raise ValueError("这个任务已经结束，不能取消")
+            raise UserValueError("errors.downloads.taskFinished")
         if task.state in {SUBMITTED, REMOTE_RUNNING}:
             try:
                 self.providers(task.provider).cancel(task)
             except DownloadError as error:
-                raise ValueError(f"远端没有取消成功：{error.detail}") from error
+                raise UserValueError("errors.downloads.cancelFailed", {"detail": nested_message(error)}) from error
         now = self.clock()
         task.state = CANCELLED
         task.finished_at = iso(now)
@@ -929,12 +979,13 @@ class DownloadService:
     def retry_postprocess(self, task_id: int) -> DownloadTask:
         task = self.store.get(int(task_id))
         if task is None:
-            raise ValueError("没有这个下载任务")
+            raise UserValueError("errors.downloads.taskNotFound")
         if task.state != INGESTED or task.postprocess_state != POSTPROCESS_FAILED:
-            raise ValueError("这个任务没有失败的后处理可以重试")
+            raise UserValueError("errors.downloads.nothingToRetry")
         task.postprocess_retries = 0
         self.store.save(task)
-        self.store.postprocess(task.id, POSTPROCESS_PENDING, detail="等待重新处理")
+        self.store.postprocess(task.id, POSTPROCESS_PENDING,
+                               detail=interface_text.text("server:labels.downloads.postprocessRequeued"))
         task = self.store.get(task.id)
         self._dispatch_postprocess(task)
         return self.store.get(task.id)
@@ -982,7 +1033,7 @@ class DownloadService:
                 upcoming = self.store.next_due(self.clock())
             except Exception:
                 # 一轮里出什么错都不能让线程退出：退出之后所有任务都不再推进，界面上只是不动。
-                LOGGER.exception("云下载对账失败")
+                LOGGER.exception("Cloud download reconciliation failed")
                 upcoming = self.clock() + POLL_DELAYS[2]
             delay = POLL_DELAYS[-1] if upcoming is None else upcoming - self.clock()
             self._wake.wait(timeout=min(max(delay, 1.0), POLL_DELAYS[-1]))
@@ -994,8 +1045,9 @@ class DownloadService:
             try:
                 self.advance(task)
             except Exception:
-                LOGGER.exception("云下载任务 %s 对账失败", task.id)
-                self._reschedule(task, self.clock(), "对账时出现未预期的错误，稍后再试")
+                LOGGER.exception("Reconciliation failed for cloud download task %s", task.id)
+                self._reschedule(task, self.clock(),
+                                 interface_text.text("server:labels.downloads.reconcileUnexpected"))
         return len(due)
 
     def advance(self, task: DownloadTask) -> None:
@@ -1022,8 +1074,8 @@ class DownloadService:
             return
         if task.state in {SUBMITTED, REMOTE_RUNNING} and self._overdue(task, now):
             self._fail(task, DownloadError(
-                "no_source", f"等了 {self.config.wait_hours} 小时远端还没完成，多半是没有人做种。"
-                "可以取消，或换一个磁力"), now, state=STALLED)
+                "no_source", "errors.downloads.noSeeders", {"hours": self.config.wait_hours}),
+                now, state=STALLED)
 
     def _recheck_stalled(self, task: DownloadTask, now: float) -> None:
         """停滞任务的低频复查：远端完成就回到落地流程，否则排下一次，超出期限就不再查。
@@ -1071,7 +1123,7 @@ class DownloadService:
             self._reschedule(task, now)
             return
         if status.state == ERROR:
-            raise classify_remote_message(status.message)
+            raise status.failure()
         if status.state == MISSING:
             if not provider.landed(task):
                 started = parse_iso(task.submitted_at) or now
@@ -1082,8 +1134,8 @@ class DownloadService:
                     self._reschedule(task, now)
                     return
                 if unseen:
-                    raise DownloadError("not_accepted", "网盘没有收下这个任务：提交后离线列表里始终没有它，目标目录里也没有文件")
-                raise DownloadError("removed", "网盘里的这个任务不见了：离线列表里找不到它，目标目录里也没有文件")
+                    raise DownloadError("not_accepted", "errors.downloads.notAccepted")
+                raise DownloadError("removed", "errors.downloads.remoteRemoved")
         self._remote_done(task, status, now)
 
     def _remote_done(self, task: DownloadTask, status, now: float) -> None:
@@ -1101,9 +1153,7 @@ class DownloadService:
     def _settle_landing(self, task: DownloadTask, now: float) -> None:
         mapped = self.landing.ledger_path(task, self.config)
         if mapped is None:
-            raise DownloadError(
-                "not_landed",
-                "目标目录对应不到媒体目录，请检查媒体库挂载和云端路径前缀关联")
+            raise DownloadError("not_landed", "errors.downloads.targetNotMapped")
         location, ledger_path = mapped
         task.ledger_path = ledger_path
         asset_id = self.store.asset_under(location, ledger_path, task.code)
@@ -1130,8 +1180,7 @@ class DownloadService:
             return
         done = parse_iso(task.remote_done_at) or now
         if now - done > LANDING_TIMEOUT:
-            raise DownloadError(
-                "not_landed", f"远端已完成，但挂载目录里一直没有出现 {ledger_path}")
+            raise DownloadError("not_landed", "errors.downloads.notLanded", {"path": ledger_path})
         task.updated_at = iso(now)
         task.next_check_at = iso(now + LANDING_GRACE)
         self.store.save(task)
@@ -1142,7 +1191,7 @@ class DownloadService:
         try:
             self.after_ingest(task)
         except Exception as error:
-            LOGGER.exception("云下载任务 %s 后处理入队失败", task.id)
+            LOGGER.exception("Failed to queue post-processing for cloud download task %s", task.id)
             if self.store.fail_postprocess(task.id, error, now=self.clock()):
                 self.wake()
 

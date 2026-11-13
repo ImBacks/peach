@@ -12,6 +12,7 @@ from .western_artwork import babepedia_page
 from .performer_profiles import read_profile, write_profile
 from .performer_alias_followup import land as land_aliases
 from .social_links import canonical_url, handle, host_of, platform
+from .user_messages import UserValueError
 
 MONTHS = {name: i for i, name in enumerate(('January', 'February', 'March', 'April', 'May',
     'June', 'July', 'August', 'September', 'October', 'November', 'December'), 1)}
@@ -75,7 +76,7 @@ def land(connection, entity_id: int, expected_name: str, record: dict, *, batch:
     """仅补空资料，别名走同名占用判据，现有链接保留。调用方持有事务。"""
     current = connection.execute('SELECT kind,canonical_name FROM entity WHERE id=?', (entity_id,)).fetchone()
     if not current or current[0] not in ('performer', 'creator') or current[1] != expected_name:
-        raise ValueError('艺人身份已变化，请重新预览')
+        raise UserValueError("errors.westernProfiles.identityChanged")
     held = read_profile(connection, entity_id)
     written = False
     if held is None:

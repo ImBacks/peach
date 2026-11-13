@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from .entities import resolve_entity, upsert_asset_entity
 from .entity_classification import trusted_sql, write_claim
 from .field_owners import is_protected, owner_of, write_owned_fields
+from .user_messages import UserValueError
 
 SOURCE = 'script:creator-identity-research'
 #: 通用搜索不收录的日本资料站，页名按 EUC-JP 百分号编码直取。
@@ -133,7 +134,7 @@ def plan(connection, findings):
         entity_id = int(finding['entity_id'])
         entity = _rows(connection, 'entity', 'id=?', (entity_id,))
         if not entity or entity[0]['canonical_name'] != finding['name']:
-            raise ValueError('身份清单与实体名称不一致')
+            raise UserValueError('errors.entityIdentityResearch.nameMismatch')
         relations = _rows(connection, 'asset_entity', "entity_id=? AND role='creator'", (entity_id,)) if finding.get('cast_studios') else []
         cast = []
         for relation in relations:
@@ -145,7 +146,7 @@ def plan(connection, findings):
                 continue
             if not any(claim['facet']=='occupation' and claim['value'] in {'adult_performer','actor','model'}
                        and claim['status']=='observed' for claim in finding['claims']):
-                raise ValueError('出演者迁移需要已取得的公开职业来源')
+                raise UserValueError('errors.entityIdentityResearch.performerNeedsOccupation')
             name = re.escape(finding['name']).replace(r'\ ', r'[ ._-]+')
             publisher = re.escape(asset['studio']).replace(r'\ ', r'[ ._-]+')
             parts = re.split(r'[\\/]', asset['path'])
@@ -159,7 +160,7 @@ def plan(connection, findings):
 
 def apply(connection, frozen):
     if plan(connection, [row['finding'] for row in frozen]) != frozen:
-        raise ValueError('身份计划已过期')
+        raise UserValueError('errors.entityIdentityResearch.planExpired')
     receipt = {'source':SOURCE, 'changes':[], 'created_entities':[]}
     stamp = datetime.now(timezone.utc).isoformat()
     for row in frozen:
@@ -198,7 +199,7 @@ def apply(connection, frozen):
                 if cast['asset']['creator'] == finding['name']:
                     names = {item[0] for item in survivors}
                     if len(names)>1:
-                        raise ValueError('作品存在多个发布者，需复核')
+                        raise UserValueError('errors.entityIdentityResearch.multiplePublishers')
                     write_owned_fields(connection,[asset_id],{'creator':next(iter(names),None)},SOURCE,
                                        expected_revision=cast['asset']['mutation_revision'])
         for target in targets:
@@ -216,10 +217,10 @@ def restore(connection, receipt):
     """有后续修改就拒绝撤回，不覆盖观看历史或人的判断。"""
     for change in receipt['changes']:
         if _rows(connection,change['table'],change['clause'],change['params']) != change['after']:
-            raise ValueError('身份修复记录已发生后续改动')
+            raise UserValueError('errors.entityIdentityResearch.recordChanged')
     for entity in receipt['created_entities']:
         if _rows(connection,'entity','id=?',(entity['id'],)) != [entity]:
-            raise ValueError('新身份已发生后续改动')
+            raise UserValueError('errors.entityIdentityResearch.newIdentityChanged')
     for change in reversed(receipt['changes']):
         table = change['table']
         if table == 'asset':
@@ -236,12 +237,12 @@ def restore(connection, receipt):
         # 新身份的任何其他引用都需要用户保留；只撤回本批创建的空身份。
         references = connection.execute('SELECT count(*) FROM asset_entity WHERE entity_id=?',(entity['id'],)).fetchone()[0]
         if references:
-            raise ValueError('新身份出现额外作品关系')
+            raise UserValueError('errors.entityIdentityResearch.newIdentityHasVideos')
         tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
         for table in tables:
             if not re.fullmatch(r'[a-zA-Z0-9_]+',table):
                 continue
             for foreign in connection.execute(f'PRAGMA foreign_key_list({table})'):
                 if foreign[2]=='entity' and connection.execute(f'SELECT 1 FROM {table} WHERE {foreign[3]}=?',(entity['id'],)).fetchone():
-                    raise ValueError('新身份出现额外资料')
+                    raise UserValueError('errors.entityIdentityResearch.newIdentityHasData')
         connection.execute('DELETE FROM entity WHERE id=?',(entity['id'],))

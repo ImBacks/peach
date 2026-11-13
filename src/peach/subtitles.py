@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 from .catalog_rules import VERSION_TAIL_TOKENS, release_code_from_filename
+from .user_messages import UserFacingError
 
 #: 文本字幕：能转成 WebVTT 交给播放器。
 TEXT_FORMATS = {".srt": "srt", ".ass": "ass", ".ssa": "ssa", ".vtt": "vtt"}
@@ -326,7 +327,7 @@ class SidecarListings:
         return [dict(row) for row in rows]
 
 
-class SubtitleUndecodable(ValueError):
+class SubtitleUndecodable(UserFacingError, ValueError):
     """字节按已知编码都读不出来。消息可以直接给人看。"""
 
 
@@ -355,7 +356,7 @@ def decode(data: bytes) -> str:
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise SubtitleUndecodable("编码未识别")
+    raise SubtitleUndecodable("errors.subtitles.encodingUnknown")
 
 
 _TIME = re.compile(r"(\d{1,3}):([0-5]\d):([0-5]\d)[,.](\d{1,3})")
@@ -459,7 +460,7 @@ def _wrap(cues: Sequence[str]) -> str:
 def to_webvtt(data: bytes, fmt: str) -> str:
     """字幕字节 → WebVTT 文本。格式不可播或编码认不出来都抛异常。"""
     if not is_playable_format(fmt):
-        raise SubtitleUndecodable("图形字幕不能作为文本轨播放")
+        raise SubtitleUndecodable("errors.subtitles.imageSubtitle")
     text = decode(data)
     if fmt == "vtt":
         return vtt_passthrough(text)

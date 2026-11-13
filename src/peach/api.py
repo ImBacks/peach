@@ -10,7 +10,7 @@
 | `routes_configuration` | 本机配置与账号设置 |
 | `routes_jav_browser` | JAV 用户脚本的专用权限、添加与状态查询 |
 | `routes_media` | 播放、分片、缩图、封面、头像、外链圆标 |
-| `routes_subtitles` | 字幕转换、SubtitleCat 中文字幕搜索与加载 |
+| `routes_subtitles` | 字幕转换、按界面语言搜索与加载 SubtitleCat 字幕 |
 | `routes_api` | JSON 契约出口，含两条 `/api/{route:path}` catch-all |
 
 `include_router` 的顺序是契约的一部分，不是排版：FastAPI 按注册顺序匹配，
@@ -35,13 +35,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
-from . import (__version__, browser_transport, distribution, feeds, ledger_backups, tunnel, web_contract,
+from . import (__version__, browser_transport, distribution, feeds, interface_text, ledger_backups, tunnel, web_contract,
                web_feeds, web_follow, web_settings)
 from . import routes_api, routes_auth, routes_configuration, routes_jav_browser, routes_media, routes_pages, routes_subtitles
 from .buildinfo import frozen_build
 from .config import LOCATION_ROOT_DECLARATIONS, MEDIA_ROOT_DECLARATIONS, PeachSettings
 from .ffmpeg import FFmpegResolver
-from .follow_scheduler import FEED_JOB_ID, FollowScheduleConfig, FollowUpdateScheduler
+from .follow_scheduler import FEED_JOB_ID, FEED_UNAVAILABLE_CODE, FollowScheduleConfig, FollowUpdateScheduler
 from .follow_covers import FollowCoverService
 from .follow_faces import FollowFaceIndex
 from .follow_stream import FollowMediaResolver
@@ -79,7 +79,7 @@ from .sample_images import cache_root as sample_cache_root
 from .providers import OpenCodeGoClient, default_registry
 from .repository import LedgerDatabase, LedgerRepository
 from .review_mirror import ReviewMirror
-from .routes_auth import FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, AssetLoginRequired, PageLoginRequired
+from .routes_auth import FIRST_ACCESS_DENIED_CODE, AssetLoginRequired, PageLoginRequired
 # 两档缓存时长的实现在 `routes_media`，这里再导出：它们是对外的缓存契约，
 # tests/test_follow_web.py 按 `api.MEDIA_CACHE_SECONDS` 断言两者的关系。
 from .routes_media import AVATAR_CACHE_SECONDS, MEDIA_CACHE_SECONDS  # noqa: F401
@@ -87,7 +87,7 @@ from .segments import HlsSegmentService
 from .streaming import StreamSessionRegistry
 from .sync import LedgerSync
 from .transcodes import TranscodeService
-from .user_messages import UserFacingError, error_fields, message_fields
+from .user_messages import UserFacingError, error_fields, message_fields, response_status
 
 
 LOGGER = logging.getLogger(__name__)
@@ -162,17 +162,17 @@ class FirstSetupSourceMiddleware:
             if (not settings.configured
                     and (scope["path"].startswith("/api/") or scope["method"] not in {"GET", "HEAD"})
                     and not local_client(request)):
-                response = JSONResponse({**message_fields(FIRST_ACCESS_DENIED, FIRST_ACCESS_DENIED_CODE, key="error"),
+                response = JSONResponse({**message_fields(FIRST_ACCESS_DENIED_CODE, key="error"),
                                          "docker": True}, status_code=403)
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 
 
-#: Starlette 自己抛的那几种 HTTPException 带的是英文 detail，给人看之前换成中文原文与 code。
+#: Starlette 自己抛的那几种 HTTPException 带的是英文 detail，给人看之前换成 code 和渲染好的一句。
 _DEFAULT_DETAILS = {
-    "Not Found": message_fields("这个地址下没有页面。", "http.notFound", key="error"),
-    "Method Not Allowed": message_fields("这个地址不接受这种请求。", "http.methodNotAllowed", key="error"),
+    "Not Found": message_fields("http.notFound", key="error"),
+    "Method Not Allowed": message_fields("http.methodNotAllowed", key="error"),
 }
 
 
@@ -180,6 +180,15 @@ def _navigation(request: Request) -> bool:
     """浏览器地址栏直接打开页面路径：报错给一页话，`/api/` 与脚本取数（Accept 里没有 text/html）回 JSON。"""
     return (request.method in {"GET", "HEAD"} and not request.url.path.startswith("/api/")
             and "text/html" in request.headers.get("accept", ""))
+
+
+def _error_page(request: Request, status: int, body: dict) -> str:
+    """导航撞上的错误页：说明按浏览器的 `Accept-Language` 渲染，没有 code 的照原文。"""
+    language = interface_text.request_language(request.headers.get("accept-language"))
+    code = body.get("message_code")
+    detail = (interface_text.text(f"server:{code}", body.get("message_params"), language)
+              if isinstance(code, str) and code and interface_text.has(f"server:{code}", language) else body["error"])
+    return routes_pages.error_page(status, detail, language=language)
 
 
 def _offline_response(exc: MediaOffline) -> JSONResponse:
@@ -204,7 +213,7 @@ def _start_tunnel(settings: PeachSettings, manager: tunnel.TunnelManager) -> Non
     try:
         manager.start(tunnel.plan_for_settings(settings))
     except tunnel.TunnelError:
-        LOGGER.warning("Cloudflare Tunnel 未能启动", exc_info=True)
+        LOGGER.warning("Cloudflare Tunnel failed to start", exc_info=True)
 
 
 def _restore_task_center(contract) -> None:
@@ -247,7 +256,7 @@ def _start_ledger_services(settings: PeachSettings, contract, services) -> bool:
         # 上次从备份恢复没走完：先把账本收拾到确定的状态，再判它能不能用（ADR-0138）。
         ledger_backups.recover(settings.db_path)
     except Exception:
-        LOGGER.exception('账本恢复标记未能处理')
+        LOGGER.exception('Could not process the ledger restore marker')
     status = inspect_database(settings.db_path)
     repairs = getattr(contract, 'upgrade_repairs', None)
     if status['schema'] == 'pending' and repairs is not None and repairs.available:
@@ -261,10 +270,10 @@ def _start_ledger_services(settings: PeachSettings, contract, services) -> bool:
             contract.task_runs.enabled = contract.task_runs.available()
         except Exception as exc:
             repairs.error = str(exc)
-            LOGGER.exception('自动迁移失败，后台任务保持停止')
+            LOGGER.exception('Automatic migration failed; background tasks stay stopped')
             return False
     if not status["readable"] or status["schema"] != "current":
-        LOGGER.warning("数据库未就绪，依赖数据库的后台任务保持停止（数据库：%s；结构：%s）；数据库准备完成后重启服务。",
+        LOGGER.warning("Database not ready; background tasks that need it stay stopped (database: %s; schema: %s). Restart the service once the database is ready.",
                        status["database"], status["schema"])
         return False
     if repairs is not None:
@@ -272,7 +281,7 @@ def _start_ledger_services(settings: PeachSettings, contract, services) -> bool:
             repairs.prepare()
         except Exception as exc:
             repairs.error = str(exc)
-            LOGGER.exception('升级补修未完成，后台任务保持停止')
+            LOGGER.exception('Upgrade repairs did not finish; background tasks stay stopped')
             return False
     _restore_task_center(contract)
     from .web_job_recovery import restore
@@ -306,6 +315,18 @@ def _server_error_headers(request: Request, error: Exception, status_code=500):
     event('http-request', error, error_id=error_id, method=request.method,
           route=getattr(request.scope.get('route'), 'path', '<unmatched>').lstrip('/'), status_code=status_code)
     return {'X-Peach-Error-ID': error_id, 'Cache-Control': 'no-store'}
+
+
+def _user_facing_response(request: Request, exc: UserFacingError):
+    """带 code 的报错漏到接口层：给原句与 code；5xx 照服务错误处理，生成错误编号并记进错误日志。"""
+    status = response_status(exc)
+    headers = _server_error_headers(request, exc, status)
+    body = error_fields(exc)
+    if _navigation(request):
+        return HTMLResponse(_error_page(request, status, body), status_code=status, headers=headers)
+    if 'X-Peach-Error-ID' in headers:
+        body['error_id'] = headers['X-Peach-Error-ID']
+    return JSONResponse(body, status_code=status, headers=headers)
 
 
 def _configure_upgrade_repairs(settings, contract, sync):
@@ -373,7 +394,7 @@ class _LedgerActivation:
                 await self.resume()
         except Exception as exc:
             self.contract.upgrade_repairs.error = str(exc)
-            LOGGER.exception('安装后的后台服务未能启动')
+            LOGGER.exception('Background services failed to start after the update was installed')
         finally:
             self.app.state.ledger_background_deferred = False
 
@@ -529,7 +550,7 @@ def create_app(
         default=FollowScheduleConfig(enabled=True,
                                      interval_minutes=feeds.DEFAULT_INTERVAL_MINUTES),
         tick_minutes=feeds.TICK_MINUTES,
-        unavailable_message="订阅源拉取只在写入端可用",
+        unavailable_code=FEED_UNAVAILABLE_CODE,
     )
     contract.feed_scheduler = feed_scheduler
     from .web_job_recovery import RecoveryService
@@ -728,20 +749,18 @@ def create_app(
             body = dict(_DEFAULT_DETAILS.get(str(detail)) or {"error": str(detail)})
         # 浏览器地址栏直接打开一个页面路径撞上 403／404／409 时，给人看的是一页话，不是一行 JSON。
         if _navigation(request):
-            return HTMLResponse(routes_pages.error_page(exc.status_code, body["error"]),
+            return HTMLResponse(_error_page(request, exc.status_code, body),
                                 status_code=exc.status_code, headers=headers)
         return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
     @app.exception_handler(UserFacingError)
     def _user_facing_error_handler(request: Request, exc: UserFacingError):
-        if _navigation(request):
-            return HTMLResponse(routes_pages.error_page(exc.status_code, exc.message), status_code=exc.status_code)
-        return JSONResponse(error_fields(exc), status_code=exc.status_code)
+        return _user_facing_response(request, exc)
 
     @app.exception_handler(Exception)
     def _server_exception_handler(request: Request, exc: Exception):
         headers = _server_error_headers(request, exc)
-        return JSONResponse({**message_fields('服务处理失败，请导出诊断报告', 'http.serverError', key='error'),
+        return JSONResponse({**message_fields('http.serverError', key='error'),
                              'error_id': headers['X-Peach-Error-ID']}, status_code=500, headers=headers)
 
     # 第三方前端依赖固定版本并随 Peach 自托管；局域网断网时仍可播放。

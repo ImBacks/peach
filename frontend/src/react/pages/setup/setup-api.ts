@@ -2,9 +2,12 @@
  *
  * 页面包不带主界面的请求封装与 Query 缓存，这里直接用 `fetch`。形态见 `docs/OPERATIONS.md`
  * 「首次设置的内部流程」：错误正文是 `{error, errors?}`，`errors` 按题目 key 给，媒体目录那一项是
- * 与行对应的列表，整表不成立时是只有一句话的列表。 */
+ * 与行对应的列表，整表不成立时是只有一句话的列表。服务端给的文字都配了 code（同形的 `error_codes` 等），
+ * 这里一律换成当前语言再交给页面。 */
 import { PICK_FOLDER_URL } from '../../../configuration-endpoints';
+import { bodyFieldErrors, codedText, serverLabel, serverText } from '../../../core/server-text';
 import { t } from '../../../i18n';
+import { localizedFact } from '../../settings/coded-text';
 
 export const SETUP_QUESTIONS_URL = '/api/setup/questions';
 export const SETUP_URL = '/api/setup';
@@ -104,18 +107,46 @@ async function request<T>(url: string, init: RequestInit, fallback: string): Pro
     throw new SetupRequestError(0, t('shell:accessSetup.unreachable'));
   }
   const body = await response.json().catch(() => null) as { error?: string; errors?: SetupErrors; docker?: boolean } | null;
-  if (!response.ok) throw new SetupRequestError(response.status, body?.error || fallback, body?.errors, body?.docker === true);
+  if (!response.ok) {
+    throw new SetupRequestError(response.status, serverText(body) || fallback, bodyFieldErrors<SetupErrors>(body),
+      body?.docker === true);
+  }
   return body as T;
 }
 
-export const fetchQuestions = (signal?: AbortSignal) =>
-  request<SetupQuestions>(SETUP_QUESTIONS_URL, { signal }, t('shell:setupErrors.questionsFailed'));
+/* 服务端给的题面、说明、选项与云盘提示都配了 code（`label_code`、逐行的 `help_codes` 等），这里换成当前语言。 */
+function localizedQuestions(setup: SetupQuestions): SetupQuestions {
+  const coded = (text: string, code: unknown) => serverLabel(typeof code === 'string' ? code : '', text);
+  return {
+    ...setup,
+    questions: setup.questions.map((question) => {
+      const codes = (question as { help_codes?: unknown[] }).help_codes ?? [];
+      return {
+        ...question, label: codedText(question, 'label'),
+        help: question.help.map((line, index) => coded(line, codes[index])),
+        ...(question.options ? { options: question.options.map((option) => ({ ...option, label: codedText(option, 'label') })) } : {}),
+      };
+    }),
+    cloud: {
+      ...setup.cloud, help: codedText(setup.cloud, 'help'),
+      link: { ...setup.cloud.link, label: codedText(setup.cloud.link, 'label') },
+      dependencies: setup.cloud.dependencies.map((dependency) => ({
+        ...dependency, message: codedText(dependency, 'message'), download_label: codedText(dependency, 'download_label'),
+      })),
+    },
+  };
+}
 
-export const submitSetup = (submission: SetupSubmission) =>
-  request<SetupDone>(SETUP_URL, { method: 'POST', body: JSON.stringify(submission) }, t('shell:setupErrors.submitFailed'));
+const localizedDone = (done: SetupDone): SetupDone => ({ ...done, facts: done.facts.map(localizedFact) });
 
-export const restoreSetup = (dataRoot: string) =>
-  request<SetupDone>(`${SETUP_URL}/restore`, { method: 'POST', body: JSON.stringify({ data_root: dataRoot }) }, t('shell:setupErrors.restoreFailed'));
+export const fetchQuestions = async (signal?: AbortSignal) =>
+  localizedQuestions(await request<SetupQuestions>(SETUP_QUESTIONS_URL, { signal }, t('shell:setupErrors.questionsFailed')));
+
+export const submitSetup = async (submission: SetupSubmission) =>
+  localizedDone(await request<SetupDone>(SETUP_URL, { method: 'POST', body: JSON.stringify(submission) }, t('shell:setupErrors.submitFailed')));
+
+export const restoreSetup = async (dataRoot: string) =>
+  localizedDone(await request<SetupDone>(`${SETUP_URL}/restore`, { method: 'POST', body: JSON.stringify({ data_root: dataRoot }) }, t('shell:setupErrors.restoreFailed')));
 
 export const pickFolder = async (initial: string) =>
   (await request<{ path: string | null }>(PICK_FOLDER_URL,

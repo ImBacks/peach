@@ -26,6 +26,7 @@ import { DOWNLOADS_KEY, DOWNLOADS_URL } from '../activity/downloads-panel';
 import { queryClient } from '../query';
 import { fetchJavDetail, fetchJavReviews, javDetailKey, nextReviewPage, type JavDetail, type JavDetailProps, type JavEntityRef, type JavReviews } from './jav-detail';
 import { cachedReviews, rememberReviews, reviewsFresh } from './review-cache';
+import { serverLabel } from '../../core/server-text';
 import { t } from '../../i18n';
 
 export function JavDetailPage(props: JavDetailProps) {
@@ -195,7 +196,7 @@ function Reviews({ code, count, released }: { code: string; count: number; relea
       </div>)}
     </div> : null}
     {opened || result.data ? <>
-      {items.map(item => <article key={item.id} data-jav-review=""><div data-jav-review-meta=""><b>{item.username}</b>
+      {items.map(item => <article key={item.id} data-jav-review=""><div data-jav-review-meta=""><b>{serverLabel(item.username_code ?? '', item.username)}</b>
         {Number(item.score) > 0 ? <SourceRating score={Number(item.score)} review /> : null}
         <time dateTime={item.created_at} title={item.created_at}>{item.created_at.slice(0, 10)}</time></div><p data-long-text="" lang={textLang(item.content)}>{item.content}</p></article>)}
       {failure ? <Note tone="neutral" action={<Button variant="secondary" {...busyProps(result.isFetching)} onClick={() => { refresh.current = true; void result.refetch() }}>{t('catalog:shared.retryNow')}</Button>}>{failure}</Note>

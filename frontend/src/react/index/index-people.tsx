@@ -14,6 +14,7 @@ import { cardClass } from '../components/card';
 import { spriteGlyph } from '../components/sprite-glyph';
 import type { OnlineAuthor } from '../follow/online-vocab';
 import { ENTITY_KINDS, isCompany, personReadout, type IndexKind, type IndexPerson, type IndexProps, type PeopleLayout } from './index-data';
+import { serverLabels } from '../../core/server-text';
 import { t } from '../../i18n';
 
 /* 平移挂在圆框上而不是 img 上：竖幅裁到 3:4 时几何居中会切掉脸，而 img 由遗留层拼，
@@ -76,7 +77,7 @@ export function PeopleGrid(
         const entityKind = item.entity_kind || ENTITY_KINDS[kind];
         const avatar = props.personAvatar(item, entityKind, big);
         return (
-          <Cell key={`${entityKind}:${item.entity_id || item.k}`} data-k={item.k} data-kind={entityKind} name={entityDisplayName(entityKind, item.k, item.entity_id)} readout={`${personReadout(kind, item)}${item.identity_labels?.length ? ' · ' + item.identity_labels.join(' / ') : ''}`}
+          <Cell key={`${entityKind}:${item.entity_id || item.k}`} data-k={item.k} data-kind={entityKind} name={entityDisplayName(entityKind, item.k, item.entity_id)} readout={`${personReadout(kind, item)}${item.identity_labels?.length ? ' · ' + serverLabels('identity.category', item.identity_categories, item.identity_labels).join(' / ') : ''}`}
             big={big} following={item.following} onPress={() => props.openEntity(entityKind, item.k)}>
             <Ring html={avatar.html} face={avatar.face} company={company} big={big} />
           </Cell>

@@ -60,7 +60,7 @@ class StrmResources:
         with self.lock:
             row = self.entries.get(key)
         if row is None or row[0] <= time.monotonic() or row[1:3] != (asset_id, root):
-            raise ValueError('STRM 播放资源已失效，请重新打开作品')
+            raise ValueError('STRM resource expired or does not match this video')
         return row[3]
 
 
@@ -72,7 +72,7 @@ def rewrite_playlist(state, body: bytes, base: str, asset_id: int, root: str, se
                      external_query: str = '') -> str:
     def link(target, _nested):
         if not allowed_hop(root, target):
-            raise ValueError('STRM 播放列表包含不可访问的媒体地址')
+            raise ValueError('STRM playlist points to a disallowed media address')
         key = resources(state).add(asset_id, root, target)
         return f'/strm-resource/{asset_id}/{key}?session={quote(session, safe="")}{external_query}'
 
@@ -110,7 +110,7 @@ def proxy(request, asset_id: int, path, session: str = '', resource: str = ''):
                 for chunk in upstream.iter_bytes():
                     content.extend(chunk)
                     if len(content) > PLAYLIST_LIMIT:
-                        raise ValueError('STRM 播放列表超过 2 MiB')
+                        raise ValueError('STRM playlist exceeds 2 MiB')
             finally:
                 upstream.close()
             external_query = ''

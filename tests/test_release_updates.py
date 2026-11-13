@@ -429,8 +429,8 @@ class ReleaseNoticeTests(unittest.TestCase):
             for section in ('features', 'automatic', 'attention'):
                 for item in notice.get(section, []):
                     tokens = {part for token in item.get('platforms', []) for part in token.split('+')}
-                    self.assertLessEqual(tokens, release_notice.PLATFORM_TOKENS, (version, item['title']))
-                    self.assertIn(item.get('when', 'display_reprobe'), release_notice.FACTS, (version, item['title']))
+                    self.assertLessEqual(tokens, release_notice.PLATFORM_TOKENS, (version, item['id']))
+                    self.assertIn(item.get('when', 'display_reprobe'), release_notice.FACTS, (version, item['id']))
 
 
 class ReleaseNoticeFactsTests(unittest.TestCase):

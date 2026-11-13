@@ -24,6 +24,11 @@ from pathlib import Path
 
 from .config import GENERATED_DIR
 from .fsutil import atomic_path
+from .user_messages import UserFacingError
+
+class ReviewCsvError(UserFacingError, csv.Error):
+    """复核 CSV 读不下去；仍是 `csv.Error`，按它捕获的调用方照旧接得住。"""
+
 
 #: 复核 CSV 的编码。改它等于改所有复核产物的可读性，不要在调用处覆盖。
 ENCODING = "utf-8-sig"
@@ -51,7 +56,8 @@ def read_rows(path: Path | str, *, missing_ok: bool = False) -> list[dict[str, s
         try:
             return list(reader)
         except csv.Error as exc:
-            raise csv.Error(f'复核 CSV 读取失败：{target}，第 {reader.reader.line_num} 行：{exc}') from exc
+            raise ReviewCsvError('errors.reviewCsv.readFailed', {
+                'path': str(target), 'line': reader.reader.line_num, 'error': str(exc)}) from exc
 
 
 def write_rows(

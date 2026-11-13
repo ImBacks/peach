@@ -160,8 +160,13 @@ export interface DownloadConfig {
 export type PikPakBrowserState = 'idle' | 'waiting' | 'done' | 'cancelled' | 'timeout' | 'failed';
 
 /** 设置页的云下载块。凭据只报存没存过，不回值。 */
+/** 服务端一句话的 code 与参数（ADR-0159）；与原句一一对应，code 为空串时照原句。 */
+export interface CodedLine { code: string; params?: Record<string, unknown> }
+
 export interface DownloadSettingsState {
   problems?: string[];
+  /** 与 `problems` 一一对应。 */
+  problem_codes?: CodedLine[];
   media_sources: string[];
   available: boolean;
   config: DownloadConfig;
@@ -169,7 +174,8 @@ export interface DownloadSettingsState {
   /** `method`：`browser` 是浏览器登录取来的网页端会话，`password` 是账号密码换的令牌。 */
   pikpak: { logged_in: boolean; username: string; remember: boolean; method: 'browser' | 'password' };
   /** 浏览器登录（ADR-0093）：这台电脑有没有 Chrome 或 Edge，登录窗口此刻在哪一步。 */
-  pikpak_browser: { available: boolean; state: PikPakBrowserState; message: string };
+  pikpak_browser: { available: boolean; state: PikPakBrowserState; message: string;
+                    message_code?: string; message_params?: Record<string, unknown> };
   pikpak_roots: string[];
   providers: { key: DownloadProviderKey; label: string }[];
   max_wait_hours: number;
@@ -185,8 +191,10 @@ export interface DownloadCheckReport {
   ok: boolean;
   /** 实际查的 CloudDrive2 地址。表单留空时是探测到的本机地址，探测不到时为空串。 */
   address: string;
-  permissions: { name: string; label: string; granted: boolean }[];
+  permissions: { name: string; label: string; label_code?: string; granted: boolean }[];
   missing: string[];
+  /** 与 `missing` 一一对应。 */
+  missing_codes?: string[];
   root: string;
   folder: { path: string; can_offline: boolean; cloud: string } | null;
   quota: { total: number; used: number; left: number } | null;
@@ -195,6 +203,8 @@ export interface DownloadCheckReport {
   /** 未选择 PikPak 对应目录时，按推送发现的配置建议数据库路径前缀；无法确定时为空串。 */
   suggested_pikpak_root: string;
   problems: string[];
+  /** 与 `problems` 一一对应。 */
+  problem_codes?: CodedLine[];
 }
 
 export interface PikPakLoginResult {
@@ -202,6 +212,8 @@ export interface PikPakLoginResult {
   /** 要人机验证时给验证页地址，用户在浏览器里完成后再登录一次。 */
   captcha_url?: string;
   message?: string;
+  message_code?: string;
+  message_params?: Record<string, unknown>;
   settings: DownloadSettingsState;
 }
 
@@ -236,6 +248,9 @@ export interface DownloadTask {
   resubmittable: boolean;
   postprocess_state: string;
   postprocess_label: string;
+  /** 排了自动重试时是 `labels.downloads.postprocessRetrying`，其余照 `postprocess_label`。 */
+  postprocess_label_code?: string;
+  postprocess_label_params?: Record<string, unknown>;
   postprocess_detail: string | null;
   postprocess_run_id: number | null;
   postprocessed_at: string | null;
@@ -262,12 +277,16 @@ export interface DownloadSubmitResult {
 export interface ReleaseState {
   current_version: string;
   latest_version: string | null;
+  /** 通道与安装方式的中文名，没有译文时显示；判断和取译文用对应的 `*_code`。 */
   channel: string;
-  /** 安装方式的中文名，没有译文时显示；判断和取译文用 `installation_code`。 */
+  channel_code?: string;
   installation: string;
   installation_code: 'docker' | 'standalone' | 'source';
   state: string;
+  /** 检查结果的一句话；有 `message_code` 时按它取译文（`serverText`）。 */
   message: string;
+  message_code?: string;
+  message_params?: Record<string, unknown>;
   release_url: string;
   checked_at?: number;
   /** `installer` 是 macOS 的 DMG：没有应用内安装，下载后手动替换。 */
@@ -276,14 +295,15 @@ export interface ReleaseState {
   asset_size?: number;
   /** 能在页面里下载并重启安装；只有 Windows 独立包是 true。 */
   in_app_update?: boolean;
-  /** 容器换新版要在宿主机上做的几步；其他安装方式是空表。 */
-  steps?: { text: string; command: string }[];
+  /** 容器换新版要在宿主机上做的几步；其他安装方式是空表。`id` 用来取说明的译文。 */
+  steps?: { id?: string; text: string; command: string }[];
   /** Docker 镜像检查到新镜像时才有：能否经 Watchtower 一键更新（ADR-0140），不能时 `reason` 说明为什么。 */
   one_click?: { available: boolean; reason: string };
 }
 
 export interface UpdateJob {
   state: string; progress: number; message?: string; downloaded?: number; total?: number; version?: string;
+  message_code?: string; message_params?: Record<string, unknown>;
 }
 
 export interface MediaSource {
@@ -300,12 +320,19 @@ export interface ConfigurationFact {
   value: string;
   download_url?: string;
   download_label?: string;
+  term_code?: string; term_params?: Record<string, unknown>;
+  value_code?: string; value_params?: Record<string, unknown>;
+  download_label_code?: string; download_label_params?: Record<string, unknown>;
   /** 能由 Peach 装进数据目录的缺失工具（`ffmpeg`、`untrunc`），有它就不给下载外链。 */
   install_tool?: string;
 }
 
 export interface ConfigurationData {
-  section_errors?: Record<string, { title: string; message: string; error_id: string }>;
+  section_errors?: Record<string, {
+    title: string; message: string; error_id: string;
+    title_code?: string; title_params?: { section?: string }; section_code?: string;
+    message_code?: string; message_params?: Record<string, unknown>;
+  }>;
   remote_reporting?: import('./settings/remote-reporting-settings').RemoteReportingState;
   library_sharing?: import('./settings/library-sharing-settings').LibrarySharingState;
   ledger_read_only?: boolean;
@@ -327,6 +354,7 @@ export interface ConfigurationData {
   editable: boolean;
   /** 不能编辑时给用户看的原因，可编辑时为空。 */
   notice: string;
+  notice_code?: string;
   /** 设置文件的指纹，保存时带回去，服务端据此拒绝盖掉别处的改动。 */
   revision: string;
   media_dirs: string[];

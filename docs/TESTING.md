@@ -140,7 +140,7 @@ Windows 的路径、挂载、托盘、证书、进程编码、更新、认证及
 
 纯 HTTP 请求契约可使用 `tests/support/web.py` 的 `route_client`：请求经过真实路由、中间件和依赖，不启动后台服务；调用方仍须准备完整临时账本。服务启动、恢复与关闭语义使用正常 lifespan，由集成测试覆盖。
 
-浏览器入口通过 `PEACH_E2E_NET_LOG_DIR` 保存 Chromium 网络事件日志；模式为 `HeavilyRedacted`，文件位于 `build/agent-verification/browser/network/`，CI 与 TAP 一起上传。网络请求失败仍使测试失败；排查 `ERR_NO_BUFFER_SPACE` 时同时核对 TAP 与该次浏览器的网络事件，不根据错误字样推断机器资源状态，也不添加放行重试。
+浏览器入口通过 `PEACH_E2E_NET_LOG_DIR` 保存 Chromium 网络事件日志；模式为 `HeavilyRedacted`，文件位于 `build/agent-verification/browser/network/`，CI 与 TAP 一起上传。文件通过后删掉自己的网络事件日志，只留失败文件的。网络请求失败仍使测试失败；排查 `ERR_NO_BUFFER_SPACE` 时同时核对 TAP 与该次浏览器的网络事件，不根据错误字样推断机器资源状态，也不添加放行重试。
 
 [Chromium 572515601](https://issuetracker.google.com/issues/572515601) 的 Windows 回环建连缺陷由 Playwright 默认禁用的 `TcpPortRandomizationWin` 规避，隔离 E2E 浏览器不另传 `--disable-features`：同名开关的最后一个值会覆盖整串默认值。`browser-launch.test.ts` 用真实 Chrome 启动参数与原生 Playwright 对照，确认默认列表保留且包含该项。生产浏览器、页面断言、请求失败判据及机器网络配置不变；独立的启动超时不能据此标为已修复。
 
@@ -212,7 +212,7 @@ macOS 按影响域验证：
 它的票由后来者清掉。最长等 30 分钟；超时撤票退出，不执行测试或合并。集成事务本身仍由
 `integration.lock` 串行保护。部分域验证与 CI 分片不签发独立的本机全量记录。
 
-代码集成排队期间目标分支前进时，`integrate` 拿到两把锁后在工作树里把分支 rebase 到目标上，按统一入口的步骤补验 `auto`，用 `--force-with-lease` 推送工作者分支，等 PR 头跟上新提交再合入；回执的 `refreshed` 记下 rebase 前后的提交。补验由集成进程直接派出工作树解释器，以 `--full-lock-held` 沿用父进程持有的全量锁，运行器核对锁的持有者正是父进程。两边改了同一文件时不自动 rebase，照旧拒收并要求复核；rebase 冲突时撤回；补验未通过时不推送、不合入，日志在工作树 `build/integrate-verify.log`。补验期间一直持锁，后面排队的任务按 30 分钟上限等待。文档集成不持全量锁，目标前进时仍要求在工作树 rebase 后重新验证。
+代码集成排队期间目标分支前进时，`integrate` 拿到两把锁后在工作树里把分支 rebase 到目标上，按统一入口的步骤补验 `auto`，用 `--force-with-lease` 推送工作者分支，等 PR 头跟上新提交再合入；回执的 `refreshed` 记下 rebase 前后的提交。补验由集成进程直接派出工作树解释器，以 `--full-lock-held` 沿用集成进程持有的全量锁，运行器核对锁的持有者在自己的祖先链上（Windows venv 的 `python.exe` 是启动器，中间多一层进程）。两边改了同一文件时不自动 rebase，照旧拒收并要求复核；rebase 冲突时撤回；补验未通过时不推送、不合入，日志在工作树 `build/integrate-verify.log`。补验期间一直持锁，后面排队的任务按 30 分钟上限等待。文档集成不持全量锁，目标前进时仍要求在工作树 rebase 后重新验证。
 
 锁旁的持有者信息用独立文件锁保护读写和清理；主锁仍负责验证与集成互斥。等锁线程关闭记录文件后，持有者才删除记录，避免 Windows 文件共享冲突。
 

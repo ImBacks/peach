@@ -12,6 +12,8 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+from .os_errors import CodedOSError, CodedTimeoutError
+
 TIMEOUT_SECONDS = 20.0
 OPERATIONS = ('directory', 'files', 'nfo', 'art', 'online', 'resolve', 'stat')
 
@@ -23,7 +25,7 @@ def _request(operation, path, *, value='', timeout=None):
         if timeout is not None:
             from dataclasses import replace
             if timeout <= 0:
-                raise TimeoutError(errno.ETIMEDOUT, '媒体读取已超过期限')
+                raise CodedTimeoutError(errno.ETIMEDOUT, 'errors.mediaIo.deadlinePassed')
             remote = replace(remote, connection=replace(remote.connection, timeout=min(remote.connection.timeout, timeout)))
         return _read(operation, remote, value)
     command = ([sys.executable, 'media-read'] if getattr(sys, 'frozen', False)
@@ -34,9 +36,9 @@ def _request(operation, path, *, value='', timeout=None):
             timeout=TIMEOUT_SECONDS if timeout is None else timeout,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     except subprocess.TimeoutExpired as error:
-        raise TimeoutError(errno.ETIMEDOUT, '读取媒体目录或配套文件超时，已跳过，可重试', str(path)) from error
+        raise CodedTimeoutError(errno.ETIMEDOUT, 'errors.mediaIo.readTimedOut', filename=str(path)) from error
     if result.returncode:
-        raise OSError(errno.EIO, '媒体读取进程未完成', str(path))
+        raise CodedOSError(errno.EIO, 'errors.mediaIo.readerFailed', filename=str(path))
     response = json.loads(result.stdout)
     if 'error' in response:
         error = response['error']

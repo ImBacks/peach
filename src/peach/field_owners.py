@@ -27,6 +27,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from .user_messages import UserFacingError
 
 #: 受归属保护的 `asset` 列，也就是 AGENTS.md 术语表说的真相字段。
 #: 逻辑名就是列名，别处不得另立一套映射——两套名字迟早对不上，而对不上的表现是
@@ -73,7 +74,7 @@ def script_owner(name: str) -> str:
 def _identifier(value: str) -> str:
     text = str(value or "").strip()
     if not _IDENTIFIER.fullmatch(text):
-        raise ValueError(f"归属标识只能是小写字母、数字、下划线和连字符：{value!r}")
+        raise ValueError(f"owner identifier may only contain lowercase letters, digits, underscores, and hyphens: {value!r}")
     return text
 
 
@@ -128,7 +129,7 @@ def owner_label(owner: str | None) -> str:
     return ""
 
 
-class RevisionConflict(ValueError):
+class RevisionConflict(UserFacingError, ValueError):
     """期望的 `mutation_revision` 与账本现值不符，写入一个字段都没有发生。
 
     继承 `ValueError` 是为了兜底：没有专门处理它的派发路径会把它当成请求错误
@@ -139,7 +140,7 @@ class RevisionConflict(ValueError):
         self.expected = int(expected)
         self.revisions = {int(key): int(value) for key, value in revisions.items()}
         current = "、".join(f"{key}={value}" for key, value in sorted(self.revisions.items()))
-        super().__init__(f"资产已被改过：期望 revision {expected}，数据库现值 {current}")
+        super().__init__("errors.fieldOwners.revisionConflict", {"expected": expected, "current": current})
 
 
 @dataclass(frozen=True)
@@ -211,12 +212,12 @@ def write_owned_fields(
     fields = list(values)
     unknown = [name for name in fields if name not in OWNED_FIELDS]
     if unknown:
-        raise ValueError(f"不是受归属保护的真相字段：{sorted(unknown)}")
+        raise ValueError(f"not an ownership-protected truth field: {sorted(unknown)}")
     if not fields:
-        raise ValueError("要写的字段是空的")
+        raise ValueError("no fields to write")
     kind, _, identifier = str(owner or "").partition(":")
     if kind not in {"user", "review", "auto", "scan", "script"}:
-        raise ValueError(f"归属串的类别不在清单里：{owner!r}")
+        raise ValueError(f"owner kind is not in the allowed list: {owner!r}")
     _identifier(identifier)
 
     marks = ",".join("?" * len(ids))

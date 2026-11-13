@@ -17,8 +17,8 @@ import { Note } from '../components/note';
 import { queryClient } from '../query';
 import { busyProps } from '../settings/use-action';
 import {
-  AUTO_LANDINGS_KEY, fetchAutoLandings, previewAutoLandings, previewBody, previewLines, previousText,
-  resultText, revertAutoLandings, workLabel, writeTime, writtenText,
+  AUTO_LANDINGS_KEY, fetchAutoLandings, fieldName, previewAutoLandings, previewBody, previewLines, previousText,
+  resultText, revertAutoLandings, ruleName, workLabel, writeTime, writtenText,
   type AutoLandingResult, type AutoLandingWrite,
 } from './auto-landings';
 import { REVIEW_KEY } from './review';
@@ -54,7 +54,7 @@ function Written({ item }: { item: AutoLandingWrite }) {
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
       <span title={writtenText(item)} className="truncate text-body-regular text-text-primary">
-        <span className="text-text-secondary">{`${item.field}：`}</span>{writtenText(item)}
+        <span className="text-text-secondary">{t('shell:format.labelPrefix', { label: fieldName(item) })}</span>{writtenText(item)}
       </span>
       <small title={previousText(item)} className="truncate text-caption-1-regular text-text-secondary">{previousText(item)}</small>
     </span>
@@ -90,13 +90,13 @@ export function AutoLandingsCard(
   const columns: DataColumn<AutoLandingWrite>[] = [
     { id: 'work', label: t('manage:shared.video'), width: 300, min: 240, value: (item) => workLabel(item),
       render: (item) => <Work item={item} openItem={openItem} /> },
-    { id: 'written', label: t('manage:autoLandings.columnWritten'), width: 320, min: 220, value: (item) => `${item.field}${writtenText(item)}`,
+    { id: 'written', label: t('manage:autoLandings.columnWritten'), width: 320, min: 220, value: (item) => `${fieldName(item)}${writtenText(item)}`,
       render: (item) => <Written item={item} /> },
     // 规则与时间是次要信息，叠成一列，桌面宽度下整张表不必横向滚动。
     { id: 'rule', label: t('manage:autoLandings.columnRuleTime'), width: 176, min: 144, value: (item) => item.at ?? 0,
       render: (item) => (
         <span title={item.batch} className="flex min-w-0 flex-col gap-0.5 text-text-secondary">
-          <span className="truncate text-body-2-regular">{item.label}</span>
+          <span className="truncate text-body-2-regular">{ruleName(item)}</span>
           <small className="tabular-nums text-caption-1-regular">{writeTime(item) || t('manage:autoLandings.timeUnknown')}</small>
         </span>
       ) },
@@ -126,7 +126,7 @@ export function AutoLandingsCard(
         <DataTable label={t('manage:autoLandings.title')} items={items} columns={columns}
           title={t('manage:autoLandings.title')} titleId="auto-landings-title" unit={t('manage:autoLandings.unit')}
           description={DESCRIPTION}
-          rowId={(item) => item.item_key} rowLabel={(item) => `${workLabel(item)} ${item.field}`}
+          rowId={(item) => item.item_key} rowLabel={(item) => `${workLabel(item)} ${fieldName(item)}`}
           selected={selected} onSelected={setSelected}
           actions={(chosen) => (
             <Button variant="secondary" size="small" disabled={locked || !chosen.length}

@@ -37,6 +37,7 @@ import {
 import { AuthorAvatar } from './source-view';
 import { AliasRenameDialog } from './alias-rename-dialog';
 import { TableSelectionHeader } from '../components/table-selection-header';
+import { serverLabel } from '../../core/server-text';
 import { joinList, quoted, t } from '../../i18n';
 
 const REMOVE_BODY = (alias: string) => t('follow:creatorAliases.removeBody', { alias });
@@ -189,7 +190,8 @@ export function AliasManager({ groups, suggestions, sources = [], readOnly, toas
         cell: (context) => <AuthorIdentity sources={handlers.current.sources} name={context.getValue()} />,
       }),
       column.accessor('alias', { header: t('follow:creatorAliases.platformAlias'), cell: (context) => context.getValue() }),
-      column.accessor('evidence', {
+      column.accessor((row) => serverLabel(row.evidence_code ?? '', row.evidence, row.evidence_params), {
+        id: 'evidence',
         header: t('follow:creatorAliases.evidence'),
         cell: (context) => <span className="text-body-2-regular text-text-secondary">{context.getValue()}</span>,
       }),

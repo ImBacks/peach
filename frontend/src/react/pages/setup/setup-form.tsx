@@ -290,7 +290,9 @@ export function SetupForm({ setup, onDone, onRestore }: { setup: SetupQuestions;
                         if (other) folders.edit(index, libraryFields(other));
                       }}>
                       {[...new Map(folders.rows.map(value => [value.library_id, value])).values()].map(value => (
-                        <SelectItem key={value.library_id} id={value.library_id}>{value.library || t('shell:shared.untitledLibrary')}</SelectItem>
+                        <SelectItem key={value.library_id} id={value.library_id} textValue={value.library || t('shell:shared.untitledLibrary')}>
+                          <span className="flex min-w-0 items-center gap-2"><SourceMark mark={value.library_icon || libraryAutoChoice(value.location)[0]} /><span className="truncate">{value.library || t('shell:shared.untitledLibrary')}</span></span>
+                        </SelectItem>
                       ))}
                     </Select>
                   </FolderField> : null}

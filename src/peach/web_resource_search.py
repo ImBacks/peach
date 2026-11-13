@@ -2,6 +2,7 @@
 from .javdb_public import public_cache_scope
 from .magnet_chain import HIGH_QUALITY, rank_candidates, search as direct_search
 from .resource_search import Filters, Indexers, Search
+from .user_messages import UserValueError
 
 _SEARCH = Search()
 
@@ -9,13 +10,13 @@ _SEARCH = Search()
 def q_resource_search(contract, args) -> dict:
     service = getattr(contract, "downloads", None)
     if service is None:
-        raise ValueError("云下载服务没有启用")
+        raise UserValueError("api.resourceSearch.downloadsDisabled")
     try:
         filters = Filters(min_size=int(args.get("min_size") or 0),
                           max_size=int(args.get("max_size") or 1024 ** 4),
                           goal=str(args.get("goal") or "quality"))
     except (TypeError, OverflowError):
-        raise ValueError("体积区间必须是字节数") from None
+        raise UserValueError("api.resourceSearch.invalidSizeRange") from None
     with contract.database.read_connection() as connection:
         blocked = [row[0] for row in connection.execute(
             "SELECT info_hash FROM download_task WHERE blocked_at IS NOT NULL")]

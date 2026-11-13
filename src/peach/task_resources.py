@@ -15,6 +15,7 @@ from .fsutil import atomic_write_text
 from .gpu_usage import GpuCounters
 from .resource_platform import cpu_capacity, thread_times
 from .update_tasks import state_for
+from .user_messages import UserValueError
 
 _LIVE = {}
 _LOCK = threading.RLock()
@@ -152,7 +153,7 @@ class Monitor:
         except FileNotFoundError:
             return None
         except (OSError, ValueError) as error:
-            raise ValueError('这轮任务的资源归属记录未取得') from error
+            raise UserValueError('errors.taskResources.ownersUnavailable') from error
         if (not isinstance(value, dict) or type(value.get('pid')) is not int or value['pid'] <= 0
                 or not isinstance(value.get('threads'), list)
                 or not all(type(identity) is int and identity > 0 for identity in value['threads'])
@@ -166,7 +167,7 @@ class Monitor:
                 or not math.isfinite(value['network_bytes']) or value['network_bytes'] < 0
                 or not isinstance(value.get('network_error', ''), str)
                 or not isinstance(value.get('network_via', ''), str)):
-            raise ValueError('这轮任务的资源归属记录无效')
+            raise UserValueError('errors.taskResources.ownersInvalid')
         if value.get('pid') != run.pid:
             return None
         return value

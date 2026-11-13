@@ -21,7 +21,7 @@ class RemoteMediaCacheTests(unittest.IsolatedAsyncioTestCase):
         from peach.jobs import DiskSpaceDenied
         from peach.remote_media_cache import RemoteMediaUnavailable
         guard = mock.Mock()
-        guard.check.side_effect = [None, DiskSpaceDenied('capacity')]
+        guard.check.side_effect = [None, DiskSpaceDenied('errors.storageBudget.cacheWritesStopped', {'reasons': '缓存超限'})]
         self.cache.capacity_guard = guard
         with self.assertRaises(RemoteMediaUnavailable):
             self.cache.bytes('new-image', lambda: b'image')

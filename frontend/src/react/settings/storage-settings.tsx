@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/base/checkbox/checkbox';
 
 import { ApiError, apiGet, apiSend, errorMessage } from '../../api';
 import { PICK_FOLDER_URL } from '../../configuration-endpoints';
+import { bodyFieldErrors, serverLabel } from '../../core/server-text';
 import type { StorageCategory, StorageState } from '../bundle';
 import { AnimatedNumber } from '../components/animated-number';
 import { cardClass } from '../components/card';
@@ -26,7 +27,7 @@ import { CommandSteps, ErrorText, Fact, FactList, Footer, Help, Stack, Section, 
 import { CATEGORY_SWATCH, REST_SWATCH, StorageOverview } from './storage-charts';
 import { busyProps, useAction } from './use-action';
 import { StorageBudgetSettings } from './storage-budget-settings';
-import { joinList, t } from '../../i18n';
+import { interfaceLanguage, joinList, t } from '../../i18n';
 
 const STORAGE_URL = '/api/configuration/storage';
 const POLL_MS = 1500;
@@ -34,7 +35,7 @@ const POLL_MS = 1500;
 const RESULT_MS = 24 * 3600 * 1000;
 
 const targetReason = (cause: unknown) =>
-  (cause instanceof ApiError && (cause.body as { errors?: { target?: string } } | null)?.errors?.target)
+  (cause instanceof ApiError && bodyFieldErrors<{ target?: string }>(cause.body)?.target)
   || errorMessage(cause);
 
 function diskLine(storage: StorageState) {
@@ -44,6 +45,13 @@ function diskLine(storage: StorageState) {
 }
 
 const cleanable = (category: StorageCategory) => category.cleanable && category.reclaimable > 0;
+/** 类别名、说明与清理后果按 key 取当前界面语言，没有译文的照用服务端的中文。 */
+const localizeCategory = (category: StorageCategory): StorageCategory => ({
+  ...category,
+  label: serverLabel(`storage.category.${category.key}.label`, category.label),
+  description: serverLabel(`storage.category.${category.key}.description`, category.description),
+  note: serverLabel(`storage.category.${category.key}.note`, category.note),
+});
 
 /** 统计进行中：知道上次有多少文件就画进度条，不知道就只说走过多少。 */
 function Measuring({ job }: { job: StorageState['job'] }) {
@@ -130,7 +138,7 @@ export function StorageSettings({ initial, receipt }: { initial: StorageState; r
   const measure = () => void action.run('measure', (signal) =>
     apiSend<StorageState>(`${STORAGE_URL}/measure`, {}, 'POST', signal), setStorage);
 
-  const usage = storage.usage;
+  const usage = storage.usage && { ...storage.usage, categories: storage.usage.categories.map(localizeCategory) };
   const available = usage?.categories.filter(cleanable) ?? [];
   const chosen = available.filter((category) => picked.has(category.key));
 
@@ -174,7 +182,7 @@ export function StorageSettings({ initial, receipt }: { initial: StorageState; r
     || (storage.job.state === 'cleaning' ? t('settings:storageSpace.cleaningCategory', { category: cleaningLabel || '' })
       : storage.job.state === 'measuring' ? t('settings:storageSpace.measuringStatus')
         : chosen.length ? t('settings:storageSpace.selectedSummary', { count: chosen.length, size: fmtSize(chosen.reduce((sum, item) => sum + item.reclaimable, 0)) })
-          : usage ? t('settings:storageSpace.measuredAt', { time: new Date(usage.measured_at * 1000).toLocaleString() }) : '');
+          : usage ? t('settings:storageSpace.measuredAt', { time: new Date(usage.measured_at * 1000).toLocaleString(interfaceLanguage) }) : '');
   const locked = running || Boolean(accepted);
   const toggle = (key: string) => (next: boolean) => setPicked((current) => {
     const copy = new Set(current);
@@ -195,7 +203,7 @@ export function StorageSettings({ initial, receipt }: { initial: StorageState; r
         {usage?.allocated_bytes != null ? <Help>{t('settings:storageSpace.allocatedOnDisk')} {fmtSize(usage.allocated_bytes)}</Help> : null}
         {usage
           ? <div data-storage-result="" className={cardClass({ variant: 'outlined', padding: 'none', className: 'flex flex-col' })}>
-              <div className="border-b border-separator-border p-4"><StorageOverview storage={storage} /></div>
+              <div className="border-b border-separator-border p-4"><StorageOverview storage={usage ? { ...storage, usage } : storage} /></div>
               <div className="flex flex-col pl-4">
                 {usage.categories.map((category) => (
                   <CategoryRow key={category.key} category={category} selected={picked.has(category.key)}
@@ -214,7 +222,7 @@ export function StorageSettings({ initial, receipt }: { initial: StorageState; r
         {action.error ? <ErrorText>{action.error}</ErrorText> : null}
         {recent && last ? (last.state === 'error'
           ? <ErrorText>{last.message}</ErrorText>
-          : <Help>{[last.message, ...(last.notes ?? [])].join('；')}</Help>) : null}
+          : <Help>{[last.message, ...(last.notes ?? [])].join(t('shell:format.semicolonSeparator'))}</Help>) : null}
       </Stack>
       <Footer status={status ? <p role={accepted ? 'status' : undefined}>{status}</p> : null}>
         {usage ? <>

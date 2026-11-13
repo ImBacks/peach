@@ -12,9 +12,11 @@ MOBILE_BROADBAND_HINT = "中国移动宽带直连 DMM 图片主机常在握手�
 def _connection_failure(exc, label):
     """来源连接异常对应可操作的诊断说明。"""
     if isinstance(exc, SourceRefused):
-        # 地区限制与出口封禁：原话里写着要换出口，不只是「稍后重试」。
+        # 地区限制与出口封禁：原话里写着要换出口，不只是「稍后重试」。`message` 是给不认 code 的
+        # 调用方的 zh-CN 兜底句，界面按 `message_code` 与参数取当前语言的那一句。
         return {"ok": False, "kind": "auth", "reason": exc.reason,
-                "message": f"{exc}。", "error_type": type(exc).__name__}
+                "message": f"{exc.message}。", "message_code": exc.code, "message_params": dict(exc.params),
+                "error_type": type(exc).__name__}
     if isinstance(exc, SourcePaused):
         detail, message = "cooldown", "来源正在冷却，请稍后重试。"
     elif isinstance(exc, httpx.ProxyError):
@@ -48,7 +50,7 @@ def check_source(secrets_root, source, *, preflight=False):
     """复用来源连接与图片 CDN 判据；安装检查只使用有界 HTTP 请求。"""
     from .metadata import auth_wall_reason
     if source not in SOURCES:
-        raise ValueError("未知采集来源")
+        raise ValueError("unknown scraping source")
     if not SOURCES[source]["login"]:
         return {"ok": True, "results": [{"label": "来源页面", "ok": False, "kind": "unavailable",
                 "reason": "needs_code", "message": "片商官网按番号选择，请输入馆藏番号检查高清封面。"}],

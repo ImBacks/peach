@@ -13,10 +13,16 @@ from pathlib import Path
 
 from .fsutil import atomic_write_text
 from .platform import root_online
+from .user_messages import UserFacingError
 
 
-class CredentialError(RuntimeError):
-    pass
+class CredentialError(UserFacingError, RuntimeError):
+    """追更来源的凭据缺失、读不出或被站点拒绝。`code` 与参数见 `user_messages.UserFacingError`。
+
+    状态码沿用 500，理由同 `follow.FollowSourceError`：漏到接口层与错误上报的行为不变。
+    """
+
+    status_code = 500
 
 
 @dataclass(frozen=True)
@@ -27,9 +33,8 @@ class Credential:
     def require(self, *names: str) -> tuple[str, ...]:
         missing = [name for name in names if not self.values.get(name)]
         if missing:
-            raise CredentialError(
-                f"{self.provider} 凭据缺少字段：{', '.join(missing)}"
-            )
+            raise CredentialError("errors.followSecrets.missingFields",
+                                  {"provider": self.provider, "fields": ", ".join(missing)})
         return tuple(str(self.values[name]) for name in names)
 
 
@@ -52,7 +57,7 @@ class CredentialStore:
 
     def path_for(self, provider: str) -> Path:
         if not provider or "/" in provider or "\\" in provider or provider.startswith("."):
-            raise CredentialError("provider 名称非法")
+            raise CredentialError("errors.followSecrets.invalidProvider")
         return self.root / f"{provider}.json"
 
     def syncable(self, provider: str) -> tuple[str, ...]:
@@ -78,9 +83,9 @@ class CredentialStore:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise CredentialError(f"{provider} 凭据文件无法解析") from exc
+            raise CredentialError("errors.followSecrets.unreadable", {"provider": provider}) from exc
         if not isinstance(payload, dict):
-            raise CredentialError(f"{provider} 凭据文件必须是 JSON 对象")
+            raise CredentialError("errors.followSecrets.notObject", {"provider": provider})
         return {
             str(key): str(value) for key, value in payload.items()
             if value is not None and not isinstance(value, (dict, list))

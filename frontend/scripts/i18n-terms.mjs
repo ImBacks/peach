@@ -11,8 +11,8 @@ const minimum = Number(process.argv[2] || 8);
 const texts = new Set();
 
 const values = (tree) => Object.values(tree).flatMap((value) => typeof value === 'string' ? [value] : values(value));
-for (const name of readdirSync(join(frontend, 'src/locales/zh-CN'))) {
-  for (const value of values(JSON.parse(readFileSync(join(frontend, 'src/locales/zh-CN', name), 'utf8')))) texts.add(value);
+for (const name of readdirSync(join(frontend, '../resources/locales/zh-CN'))) {
+  for (const value of values(JSON.parse(readFileSync(join(frontend, '../resources/locales/zh-CN', name), 'utf8')))) texts.add(value);
 }
 const collect = (node) => {
   if (!node || typeof node !== 'object') return;
@@ -31,8 +31,8 @@ const walk = (dir) => {
 };
 walk(join(frontend, 'src'));
 
-const tbx = readFileSync(join(frontend, 'src/locales/glossary/en.tbx'), 'utf8');
-const known = [...tbx.matchAll(/<langSet xml:lang="zh-CN"><tig><term>([^<]+)<\/term>/g)].map((match) => match[1]);
+const tbx = readFileSync(join(frontend, '../resources/locales/glossary/en.tbx'), 'utf8');
+const known = [...tbx.matchAll(/<langSet xml:lang="zh-Hans"><tig><term>([^<]+)<\/term>/g)].map((match) => match[1]);
 const counts = new Map();
 for (const text of texts) {
   const seen = new Set();

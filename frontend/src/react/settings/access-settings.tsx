@@ -14,6 +14,7 @@ import { Note } from '../components/note';
 import { PasswordPair } from './password-pair';
 import { ErrorText, Footer, Help, Section, Stack } from './section';
 import { busyProps, useAction } from './use-action';
+import { bodyFieldErrors } from '../../core/server-text';
 import { t } from '../../i18n';
 
 type FieldErrors = Partial<Record<'current_password' | 'password' | 'confirmation', string>>;
@@ -54,8 +55,8 @@ export function AccessSettings({ initial, receipt, devices, after }: AccessSetti
       setState(next); setCurrent(''); setPassword(''); setConfirmation(''); setDisable(false); setFields({});
       receipt(next.mode === 'open' ? t('settings:accessPassword.turnedOff') : t('settings:shared.settingsSaved'));
     }, (cause) => {
-      const payload = cause instanceof ApiError ? cause.body as { errors?: FieldErrors; detail?: { errors?: FieldErrors } } : null;
-      const errors = payload?.errors || payload?.detail?.errors;
+      const payload = cause instanceof ApiError ? cause.body as { detail?: unknown } : null;
+      const errors = bodyFieldErrors<FieldErrors>(payload) || bodyFieldErrors<FieldErrors>(payload?.detail);
       if (errors) setFields(errors); else action.setError(errorMessage(cause));
     });
   };

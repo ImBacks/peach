@@ -1,6 +1,6 @@
-// 数源码里还写死的中文界面文案（ADR-0156）：字符串、模板与 JSX 文字里带汉字的节点各算一处。
+// 数源码里还写死的中文界面文案（ADR-0156）：字符串、模板与 JSX 文字里带汉字或中文全角标点的节点各算一处。
 // 注释、import 路径、对象键和 console 调用不算；测试文件不扫。
-// 门槛在 `test/i18n.test.ts`：`src/` 下一处都不许有；文案写进 `src/locales/<语言>/*.json`，用 `t()` 取。
+// 门槛在 `test/i18n.test.ts`：`src/` 下一处都不许有；文案写进 `resources/locales/<语言>/*.json`，用 `t()` 取。
 // 直接运行列出还有中文的文件与处数。
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { parseSync } from 'oxc-parser';
 
 const frontend = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const HAN = /[㐀-鿿]/;
+// 汉字，加上只有中文排版才用的全角标点（、。「」（）：；！？等）：单写一个「：」拼句子，英文界面照样露出中文标点。
+const HAN = /[㐀-鿿、-〿！-／：-＠［-｀｛-｠]/;
 
 const EXEMPT = /\bi18n-exempt[:：]\s*\S/;
 const EXEMPT_FILE = /\bi18n-exempt-file[:：]\s*\S/;

@@ -8,6 +8,8 @@ export interface DiagnosticCheck {
 export interface LibraryItem {
   id: number; code: string | null; name: string; title: string; location: string; path: string;
   duration: number | null; size: number | null;
+  /** 与 `/api/items` 同一个归属；不在任何媒体库里时为空。 */
+  library_id?: string;
 }
 export interface LibraryGroup {
   label: string; status: string; count: number | null; items: LibraryItem[];
