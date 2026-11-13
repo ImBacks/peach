@@ -166,7 +166,7 @@
       }
     },
     "v0-55-0": {
-      "headline": "Re-scrape metadata and database backups",
+      "headline": "Back up and restore your database anytime",
       "items": {
         "docker-one-click": {
           "body": "Available with Watchtower turned on",
@@ -175,10 +175,6 @@
         "ledger-backup": {
           "body": "Back up or restore anytime",
           "title": "Database backups"
-        },
-        "rescrape-fields": {
-          "body": "Pick fields one by one on the video page",
-          "title": "Re-scrape metadata"
         }
       }
     },

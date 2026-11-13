@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141", e._sentryDebugIdIdentifier = "sentry-dbid-f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "e33abd20-d88c-4ed9-abf2-aec483d20729", e._sentryDebugIdIdentifier = "sentry-dbid-e33abd20-d88c-4ed9-abf2-aec483d20729");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -7030,7 +7030,7 @@ var He = {
 			}
 		},
 		"v0-55-0": {
-			headline: "Re-scrape metadata and database backups",
+			headline: "Back up and restore your database anytime",
 			items: {
 				"docker-one-click": {
 					body: "Available with Watchtower turned on",
@@ -7039,10 +7039,6 @@ var He = {
 				"ledger-backup": {
 					body: "Back up or restore anytime",
 					title: "Database backups"
-				},
-				"rescrape-fields": {
-					body: "Pick fields one by one on the video page",
-					title: "Re-scrape metadata"
 				}
 			}
 		},
@@ -7312,7 +7308,8 @@ var He = {
 			skipped: "Skipped: another run was still in progress",
 			interrupted: "The service restarted before this run finished",
 			unknownFollowup: "No follow-up task is registered for {{task}}",
-			dispatchInterrupted: "Metadata dispatch was interrupted, rescheduling"
+			dispatchInterrupted: "Metadata dispatch was interrupted, rescheduling",
+			stoppedEarly: "Stopped early with exit code {{code}}"
 		}
 	},
 	stage: {
@@ -13772,7 +13769,7 @@ var He = {
 			}
 		},
 		"v0-55-0": {
-			headline: "重新抓取资料与账本备份",
+			headline: "账本随时备份与恢复",
 			items: {
 				"docker-one-click": {
 					body: "启用 Watchtower 后可用",
@@ -13781,10 +13778,6 @@ var He = {
 				"ledger-backup": {
 					body: "随时备份或恢复",
 					title: "账本备份"
-				},
-				"rescrape-fields": {
-					body: "在影片详情逐字段选用",
-					title: "重新抓取资料"
 				}
 			}
 		},
@@ -14054,7 +14047,8 @@ var He = {
 			skipped: "已有一轮在进行，本次跳过",
 			interrupted: "服务重启，这一轮没有跑完",
 			unknownFollowup: "没有登记 {{task}} 这种后继",
-			dispatchInterrupted: "资料派发被中断，正在重新安排"
+			dispatchInterrupted: "资料派发被中断，正在重新安排",
+			stoppedEarly: "提前收工，退出码 {{code}}"
 		}
 	},
 	stage: {
@@ -38116,4 +38110,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=f6c3ec05-89ac-4a9c-8f09-00d3f3fa3141
+//# debugId=e33abd20-d88c-4ed9-abf2-aec483d20729

@@ -166,7 +166,7 @@
       }
     },
     "v0-55-0": {
-      "headline": "重新抓取资料与账本备份",
+      "headline": "账本随时备份与恢复",
       "items": {
         "docker-one-click": {
           "body": "启用 Watchtower 后可用",
@@ -175,10 +175,6 @@
         "ledger-backup": {
           "body": "随时备份或恢复",
           "title": "账本备份"
-        },
-        "rescrape-fields": {
-          "body": "在影片详情逐字段选用",
-          "title": "重新抓取资料"
         }
       }
     },

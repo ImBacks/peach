@@ -53,7 +53,6 @@ NOTICES: dict[str, dict] = {
     "0.55.0": {
         "level": "notice",
         "features": [
-            {"id": "rescrape-fields", "icon": "refresh"},
             {"id": "docker-one-click", "icon": "stack", "platforms": ["docker"]},
             {"id": "ledger-backup", "icon": "database"},
         ],
