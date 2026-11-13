@@ -1217,8 +1217,9 @@ class MacMenuBarActionTests(unittest.TestCase):
                 self.items = items
 
         class MenuBarApp:
-            def __init__(self, _icon, _title, items):
+            def __init__(self, _icon, _title, items, *, reopen=None):
                 built["items"] = items
+                built["reopen"] = reopen
                 self.notices = built.setdefault("notices", [])
 
             def notify(self, message, title):
@@ -1247,12 +1248,16 @@ class MacMenuBarActionTests(unittest.TestCase):
         fake = types.ModuleType("peach.menubar")
         fake.MenuBarApp, fake.Submenu = MenuBarApp, Submenu
         with patch.dict(sys.modules, {"peach.menubar": fake}),                 patch.object(tray_module, "VersionManager", return_value=versions),                 patch.object(tray_module, "standalone", return_value=True):
-            tray_module.run_macos_menu_bar(Mock(), Mock(waiting=False))
+            gate = Mock(waiting=False)
+            tray_module.run_macos_menu_bar(Mock(), gate)
         with tempfile.TemporaryDirectory() as directory,                 patch("peach.support_bundle.save_bundle", return_value=Path(directory) / "peach-support.zip"),                 patch.object(tray_module.subprocess, "run") as opened:
             run_handler("导出诊断报告")
             run_handler("检查更新", submenu="版本与更新")
         self.assertEqual(opened.call_args.args[0][:2], ["open", "-R"])
         versions.check.assert_called_once()
+        # 已在运行时再点开应用（reopen）与菜单第一项是同一个动作：打开网页。
+        built["reopen"]()
+        gate.open.assert_called_once_with()
         self.assertIn(("Peach 诊断报告", "诊断报告已保存：peach-support.zip"), built["notices"])
         self.assertIn(("Peach 版本与更新", versions.check.return_value.message), built["notices"])
 
