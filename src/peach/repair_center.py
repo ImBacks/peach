@@ -21,7 +21,7 @@ from .media_sources import CLOUD_LOCATIONS
 ITEMS = (
     ('catalog', 'auto'), ('display-local', 'auto'), ('display-cloud', 'confirm'), ('system-files', 'auto'),
     ('garbled-people', 'auto'), ('dangling-candidates', 'auto'), ('javdb-entries', 'auto'),
-    ('resolution-tags', 'auto'), ('video-medium', 'auto'), ('interface-text', 'auto'), ('follow-evidence', 'confirm'),
+    ('resolution-tags', 'auto'), ('video-medium', 'auto'), ('quality-bands', 'auto'), ('interface-text', 'auto'), ('follow-evidence', 'confirm'),
 )
 #: 历史里的规则：账本行 id 的前缀、计哪个字段（`None` 为资料整理的改动合计）。
 #: 前缀去掉末尾的连字符就是规则 id，名字在 `server:repairCenter.history.<id>`。
@@ -32,6 +32,7 @@ RULES = (
     ('javdb-actor-records-', ('hidden', 'disabled_feeds')),
     ('source-resolution-tags-', ('tags',)),
     ('video-medium-', ('video',)),
+    ('quality-resolution-', ('assets',)),
     ('interface-text-codes-', ('rows', 'attempts')),
     (follow_evidence.RECEIPT_PREFIX, ('files',)),
 )
@@ -166,6 +167,7 @@ def snapshot(connection, receipt: dict, *, cloud_pending: int, backup_directorie
     dangling = next((result for row_id, _, result in rows if row_id.startswith('dangling-candidates-')), {})
     javdb_entries = next((result for row_id, _, result in rows if row_id.startswith('javdb-actor-records-')), {})
     resolution = next((result for row_id, _, result in rows if row_id.startswith('source-resolution-tags-')), {})
+    quality_bands = next((result for row_id, _, result in rows if row_id.startswith('quality-resolution-')), {})
     video_medium = next((result for row_id, _, result in rows if row_id.startswith('video-medium-')), {})
     text_codes = next((result for row_id, _, result in rows if row_id.startswith('interface-text-codes-')), {})
     facts = {
@@ -182,6 +184,7 @@ def snapshot(connection, receipt: dict, *, cloud_pending: int, backup_directorie
         'javdb-entries': {'state': 'done' if javdb_entries else 'none',
                           'changed': _count(javdb_entries.get('hidden')) + _count(javdb_entries.get('disabled_feeds'))},
         'resolution-tags': {'state': 'done' if resolution else 'none', 'changed': _count(resolution.get('tags'))},
+        'quality-bands': {'state': 'done' if quality_bands else 'none', 'changed': _count(quality_bands.get('assets'))},
         'video-medium': {'state': 'done' if video_medium else 'none', 'changed': _count(video_medium.get('video'))},
         'interface-text': {'state': 'done' if text_codes else 'none',
                            'changed': _count(text_codes.get('rows')) + _count(text_codes.get('attempts'))},

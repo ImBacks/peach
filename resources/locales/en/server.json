@@ -258,6 +258,7 @@
       "dangling-candidates": "Stale review candidates",
       "follow-evidence-reclaim": "Old follow snapshots removed",
       "javdb-actor-records": "JavDB links on people pages",
+      "quality-resolution": "Quality bands",
       "source-resolution-tags": "4K tags from sources",
       "video-medium": "Reclassified as videos",
       "stale-filename-codes": "Misread codes cleared",
@@ -293,6 +294,10 @@
       "javdb-entries": {
         "summary": "Same-name performer pages that match the video credits as censored or uncensored no longer get a link. Subscriptions to them are turned off.",
         "title": "JavDB links on people pages"
+      },
+      "quality-bands": {
+        "summary": "Videos such as 1920×1080 are rebanded under the new long-edge thresholds. Only values from the old rule change, and files aren't reread.",
+        "title": "Quality bands"
       },
       "resolution-tags": {
         "summary": "A 4K tag on a metadata site means an official 4K release exists, not that this file is 4K. These tags are removed.",

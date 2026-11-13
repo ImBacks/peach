@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "e696b154-7eec-4320-8672-4bbb30885c95", e._sentryDebugIdIdentifier = "sentry-dbid-e696b154-7eec-4320-8672-4bbb30885c95");
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "44194b21-6cc8-41ce-85bd-45b6cd0f4821", e._sentryDebugIdIdentifier = "sentry-dbid-44194b21-6cc8-41ce-85bd-45b6cd0f4821");
 	} catch {}
 })();
 var e = Object.create, t = Object.defineProperty, n = Object.getOwnPropertyDescriptor, r = Object.getOwnPropertyNames, i = Object.getPrototypeOf, a = Object.prototype.hasOwnProperty, o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), s = (e, i, o, s) => {
@@ -7123,6 +7123,7 @@ var He = {
 			"dangling-candidates": "Stale review candidates",
 			"follow-evidence-reclaim": "Old follow snapshots removed",
 			"javdb-actor-records": "JavDB links on people pages",
+			"quality-resolution": "Quality bands",
 			"source-resolution-tags": "4K tags from sources",
 			"video-medium": "Reclassified as videos",
 			"stale-filename-codes": "Misread codes cleared",
@@ -7158,6 +7159,10 @@ var He = {
 			"javdb-entries": {
 				summary: "Same-name performer pages that match the video credits as censored or uncensored no longer get a link. Subscriptions to them are turned off.",
 				title: "JavDB links on people pages"
+			},
+			"quality-bands": {
+				summary: "Videos such as 1920×1080 are rebanded under the new long-edge thresholds. Only values from the old rule change, and files aren't reread.",
+				title: "Quality bands"
 			},
 			"resolution-tags": {
 				summary: "A 4K tag on a metadata site means an official 4K release exists, not that this file is 4K. These tags are removed.",
@@ -13882,6 +13887,7 @@ var He = {
 			"dangling-candidates": "失效的复核候选",
 			"follow-evidence-reclaim": "清理关注抓取的旧快照",
 			"javdb-actor-records": "人物页的 JavDB 入口",
+			"quality-resolution": "画质分档",
 			"source-resolution-tags": "来源的 4K 标签",
 			"video-medium": "改登记为视频",
 			"stale-filename-codes": "清除误认的番号",
@@ -13917,6 +13923,10 @@ var He = {
 			"javdb-entries": {
 				summary: "和作品署名同为有码或同为无码的同名演员页不再给入口，订着它的订阅停用",
 				title: "人物页的 JavDB 入口"
+			},
+			"quality-bands": {
+				summary: "1920×1080 等按新的长边阈值重新分档，只改仍是旧规则算出的值，不重读文件",
+				title: "画质分档"
 			},
 			"resolution-tags": {
 				summary: "资料站标的 4K 指官方出过 4K 版，不是这份文件的画质，这类标签解除",
@@ -38150,4 +38160,4 @@ Dt();
 var bb = document.getElementById("peach-page"), xb = bb ? yb[bb.dataset.page ?? ""] : void 0;
 bb && xb && (0, It.createRoot)(bb).render(/* @__PURE__ */ (0, V.jsx)(vb, { children: /* @__PURE__ */ (0, V.jsx)(xb, { data: { ...bb.dataset } }) }));
 
-//# debugId=e696b154-7eec-4320-8672-4bbb30885c95
+//# debugId=44194b21-6cc8-41ce-85bd-45b6cd0f4821

@@ -24,7 +24,7 @@ class ProbeUnmeasuredTests(unittest.TestCase):
         dimensions = (
             (3840, 2160, '4K'), (2560, 1440, '2K'), (2048, 1080, '2K'),
             (1920, 1080, '1080P'), (1080, 1920, '1080P'),
-            (1280, 720, '720P'), (720, 1280, '720P'), (720, 404, '低画质'),
+            (1280, 720, '720P'), (720, 1280, '720P'), (720, 404, 'low'),
         )
         for width, height, expected in dimensions:
             with self.subTest(width=width, height=height):

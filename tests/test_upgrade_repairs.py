@@ -1948,11 +1948,13 @@ class UpgradeRepairTests(unittest.TestCase):
 
     def test_quality_repair_updates_measured_videos_once_and_preserves_later_edits(self):
         """已有尺寸按画质规则补修，撤回只还原尺寸和值均未再变的记录。"""
-        from peach import auto_landing_revert, web_stats
+        from peach import auto_landing_revert, repair_center, web_stats
         rows = ((1, 1920, 1080, '2K'), (2, 1080, 1920, '2K'),
                 (3, 1280, 720, '720P'), (4, 1920, 1080, '自定义'),
                 (5, 2048, 1080, '2K'), (6, 1500, 900, '1080P'),
-                (7, None, None, '2K'), (8, 1920, 1080, '2K'), (9, 1920, 1080, '2K'))
+                (7, None, None, '2K'), (8, 1920, 1080, '2K'), (9, 1920, 1080, '2K'),
+                # 迁移 0057 之后最低一档存英文 id：旧规则的 720P 落到新规则的 low。
+                (10, 960, 540, '720P'))
         for key, *_ in rows:
             self.asset(key, duration=60)
         with self.database.write_transaction() as connection:
@@ -1965,10 +1967,13 @@ class UpgradeRepairTests(unittest.TestCase):
 
         self.service.prepare()
         self.assertEqual(qualities(), {1: '1080P', 2: '1080P', 3: '720P', 4: '自定义',
-                                       5: '2K', 6: '720P', 7: '2K', 8: '1080P', 9: '1080P'})
+                                       5: '2K', 6: '720P', 7: '2K', 8: '1080P', 9: '1080P', 10: 'low'})
         with self.database.read_connection() as connection:
             bands = {row['k']: row['n'] for row in web_stats._bands(connection, 'ctx_quality', web_stats.QUALITY_BANDS)}
-        self.assertEqual((bands['1080P'], bands['2K'], bands['720P']), (4, 2, 2))
+        self.assertEqual((bands['1080P'], bands['2K'], bands['720P'], bands['low']), (4, 2, 2, 1))
+        with self.database.read_connection() as connection:
+            center = repair_center.snapshot(connection, {}, cloud_pending=0)
+        self.assertEqual(next(item['changed'] for item in center['items'] if item['id'] == 'quality-bands'), 6)
         with self.database.write_transaction() as connection:
             connection.execute("UPDATE asset SET ctx_quality='手工' WHERE id=2")
             connection.execute('UPDATE asset SET width=1600 WHERE id=6')
@@ -1979,9 +1984,9 @@ class UpgradeRepairTests(unittest.TestCase):
             planned = auto_landing_revert.plan(connection, quality_repair.SOURCE,
                                                logo_root=self.root / 'logos', cover_root=self.root / 'covers')
             connection.execute("UPDATE asset SET path='R:\\media\\later.mp4' WHERE id=9")
-            self.assertEqual(auto_landing_revert.apply(connection, planned)['restored_quality'], 1)
+            self.assertEqual(auto_landing_revert.apply(connection, planned)['restored_quality'], 2)
         self.assertEqual(qualities(), {1: '2K', 2: '手工', 3: '720P', 4: '自定义',
-                                       5: '2K', 6: '720P', 7: '2K', 8: '1080P', 9: '1080P'})
+                                       5: '2K', 6: '720P', 7: '2K', 8: '1080P', 9: '1080P', 10: '720P'})
         self.service.prepare()
         self.assertEqual(qualities()[1], '2K')
 
