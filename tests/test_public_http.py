@@ -25,11 +25,19 @@ class PublicHttpTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 public_http.get(url)
         self.session.assert_not_called()
-        for addresses in ((), ('127.0.0.1',), ('1.1.1.1', '192.0.2.1'), ('::ffff:127.0.0.1',)):
+        for addresses in ((), ('127.0.0.1',), ('1.1.1.1', '192.0.2.1'), ('::ffff:127.0.0.1',),
+                          ('198.18.0.7', '10.0.0.1'), ('198.18.0.7', '1.1.1.1')):
             self.dns.return_value = addresses
             with self.subTest(addresses=addresses), self.assertRaises(ValueError):
                 public_http.get('https://public.example/icon')
         self.session.assert_not_called()
+
+    def test_a_fake_ip_answer_is_handed_to_the_local_proxy(self):
+        """开着 Fake-IP 的机器上本机 DNS 只回虚拟地址：连过去交给代理，不把圆标全退成地球。"""
+        self.dns.return_value = ('198.18.0.76',)
+        self.assertEqual(public_http.get('https://public.example/icon').body, b'pixels')
+        target = self.session.call_args.kwargs['curl_options'][public_http.CurlOpt.CONNECT_TO]
+        self.assertEqual(public_http.ffi.string(target.data), b'public.example:443:198.18.0.76:443')
 
     def test_connection_is_pinned_and_tls_keeps_the_original_hostname(self):
         result = public_http.get('https://public.example/icon')

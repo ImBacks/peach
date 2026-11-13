@@ -21,6 +21,10 @@ from .http import HttpResponse, host_addresses, public_https_url
 from .user_agent import USER_AGENT
 
 REDIRECTS = (301, 302, 303, 307, 308)
+#: Clash / Mihomo / Stash 的 Fake-IP 地址池（`mdns.py` 认的同一段）。本机 DNS 只给这段虚拟地址时，
+#: 真实地址由代理在远端解析，本机核验不到；连到虚拟地址等于交给代理，按代理的规则出网。
+#: 一律拒绝的话，开着 Fake-IP 的机器上外链圆标全部退成地球。公网与虚拟地址混着回的照旧拒绝。
+FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
 
 
 def _check_deadline(deadline: float | None) -> None:
@@ -43,9 +47,11 @@ def pinned_address(url: str, *, deadline: float | None = None) -> tuple[str, str
     addresses = host_addresses(host)
     _check_deadline(deadline)
     try:
-        public = bool(addresses) and all(ipaddress.ip_address(ip).is_global for ip in addresses)
+        parsed_addresses = [ipaddress.ip_address(ip) for ip in addresses]
     except ValueError:
-        public = False
+        parsed_addresses = []
+    public = bool(parsed_addresses) and (all(ip.is_global for ip in parsed_addresses)
+                                         or all(ip in FAKE_IP for ip in parsed_addresses))
     if not public:
         raise ValueError("public resource host must resolve only to public addresses")
     return host, addresses[0]
