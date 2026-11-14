@@ -191,7 +191,6 @@ Removed / Fixed / Security。
 
 - **界面**：作品入库后，打开着的页面弹出通知，点「打开」直达这部作品。
 - **更新**：Docker 部署可在配置页一键更新，需先启用可选的 Watchtower，见 [Docker 部署](docs/DOCKER.md#一键更新可选-watchtower)。
-- **采集**：影片详情可「重新抓取资料」，逐字段选用并保护；资料来源顺序可按影片类型调整（#139）。
 - **关注**：JAV 订阅增加 DMM / FANZA 片单；用户脚本可在 JavDB、DMM、MISSAV 的女优页直接订阅。
 - **采集**：素人片缺演员时查素人系総合 Wiki 补上艺名；minnano-av 没收录的女优从 avbase 补资料。
 - **采集**：「来源和凭证」可一键检查各资料源与图片 CDN 能否连上，命令行用 `peach check-sources`（#382）。

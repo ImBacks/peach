@@ -1,6 +1,6 @@
 # 参与 Peach
 
-Issues and pull requests are welcome. Maintainer-authored changes follow the same PR workflow. Small fixes (bugs, copy, documentation, tests) can go straight to a PR; complex bugs and large changes — new features, default behavior, connectors, contract or data-layer changes, anything an ADR covers — should have an issue first. Read [`AGENTS.md`](AGENTS.md) before opening a PR: it is the single entry point for development rules, and reviews follow it. Issues follow the templates in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/); the terms and delivery format in `AGENTS.md` are for code changes only. Each platform has exactly one test entry point: `& .\scripts\test.ps1` on Windows and `./scripts/test.sh` on macOS/Linux. By submitting a contribution you agree to license it under AGPL-3.0-or-later. The rest of this document is in Chinese.
+Issues and pull requests are welcome. Maintainer-authored changes follow the same PR workflow. Small fixes (bugs, copy, documentation, tests) can go straight to a PR; complex bugs and large changes — new features, default behavior, connectors, contract or data-layer changes, anything an ADR covers — should have an issue first. Read [`AGENTS.md`](AGENTS.md) before opening a PR: it is the single entry point for development rules, and reviews follow it. When you follow it, "I / the user", the ledger and production mean your own environment, and you commit under your own Git identity; fork PRs with commits authored as the maintainer fail CI. Issues follow the templates in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/); the terms and delivery format in `AGENTS.md` are for code changes only. Each platform has exactly one test entry point: `& .\scripts\test.ps1` on Windows and `./scripts/test.sh` on macOS/Linux. By submitting a contribution you agree to license it under AGPL-3.0-or-later. The rest of this document is in Chinese.
 
 Peach 是单人自托管应用，由一个人维护。欢迎提 Issue 和 PR。维护者自己的改动也遵循同一套流程，通过 PR 保留审阅与验证记录。
 
@@ -85,9 +85,13 @@ GitHub 的字段与模板机制见 [Issue types](https://docs.github.com/en/issu
 
 ### AI 参与与提交责任
 
-允许 AI 辅助方案、代码、测试、文档和 PR 文字。使用时简短说明参与范围，以及提交者实际检查的内容；不要求提供提示词或模型名称，提交里也不需要加 AI 署名。
+允许 AI 辅助方案、代码、测试、文档和 PR 文字。使用时简短说明参与范围，以及提交者实际检查的内容；不要求提供提示词或模型名称。直接用 Git 提交时不需要加 AI 署名。
 
-维护者采纳社区补丁时保留原作者为提交作者，用 `Source-PR`、`Original-Commit` 记录来源，不替贡献者补加 AI 署名。提交里的智能体署名表示维护侧智能体的改写或补充，只在它确实改动了代码时出现，不代表贡献者使用了 AI。署名门槛只检查维护者本机提交者自己的提交，见工作树交付约定。
+提交一律用你自己的 Git 身份（`user.name`、`user.email`），不要照仓库历史配成维护者。来自 fork 的 PR 里出现以维护者为作者的提交，CI 会拒收并给出重写命令。`AGENTS.md` 里的「我 / 用户」、ledger、生产和主检出，对你来说都指你自己的环境；你的 `integrate` 只合进你自己的 master，进上游仍要开 PR。
+
+你也可以照维护者的工作树流程（`scripts/agent_worktree.py`）开发。这时署名门槛同样检查你自己的提交，要求写明智能体工具与模型，形如 `Co-Authored-By: 工具 (模型) <厂商 noreply 地址>`。所用工具未在 `scripts/co_author.py` 的 `VENDORS` 登记时，先单独提交一次登记（工具名加厂商公开的 noreply 地址，不用个人邮箱），并在 PR 里说明。
+
+维护者采纳社区补丁时保留原作者为提交作者，用 `Source-PR`、`Original-Commit` 记录来源，不替贡献者补加 AI 署名。提交里的智能体署名表示提交者一侧智能体的改写或补充，只在它确实改动了代码时出现。署名门槛只检查本机提交者自己的提交，采纳的他人提交不检查，见工作树交付约定。
 
 提交者对最终内容负责，能够解释设计与取舍，并核对代码、说明和验证结果。未运行的测试、跳过项、未取得的样本和待原环境验收的部分在「测试结果」中明确标注，不把推测写成已验证结论。维护者按影响和风险评审，授权与确认边界见 `AGENTS.md`。
 

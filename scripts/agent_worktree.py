@@ -19,7 +19,7 @@ if not __package__:
     __package__ = "scripts"
 from peach.interface_text import dev as t
 
-from . import (changelog, check_public_text, co_author, commit_subject,
+from . import (changelog, check_pr_identity, check_public_text, co_author, commit_subject,
                test_evidence, test_runner, version_bump)
 from .release_tag import MASTER_WRITER
 
@@ -244,11 +244,13 @@ def require_pull_request(worker: Path, branch: str, target_branch: str, head: st
     """用工作树的 GitHub 仓库上下文取得当前分支 PR，绑定精确提交与目标分支。
 
     正文里独占一行的 issue 关联行原样带出，写进合并提交；正文中顺带提到的编号不算。
+    来自 fork 的 PR 还要核对提交作者不是维护者，判据同 CI 的 `check_pr_identity.py`。
     """
     fields = ("url", "state", "headRefOid", "baseRefName")
     try:
         result = subprocess.run(
-            ["gh", "pr", "view", branch, "--json", ",".join((*fields, "body"))], cwd=worker,
+            ["gh", "pr", "view", branch, "--json", ",".join((*fields, "body", "isCrossRepository"))],
+            cwd=worker,
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -269,6 +271,10 @@ def require_pull_request(worker: Path, branch: str, target_branch: str, head: st
         raise WorkspaceError(t("agent_worktree.pullRequestHeadMismatch"))
     if pr["baseRefName"] != target_branch:
         raise WorkspaceError(t("agent_worktree.pullRequestWrongBase", branch=target_branch))
+    if pr.get("isCrossRepository") is True:
+        impersonated = check_pr_identity.problems(worker, target_branch, head)
+        if impersonated:
+            raise WorkspaceError(check_pr_identity.explain(impersonated))
     body = pr.get("body") if isinstance(pr.get("body"), str) else ""
     refs = [line.strip() for line in body.splitlines() if ISSUE_LINK.fullmatch(line.strip())]
     return {"url": pr["url"], "head": head, "base": target_branch, "refs": refs, "body": body}
