@@ -1062,7 +1062,7 @@ Python、npm 与 GitHub Actions 的版本由 `.github/dependabot.yml` 每周检�
 
 播放生命周期复用 [PR190](https://github.com/peach-mitao/peach/pull/190) 的 `e41222e312443b5d0fc7be87d2f7eca9c1d61055`：共享分片按消费者计数，最后消费者离开才取消生成，并等待子进程回收；文件响应保留外层取消与运行错误。头像确认的图像和数据库工作共用工作线程，安装按实体加锁。当前 ASGI 响应头中间件、SMB 输入和图像预处理保留 Peach 主线实现；未采用该 PR 的界面、依赖和测试调度改动。
 
-匿名签名校验复用 [PR150](https://github.com/peach-mitao/peach/pull/150) 的唯一入口、时间戳表达式及字符串约束，适配已存在的动态变量解析接口。媒体响应复用 [PR131](https://github.com/peach-mitao/peach/pull/131) 的被动类型校验、CSP `sandbox` 和 `nosniff`；HLS 清单继续可读，旧活动文档缓存不命中。以上均使用现有标准库、Starlette 和 filelock，无新增依赖。
+匿名签名校验复用 [PR150](https://github.com/peach-mitao/peach/pull/150) 的唯一入口、时间戳表达式及字符串约束，适配已存在的动态变量解析接口。媒体响应复用 [PR131](https://github.com/peach-mitao/peach/pull/131) 的被动类型校验、CSP `sandbox` 和 `nosniff`；HLS 清单继续可读，旧活动文档缓存不命中。站点圆标出网复用同一 PR 的 `public_http`：curl_cffi 的 `CONNECT_TO` 把连接钉在核验过的公网地址上，TLS 仍按原域名校验，每一跳重定向另开会话重新核验；只检查域名再交给 HTTPX 自动跟随的做法约束不了连接时的解析和后续跳转，不采用。以上均使用现有标准库、Starlette 和 filelock，无新增依赖。
 
 ## 静态检查
 

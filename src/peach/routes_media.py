@@ -35,7 +35,8 @@ from starlette.requests import ClientDisconnect
 from . import (
     avatar_face, avatar_online, avatar_picker, avatar_provider, error_reporting,
     follow_assets, follow_providers, images, interface_text,
-    jav_poster_crop, link_marks, link_status, scraping_access, site_icons, social_links, subtitles,
+    jav_poster_crop, link_marks, link_status, peach_proxy, public_http, scraping_access, site_icons,
+    social_links, subtitles,
     taste_history, timeline_sheets, web_follow, web_timeline_thumbnails,
 )
 from .config import GENERATED_DIR, PROJECT_ROOT
@@ -96,10 +97,6 @@ def _asset_response(request: Request, path: Path | None, *, placeholder: bool = 
                         media_type=PLACEHOLDER_CONTENT_TYPE,
                         headers={"cache-control": "no-store"})
     return _image_response(request, path, media_type=follow_assets.content_type(path))
-
-#: 取图标时报浏览器 UA。CDN 上的图标资产（p-smith、static.cdninstagram）对
-#: 机器人 UA 会直接 403，而这只是一次公开静态文件请求，没有伪装成用户的意思。
-from .user_agent import USER_AGENT
 
 #: 文件名里不能出现的字符，按 Windows 的最严口径取——落盘的那台多半是它。
 _UNSAFE_FILENAME = re.compile('[\\/:*?"<>|]+|[\x00-\x1f]+')
@@ -1451,6 +1448,9 @@ def _site_mark_response(state, url: str, root: Path):
     取不到时留一个 `.failed` 标记，`follow_assets.RETRY_SECONDS` 内不再出网：一次
     取图要试首页、manifest 和几个候选，各等 8 秒，断网时资料页每枚外链都重跑一遍，
     图标区就一直卡着。标记期间有旧图发旧图，没有就 404 露出地球图标。
+
+    候选地址来自对方页面，出网走 `public_http`：只连公网 HTTPS，连接钉在核验过的 IP 上，
+    每一跳重定向重新核验，页面里声明的内网或明文地址一次都不连。
     """
     # 存档链接按快照保存的原站找图标，缓存也按原站存：缓存键只看主机，按存档地址存，
     # 所有存档链接就共用 web.archive.org 那一枚。
@@ -1463,16 +1463,14 @@ def _site_mark_response(state, url: str, root: Path):
             and not follow_assets.is_fresh(marker, follow_assets.RETRY_SECONDS)):
         def fetch(target: str):
             try:
-                upstream = state.http_transport.client.get(
-                    locate(target), headers={"User-Agent": USER_AGENT},
-                    timeout=8, follow_redirects=True)
-            except (OSError, ValueError, httpx.HTTPError, httpx.InvalidURL):
-                # 重定向到主机名过不了 IDNA 的地址时传输层抛 ValueError，地址本身不合法时
-                # 抛 InvalidURL；两者都不是 HTTPError，同样算取不到。
+                upstream = public_http.get(locate(target), client_options=peach_proxy.client_options())
+            except (OSError, ValueError, public_http.requests.exceptions.RequestException):
+                # 地址不是公网 HTTPS、解析到内网、重定向出界、超时或超体积都抛 ValueError；
+                # 代理设置冲突抛的 UserValueError 也是 ValueError。都算取不到。
                 return None
-            if upstream.status_code != 200 or not upstream.content:
+            if upstream.status != 200 or not upstream.body:
                 return None
-            return upstream.content, upstream.headers.get("content-type", "")
+            return upstream.body, upstream.headers.get("content-type", "")
 
         # 两条通道都不适用时退回原样缩图：糊一点也好过露出地球图标。存档链接例外：原站
         # 给不出合格的圆标就用存档站自己的图标，点过去本来就是存档。原站那张不合格的图
