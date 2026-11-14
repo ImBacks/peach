@@ -4924,8 +4924,10 @@ class R2ArtifactTransferTests(unittest.TestCase):
         path.write_bytes(b"test double; subprocess calls are mocked")
 
     def environment(self):
+        # 清空环境后补回运行器固定的语言，否则报错文字跟系统语言走，英文 CI 上对不上中文断言。
         return {"CI_PROJECT_ID": "123", "CI_PIPELINE_ID": "456", "CI_COMMIT_SHA": "a" * 40,
-                "CI_COMMIT_TAG": "v1.2.3", "CI_COMMIT_REF_PROTECTED": "true", "CI_JOB_ID": "789"}
+                "CI_COMMIT_TAG": "v1.2.3", "CI_COMMIT_REF_PROTECTED": "true", "CI_JOB_ID": "789",
+                "PEACH_LANGUAGE": "zh-CN"}
 
     def rclone_environment(self):
         return {"PEACH_RCLONE": "rclone", "PEACH_R2_BUCKET": "peach-releases"}
