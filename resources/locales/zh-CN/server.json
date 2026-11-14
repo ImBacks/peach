@@ -258,7 +258,9 @@
       "dangling-candidates": "失效的复核候选",
       "follow-evidence-reclaim": "清理关注抓取的旧快照",
       "javdb-actor-records": "人物页的 JavDB 入口",
+      "quality-resolution": "画质分档",
       "source-resolution-tags": "来源的 4K 标签",
+      "video-medium": "改登记为视频",
       "stale-filename-codes": "清除误认的番号",
       "studio-unbounded-misses": "厂牌查询缓存",
       "verification-settlement": "核查差异结算",
@@ -293,9 +295,17 @@
         "summary": "和作品署名同为有码或同为无码的同名演员页不再给入口，订着它的订阅停用",
         "title": "人物页的 JavDB 入口"
       },
+      "quality-bands": {
+        "summary": "1920×1080 等按新的长边阈值重新分档，只改仍是旧规则算出的值，不重读文件",
+        "title": "画质分档"
+      },
       "resolution-tags": {
         "summary": "资料站标的 4K 指官方出过 4K 版，不是这份文件的画质，这类标签解除",
         "title": "来源的 4K 标签"
+      },
+      "video-medium": {
+        "summary": "WebM 等以前登记成其他文件的视频改回视频，进馆藏后自动补时长、预览与资料",
+        "title": "改登记为视频"
       },
       "system-files": {
         "summary": "NAS 系统目录里的缩略图、macOS 的 ._ 附属文件等移出馆藏，文件本身不删",

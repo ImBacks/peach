@@ -51,7 +51,7 @@ def context_fields(width: int, height: int, duration: float) -> tuple[str | None
         orientation = PORTRAIT if height > width else LANDSCAPE
         longest = max(width, height)
         # 画质与时长档按 `catalog_vocabulary` 的次序：由高到低、由短到长。
-        quality = QUALITY_BANDS[next((index for index, floor in enumerate((3000, 1900, 1300, 900)) if longest >= floor), 4)]
+        quality = QUALITY_BANDS[next((index for index, floor in enumerate((3000, 2000, 1800, 1200)) if longest >= floor), 4)]
     if duration and duration > 0:
         length = LENGTH_BANDS[next((index for index, ceiling in enumerate((300, 900, 2400)) if duration < ceiling), 3)]
     return length, orientation, quality

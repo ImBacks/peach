@@ -78,11 +78,18 @@ export const createV10Player: VideojsFactory = (video, options) => {
     active();
   };
   const emit = (name: string) => events.dispatchEvent(new Event(name));
+  // 进入等待时的播放位置：之后时间往前走了，就说明已经在播。
+  let waitingAt = -1;
   for (const name of ['play', 'pause', 'ended', 'loadedmetadata', 'durationchange', 'timeupdate', 'progress', 'loadstart', 'waiting', 'stalled', 'canplay', 'playing', 'seeking', 'seeked', 'ratechange', 'volumechange', 'resize', 'enterpictureinpicture', 'leavepictureinpicture']) {
     video.addEventListener(name, () => {
       if (['play', 'pause', 'ended', 'loadedmetadata'].includes(name)) update();
-      if (['waiting', 'stalled', 'seeking'].includes(name)) root.classList.add('vjs-waiting');
+      // stalled 只说明暂时没收到数据；缓冲还够（HAVE_FUTURE_DATA 及以上）时照常在播，不算等待。
+      if (['waiting', 'seeking'].includes(name) || (name === 'stalled' && video.readyState < 3)) {
+        root.classList.add('vjs-waiting'); waitingAt = video.currentTime;
+      }
       if (['canplay', 'playing', 'seeked', 'pause'].includes(name)) root.classList.remove('vjs-waiting');
+      // iOS Safari 渐进下载时会发 stalled、waiting，缓冲够了接着播却不再发 canplay、playing：时间在走就清掉。
+      if (name === 'timeupdate' && !video.seeking && video.currentTime !== waitingAt) root.classList.remove('vjs-waiting');
       emit(name);
     }, { signal });
   }
