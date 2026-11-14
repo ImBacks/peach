@@ -8,6 +8,7 @@ import { PICK_FOLDER_URL } from '../../../configuration-endpoints';
 import { bodyFieldErrors, codedText, serverLabel, serverText } from '../../../core/server-text';
 import { t } from '../../../i18n';
 import { localizedFact } from '../../settings/coded-text';
+import { pickServerFolder, type FolderReply } from '../../components/server-path-dialog';
 
 export const SETUP_QUESTIONS_URL = '/api/setup/questions';
 export const SETUP_URL = '/api/setup';
@@ -148,8 +149,8 @@ export const submitSetup = async (submission: SetupSubmission) =>
 export const restoreSetup = async (dataRoot: string) =>
   localizedDone(await request<SetupDone>(`${SETUP_URL}/restore`, { method: 'POST', body: JSON.stringify({ data_root: dataRoot }) }, t('shell:setupErrors.restoreFailed')));
 
-export const pickFolder = async (initial: string) =>
-  (await request<{ path: string | null }>(PICK_FOLDER_URL,
-    { method: 'POST', body: JSON.stringify({ initial }) }, t('shell:setupErrors.pickFolderFailed'))).path;
+export const pickFolder = async (initial: string, purpose: 'media' | 'data' = 'media') =>
+  pickServerFolder(initial, body => request<FolderReply>(PICK_FOLDER_URL,
+    { method: 'POST', body: JSON.stringify(body) }, t('shell:setupErrors.pickFolderFailed')), purpose);
 
 export const describeFailure = (cause: unknown) => (cause instanceof Error && cause.message) || t('shell:setupErrors.requestFailed');

@@ -178,7 +178,8 @@ SCOPES: dict[str, tuple[str, ...]] = {
                   "test_cli.py", "test_server.py", "test_versioning.py", "test_frontend_build.py", "test_frontend_preflight.py",
                   "test_cloudflared_packaging.py", "test_desktop_installer.py",
                   "test_ffmpeg_build.py", "test_ffmpeg_bundle.py", "test_untrunc_build.py", "test_macos_media.py",
-                  "test_face_models_bundle.py", "test_metadata_amane_bridge.py", "test_release_candidate.py", "test_media_build_cache.py"),
+                  "test_face_models_bundle.py", "test_metadata_amane_bridge.py", "test_release_candidate.py",
+                  "test_media_build_cache.py", "test_docker_entrypoint.py"),
 }
 
 SCOPE_TEST_IDS: dict[str, tuple[str, ...]] = {

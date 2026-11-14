@@ -19,7 +19,7 @@ from .os_errors import CodedOSError, CodedTimeoutError
 #: 单项读取的期限。目录枚举按「多久没有新条目」计：挂死的挂载一条也不返回，到期判失败；
 #: 网络盘上的大目录逐条返回得慢，只要还在返回就不按总时长判死。
 TIMEOUT_SECONDS = 20.0
-OPERATIONS = ('directory', 'files', 'nfo', 'art', 'online', 'resolve', 'stat')
+OPERATIONS = ('directory', 'files', 'nfo', 'art', 'online', 'resolve', 'stat', 'browse')
 
 
 def _request(operation, path, *, value='', timeout=None):
@@ -226,6 +226,9 @@ def _stream_directory(path, value):
 
 
 def _read(operation, path, value):
+    if operation == 'browse':
+        from .nas_directories import list_directory
+        return list_directory(path, **json.loads(value))
     if operation == 'directory':
         from .smb_media import SmbResource
         if isinstance(path, SmbResource):

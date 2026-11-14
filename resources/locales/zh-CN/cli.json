@@ -182,5 +182,17 @@
     "description": "启动 Peach 托盘（macOS 上是菜单栏项）并接管本机服务；通常不带参数直接运行。",
     "silent": "启动后仅显示托盘",
     "show": "启动后打开浏览器"
+  },
+  "nasSetup": {
+    "description": "生成可导入 NAS 容器管理器的 Compose；不连接 Docker，不启动或覆盖已有部署。",
+    "help": {
+      "bind": "NAS 的局域网 IP",
+      "media": "宿主机上已有的媒体目录，容器里是只读的 /media",
+      "hostname": "重建容器后保持这个名称，任务仍归同一执行端",
+      "uid": "运行 Peach 的数字 UID，默认 1000，用于沿用 NAS 共享目录的权限",
+      "gid": "运行 Peach 的数字 GID，默认 1000",
+      "prepareRender": "渲染节点权限为 0600 时由容器入口把它交给服务的组；不修改宿主机节点",
+      "output": "保存为新文件，文件已存在时拒绝覆盖；默认写到标准输出"
+    }
   }
 }

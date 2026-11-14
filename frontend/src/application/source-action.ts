@@ -2,6 +2,13 @@ import { esc } from '../core';
 import { setActionBusy } from '../ui-kit/controls';
 import { spinnerHtml } from '../ui-kit/markup';
 import { t } from '../i18n';
+import { showServerPath, type ServerPathReply } from '../react/components/server-path-dialog';
+
+export async function completeReveal(result: unknown, success: () => void): Promise<void> {
+  const reply = result as (ServerPathReply & { mode?: string }) | undefined;
+  if (reply?.mode === 'server' && reply.path) await showServerPath(reply);
+  else success();
+}
 
 export interface SourceActionPorts {
   request(id: number): Promise<unknown>;
@@ -22,9 +29,9 @@ export function createRevealSourceAction(ports: SourceActionPorts) {
     }
     status.textContent = '';
     try {
-      await ports.request(id);
+      const result = await ports.request(id);
       status.textContent = '';
-      ports.success();
+      await completeReveal(result, ports.success);
     } catch (error) {
       status.textContent = ports.failureText(error);
     } finally {

@@ -1,11 +1,5 @@
-/* 页面上印着全路径的那一行：路径本身，加一颗把它在资源管理器里打开的键。
- *
- * 凭据文件、问题日志、卸载会删的数据目录都印全路径，读到它的下一步就是去那儿看一眼；
- * 照着抄一遍再粘回资源管理器是白抄的。递给服务端的只是这一串，能不能开由它拿自己的
- * Peach 数据目录重判（`/api/reveal` 的 `path` 分支）。
- *
- * 窗口弹在**服务端那台机器**上：本机浏览时它自己就是回执，从别的设备浏览时这边屏幕
- * 什么都不会发生，所以成功仍要报一句。失败留在路径旁边，等人重试。 */
+/* 路径与「查看文件位置」：服务端核对数据根边界，桌面定位、NAS 展示可选中的路径。
+ * 请求失败留在路径旁边，桌面定位成功通过调用方回执。 */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { IconButton } from '@/components/base/buttons/icon-button';
@@ -14,6 +8,7 @@ import { cx } from '@/utils/cx';
 import { ApiError, apiSend } from '../../api';
 import { busyProps } from '../settings/use-action';
 import { t } from '../../i18n';
+import { showServerPath, type ServerPathReply } from './server-path-dialog';
 
 /** 全站「打开位置」那一枚。雪碧图里的 `folder-open`，Remix Icon 没有对应的一枚。 */
 function FolderOpenIcon({ className }: { className?: string }) {
@@ -52,8 +47,9 @@ export function PathLine(
     setBusy(true);
     setProblem('');
     try {
-      await apiSend('/api/reveal', { path });
-      onRevealed?.(t('shell:sourceTools.revealed'));
+      const result = await apiSend<ServerPathReply & { mode?: string }>('/api/reveal', { path });
+      if (result.mode === 'server' && result.path) await showServerPath(result);
+      else onRevealed?.(t('shell:sourceTools.revealed'));
     } catch (error) {
       if (alive.current) setProblem(error instanceof ApiError ? error.message : UNREACHED);
     } finally {

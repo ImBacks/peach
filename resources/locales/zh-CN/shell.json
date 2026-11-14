@@ -386,7 +386,7 @@
     "portrait": "竖屏"
   },
   "pathLine": {
-    "reveal": "在资源管理器中显示"
+    "reveal": "查看文件位置"
   },
   "pendingWork": {
     "running": "正在补全：{{tasks}}",
@@ -451,21 +451,21 @@
     "viewItem": "查看{{title}}"
   },
   "requestError": {
-    "badGateway": "Peach 服务没有取回结果，请稍后重试；持续失败时查看托盘日志。",
+    "badGateway": "Peach 服务没有取回结果，请稍后重试；持续失败时查看 Peach 运行日志。",
     "badRequest": "提交内容有误，请检查输入后重试。",
     "clientTimeout": "等待服务响应超时，请检查连接后重试。",
     "conflict": "当前状态不允许此操作，请刷新后重试。",
-    "fallback": "操作未完成，请重试；持续失败时查看托盘日志。",
-    "forbidden": "当前设备没有执行此操作的权限，请在运行 Peach 的电脑上操作。",
+    "fallback": "操作未完成，请重试；持续失败时查看 Peach 运行日志。",
+    "forbidden": "当前设备没有执行此操作的权限，请在运行 Peach 的设备上操作。",
     "gatewayTimeout": "等待服务响应超时，请稍后重试。",
     "notFound": "请求的内容已不存在，请刷新列表。",
     "rateLimited": "请求过于频繁，请稍后重试。",
-    "serverError": "Peach 服务处理失败，请重试；持续失败时查看托盘日志。",
+    "serverError": "Peach 服务处理失败，请重试；持续失败时查看 Peach 运行日志。",
     "sessionExpired": "登录已失效，请刷新页面重新登录。",
     "timeout": "请求超时，请稍后重试。",
     "tooLarge": "提交内容过大，请减少数量后重试。",
     "unavailable": "Peach 服务暂时不可用，请稍后重试。",
-    "unreachable": "无法连接到 Peach 服务，请确认网络连接和托盘服务已启动。"
+    "unreachable": "无法连接到 Peach 服务，请确认网络连接正常、Peach 正在运行。"
   },
   "routeTitle": {
     "agencies": "事务所",
@@ -698,11 +698,11 @@
     "fileMissing": "找不到源文件；点右侧的扫描按钮重新检查目录。",
     "libraryOffline": "媒体库无法访问，暂时无法核对文件；恢复连接后重试",
     "noChanges": "目录核对完成，无需改动",
-    "notMapped": "本机没有映射这个来源的盘符",
+    "notMapped": "运行 Peach 的设备上没有挂载这个来源",
     "reattached": "{{count, number}} 项的记录已接到库里的另一个版本",
     "resultSeparator": "，",
     "revealFailed": "打开文件管理器失败，请重试",
-    "revealed": "已在资源管理器中显示",
+    "revealed": "已在文件管理器中显示",
     "trashed": "已把 {{count, number}} 项移入回收站",
     "unreadable": "目录有 {{count, number}} 项暂时无法读取，本次未改动",
     "unsupportedPlatform": "当前服务端系统不支持直接定位文件",
@@ -795,5 +795,34 @@
     "added": "已加入稍后看",
     "removed": "已移出稍后看",
     "updateAction": "更新稍后看"
+  },
+  "serverPath": {
+    "dataTitle": "数据目录",
+    "dataField": "服务端数据目录",
+    "dataContainer": "容器数据位置由宿主机的数据卷挂载决定，请在 NAS 容器管理器中配置。",
+    "dataManual": "请填写运行 Peach 的服务器上的数据目录；保存时会检查目录是否可用。",
+    "useFolder": "使用此目录",
+    "close": "关闭",
+    "cancel": "取消",
+    "readFailed": "目录读取失败，请重试",
+    "pickTitle": "选择服务端目录",
+    "pickHelp": "这里显示 NAS 或容器内的路径，输入后按回车读取。新挂载目录也可以直接填在媒体目录输入框中。",
+    "pathField": "服务端目录路径",
+    "roots": "挂载目录",
+    "parent": "上一级",
+    "reading": "正在读取目录",
+    "noSubfoldersYet": "本批条目中没有子目录，可以继续读取。",
+    "noSubfolders": "这个目录下没有可选择的子目录。",
+    "readMore": "继续读取",
+    "noRoots": "尚未配置媒体挂载目录，请先手动填写容器内的路径。",
+    "choose": "选择此目录",
+    "locationTitle": "查看文件位置",
+    "locationContainer": "在 NAS 文件管理器中打开挂载给 Peach 的共享文件夹，再按目录内位置查找。容器路径与 NAS 共享路径可能不同。",
+    "locationServer": "文件位于运行 Peach 的服务器上，可以复制路径后在服务器中查找。",
+    "containerPath": "容器内路径",
+    "serverPath": "服务端路径",
+    "locationField": "服务端文件位置",
+    "mediaRoot": "媒体目录",
+    "relativePath": "目录内位置"
   }
 }

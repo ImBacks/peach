@@ -107,6 +107,18 @@
     },
     "storageFull": "网盘空间不足，扩容或清理后重试"
   },
+  "nasSetup": {
+    "invalidBind": "请填写 NAS 的局域网 IP 或回环地址",
+    "invalidHostname": "主机名只接受字母、数字、点和连字符",
+    "invalidIdentity": "UID 和 GID 应为 1 到 4294967294 之间的整数",
+    "invalidImage": "镜像名称无效",
+    "invalidMediaPath": "请填写宿主机上的媒体目录绝对路径",
+    "invalidPort": "端口应在 1 到 65535 之间",
+    "invalidRenderDevice": "请选择 /dev/dri 下的渲染节点 renderD128 到 renderD191",
+    "invalidRenderGid": "渲染节点 GID 无效",
+    "renderDeviceRequired": "设置核显权限时须同时指定渲染节点",
+    "renderPermissionChoice": "核显请选择额外组 GID，或选择容器内设备权限准备，不能同时使用"
+  },
   "ledgerBackup": {
     "purpose": {
       "auto-landing-revert": "撤回自动写入前",
@@ -1790,7 +1802,8 @@
       "cannotOpen": "这台电脑上打不开系统文件夹对话框",
       "failed": "没能打开文件夹对话框",
       "noPermission": "这台电脑上的 Peach 没有弹出对话框的权限",
-      "unsupportedSystem": "这个系统上没有可用的文件夹对话框"
+      "unsupportedSystem": "这个系统上没有可用的文件夹对话框",
+      "headless": "无桌面部署请在网页中选择媒体挂载目录"
     },
     "followEvidence": {
       "estimating": "还在统计能清理的文件，请稍后再试",
@@ -2667,6 +2680,13 @@
     },
     "webJavDetail": {
       "resourcesFailed": "磁力与评论里的资源都没有取到"
+    },
+    "nasDirectories": {
+      "invalidPurpose": "请选择媒体目录或数据目录",
+      "invalidOffset": "目录分页位置无效，请重新读取目录",
+      "outsideRoots": "只能浏览已配置的媒体挂载目录；新挂载路径可在媒体目录输入框中填写",
+      "timedOut": "媒体目录读取超时，请稍后重试或手动填写路径",
+      "unreadable": "媒体目录不可读取，请检查挂载与目录权限"
     }
   },
   "jobMessage": {
