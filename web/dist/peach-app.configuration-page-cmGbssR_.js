@@ -1,11 +1,7 @@
 (function() {
 	try {
 		var e = typeof globalThis < "u" ? globalThis : typeof window < "u" ? window : typeof global < "u" ? global : typeof self < "u" ? self : {}, t = new e.Error().stack;
-<<<<<<<< HEAD:web/dist/peach-app.configuration-page-BXogdlmX.js
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "b6f9932c-14e4-47dc-b2fa-b553108e89f4", e._sentryDebugIdIdentifier = "sentry-dbid-b6f9932c-14e4-47dc-b2fa-b553108e89f4");
-========
-		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "bd6cd13e-a047-47a1-a5d5-13c3d3f6acd2", e._sentryDebugIdIdentifier = "sentry-dbid-bd6cd13e-a047-47a1-a5d5-13c3d3f6acd2");
->>>>>>>> agent/claude/batch2-docker:web/dist/peach-app.configuration-page-C8BEswh3.js
+		t && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[t] = "f3189a39-14fd-49a0-8449-09ed95f93e3c", e._sentryDebugIdIdentifier = "sentry-dbid-f3189a39-14fd-49a0-8449-09ed95f93e3c");
 	} catch {}
 })();
 import { $2ec61d1d4f780267$export$a8a3e93435678ff9 as e, $3a442827418ebe87$export$eb2fcfdbd7ba97d4 as t, $542a13ca2fa5b484$export$5b6b19405a83ff9d as n, $72abaeab4d80592f$export$78efe591171d7d45 as r, $bd263d78e9bf3c56$export$f5c9f3c2c4054eec as i, $ea3928288112382f$export$439d29a4e110a164 as a, $f2ff30fde7b014be$export$3ddf2d174ce01153 as o, $fe21c36db05242bb$export$a98f0dcb43a68a25 as s, $fe21c36db05242bb$export$d7b12c4107be0d61 as c, ACCENTS as l, ActivityStatus as u, ApiError as d, Button as f, ButtonLink as p, CLOUD_LOCATIONS as m, CLOUD_PROXY_HELP as h, CONFIGURATION_KEY as g, CONFIGURATION_SECTIONS as _, CONFIGURATION_URL as v, CREDENTIAL_STATE as y, Checkbox as b, Chip as x, CommandSteps as S, Disclosure as C, ENTRY_LINKS_HELP as ee, ENTRY_LINKS_HINT as te, EmptyState as w, ErrorText as T, Eu as ne, ExternalLink as E, FEED_SCHEDULE_KEY as re, FOLLOW_CREDENTIALS_KEY as ie, FOLLOW_INITIAL_RANGE_OPTIONS as ae, FOLLOW_SCHEDULE_KEY as oe, Fact as D, FactList as O, FieldLabel as se, Footer as k, Help as A, HintText as ce, Input as j, L1 as le, LIBRARY_FOLDER_HELP as ue, LIBRARY_PROCESSING_KEY as de, Label as fe, LinkButton as pe, M6 as me, MEDIA_PROCESSING_KEY as he, MEDIA_PROCESSING_URL as ge, MEDIA_SOURCE_ICONS as _e, MENU_POPOVER_SURFACE as ve, Note as M, PICK_FOLDER_URL as ye, POLICY_COLUMNS as be, POLICY_COVER_NOTE as xe, POLICY_MATRIX as Se, POLICY_SUMMARY as Ce, PathLine as we, ProcessingMode as Te, Progress as Ee, RELEASE_NOTICE_EVENT as De, REPAIR_CENTER_PATH as Oe, Rows as N, SEGMENT as ke, SEGMENTED_TRACK as Ae, SETTINGS_KEY as je, SETTINGS_URL as Me, Section as P, SectionSkeleton as Ne, SegmentedRadioGroup as Pe, Select as Fe, Select$1 as F, SelectItem as I, SettingsCard as Ie, SettingsRow as L, SiteLabel as Le, SortableBoardTabs as Re, SourceLabel as ze, SourceMark as Be, Stack as R, StatusLabel as z, Switch as B, THUMBNAIL_JOBS_KEY as Ve, TaskCenterLink as He, TaskProgress as Ue, TextField as We, TextFieldContext as Ge, Uz as Ke, __toESM as qe, _p as Je, activityKind as Ye, animate as Xe, apiGet as V, apiSend as H, appSettingsStore as Ze, bodyFieldErrors as Qe, boundedPreference as $e, busyProps as U, cardClass as et, checkClientUpdates as tt, cloudProxySkeleton as nt, clsx as rt, cn as it, codedText as W, confirmModal as at, credentialDone as ot, credentialsSkeleton as st, cx as ct, d6 as lt, devicesSkeleton as ut, errorMessage as G, fetchConfiguration as dt, fetchCredentials as ft, fetchFeedSchedule as pt, fetchFollowSchedule as mt, fetchLibraryProcessing as ht, fetchMediaProcessing as gt, fetchSettings as _t, fetchThumbnailJobs as vt, fmtSize as K, i2 as yt, indexersSkeleton as bt, interfaceLanguage as xt, javBrowserSkeleton as St, jobText as Ct, joinList as wt, l1 as Tt, ledgerBackupsSkeleton as Et, localizedFact as Dt, momentText as Ot, motion as kt, overlayHost as At, peachHistory$1 as jt, pickServerFolder as Mt, pollUntil as Nt, previewLibraryColor as Pt, processingActive as Ft, providerIcon as It, queryClient as Lt, randomId as Rt, rememberShape as zt, require_jsx_runtime as Bt, require_react as Vt, restartEffectText as Ht, saveCredential as Ut, schedulePollInterval as Wt, sectionTitle as Gt, serverLabel as q, serverLabelList as Kt, serverText as qt, settingsPath as Jt, shellNavigate as Yt, sortCx as Xt, sourceDefaultCost as Zt, stageText as Qt, t as J, translateWithNodes as $t, useAction as Y, useClientUpdates as en, useLibraryTints as tn, useMutation as nn, useOrderedLibraries as rn, useQuery as X, useQueryClient as an, useReducedMotion as on, useRunSchedule as sn, useSaveFollowSchedule as cn, useSaveSettings as ln, useSaveThumbnailMode as un, we as dn, z3 as fn } from "./peach-app.js";
@@ -5193,16 +5189,10 @@ var Rs = "/api/configuration/access/sessions", zs = (e) => e.device || J("settin
 		platform: Vs,
 		terminal: Je
 	},
-<<<<<<<< HEAD:web/dist/peach-app.configuration-page-BXogdlmX.js
 	"Android tablet": {
-		platform: Bs,
+		platform: Vs,
 		terminal: ne,
 		label: () => J("settings:deviceSessions.androidTablet")
-========
-	"Android 平板": {
-		platform: Vs,
-		terminal: ne
->>>>>>>> agent/claude/batch2-docker:web/dist/peach-app.configuration-page-C8BEswh3.js
 	},
 	ChromeOS: {
 		platform: { browser: "chrome" },
@@ -5242,11 +5232,7 @@ function Gs({ row: e }) {
 			className: Us
 		}) : null, r] }) : null,
 		r && n ? " · " : null,
-<<<<<<<< HEAD:web/dist/peach-app.configuration-page-BXogdlmX.js
-		n ? /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [i ? /* @__PURE__ */ (0, Q.jsx)(Us, { platform: i }) : null, Vs[n].label?.() ?? n] }) : null
-========
-		n ? /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [i ? /* @__PURE__ */ (0, Q.jsx)(Ws, { platform: i }) : null, n] }) : null
->>>>>>>> agent/claude/batch2-docker:web/dist/peach-app.configuration-page-C8BEswh3.js
+		n ? /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [i ? /* @__PURE__ */ (0, Q.jsx)(Ws, { platform: i }) : null, Hs[n].label?.() ?? n] }) : null
 	] });
 }
 function Ks({ row: e }) {
@@ -6432,8 +6418,4 @@ function Mc({ data: e, receipt: t, reopenTutorial: n, section: r, diagnostics: i
 }
 export { kc as ConfigurationPage };
 
-<<<<<<<< HEAD:web/dist/peach-app.configuration-page-BXogdlmX.js
-//# debugId=b6f9932c-14e4-47dc-b2fa-b553108e89f4
-========
-//# debugId=bd6cd13e-a047-47a1-a5d5-13c3d3f6acd2
->>>>>>>> agent/claude/batch2-docker:web/dist/peach-app.configuration-page-C8BEswh3.js
+//# debugId=f3189a39-14fd-49a0-8449-09ed95f93e3c
