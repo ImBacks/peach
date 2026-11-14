@@ -1213,7 +1213,7 @@ Python 源文件纳入 `src/peach/library_sharing.py` 与 `src/peach/library_pro
 
 ## 媒体读取与单项超时
 
-`media_io` 复用 `local_poster` 的短生命周期子进程方式，以及标准库 [`subprocess.run(timeout=…)`](https://docs.python.org/3.14/library/subprocess.html#subprocess.run)。目录枚举、NFO、图片引用、路径解析和文件属性在只读子进程中取得；超时后先终止并回收进程，再处理下一项。NFO 解析和图片引用边界仍由 `library_nfo` 维护，扫描继续使用 `scan_location` 的批量登记与检查点。任务层缓存本趟失败的目录，避免逐部影片重复等候同一故障。
+`media_io` 复用 `local_poster` 的短生命周期子进程方式，以及标准库 [`subprocess.run(timeout=…)`](https://docs.python.org/3.14/library/subprocess.html#subprocess.run)。目录枚举、NFO、图片引用、路径解析和文件属性在只读子进程中取得；超时后先终止并回收进程，再处理下一项。目录枚举由子进程逐条输出，期限按距上一条的间隔计，网络盘上仍在返回条目的大目录不按总时长判失败；其余操作按总时长计。NFO 解析和图片引用边界仍由 `library_nfo` 维护，扫描继续使用 `scan_location` 的批量登记与检查点。任务层缓存本趟失败的目录，避免逐部影片重复等候同一故障。
 
 预览生成复用 `frame_capture` 与 `processing_control.deadline_after`，同一影片的抽帧和拼图共享截止时间；用户暂停不占活动预算。公共状态、证据和产物保存失败向任务层传播，只有媒体读取或来源取证失败进入单项问题清单。测试覆盖超时进程回收、相邻目录继续、NFO 失败后保留番号、预览总时限和公共写入中断。标准库随 Python 运行时维护，PSF 许可，支持 Windows/macOS/Linux，未新增依赖。
 
