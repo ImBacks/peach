@@ -26,7 +26,7 @@ class PublicHttpTests(unittest.TestCase):
                 public_http.get(url)
         self.session.assert_not_called()
         for addresses in ((), ('127.0.0.1',), ('1.1.1.1', '192.0.2.1'), ('::ffff:127.0.0.1',),
-                          ('198.18.0.7', '10.0.0.1'), ('198.18.0.7', '1.1.1.1')):
+                          ('198.18.0.7', '192.0.2.9'), ('198.18.0.7', '1.1.1.1')):
             self.dns.return_value = addresses
             with self.subTest(addresses=addresses), self.assertRaises(ValueError):
                 public_http.get('https://public.example/icon')
