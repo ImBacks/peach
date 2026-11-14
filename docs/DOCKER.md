@@ -1,6 +1,6 @@
 # Docker 部署
 
-Peach 的 Docker 镜像用于单人 VPS 与 NAS，通过浏览器管理，镜像仓库为 [longmeidao/peach](https://hub.docker.com/r/longmeidao/peach)，同一镜像也发布到 [ghcr.io/peach-mitao/peach](https://github.com/peach-mitao/peach/pkgs/container/peach)，拉取受 Docker Hub 频率限制时可以改用后者；配置页的检查更新与 Watchtower 一键更新仍以 Docker Hub 为准。每次发布推送版本号标签，并把 `edge` 更新为同一镜像；版本号标签对应发布提交。当前镜像目标为 `linux/amd64`；ARM NAS 尚未验收。2026-10-15 在 WSL 的独立 Docker Engine 中，用正式锁定依赖通过空数据卷初始化、非 root、鉴权、配置保存、合成视频扫描、HTTP Range、配置重载与重启持久化验收。
+Peach 的 Docker 镜像用于单人 VPS 与 NAS，通过浏览器管理，镜像仓库为 [longmeidao/peach](https://hub.docker.com/r/longmeidao/peach)，同一镜像也发布到 [ghcr.io/peach-mitao/peach](https://github.com/peach-mitao/peach/pkgs/container/peach)，拉取受 Docker Hub 频率限制时可以改用后者；配置页的检查更新与 Watchtower 一键更新仍以 Docker Hub 为准。每次发布推送版本号标签，并把 `edge` 与 `latest` 更新为同一镜像；版本号标签对应发布提交。NAS 容器面板和不写标签的 `docker pull` 只认 `latest`，在 `.env` 写 `PEACH_VERSION=latest` 后面板能提示新版本，一键更新同样可用。镜像同时提供 `linux/amd64` 与 `linux/arm64`，Docker 按宿主机架构自动选择。2026-10-15 在 WSL 的独立 Docker Engine 中，用正式锁定依赖通过空数据卷初始化、非 root、鉴权、配置保存、合成视频扫描、HTTP Range、配置重载与重启持久化验收。
 
 Docker 不使用桌面托盘。在网页配置中添加媒体目录时，只需填写容器内实际目录，例如 `/media`；Peach 自动保存所需的路径配置。Windows 安装包、macOS 源码运行和 Docker 的入口分别见 [README](../README.md#下载与使用)。
 
@@ -217,7 +217,7 @@ Linux 容器不读取用户电脑上的浏览历史，也不包含交互式浏�
 
 构建使用官方 Python `3.14.8-slim-trixie` 与 uv `0.13.1`，应用依赖与 amane 独立依赖分别由各自的 `uv.lock` 锁定。应用以非 editable 包安装，包含 Web 与迁移资源。镜像以 UID/GID 1000 运行，内置 FFmpeg、FFprobe、OpenSSL 和 amane 独立环境。uv 与 Git 只用于构建阶段。构建上下文只允许代码与资源，不包含工作树、媒体、真实 Peach 数据库或凭据。
 
-GitHub Actions 的 `Docker` 工作流先构建并运行临时卷验收，通过后发布。仓库变量 `DOCKERHUB_USERNAME` 和机密 `DOCKERHUB_TOKEN` 用于 Docker Hub 发布；机密只保存在 GitHub，不进入项目文件。未配置发布身份时仍执行构建验收。ARM 镜像需通过同等运行验收后再加入发布。
+GitHub Actions 的 `Docker` 工作流在拉取请求和主线上分别于 amd64 与 arm64 原生 runner 构建并运行临时卷验收，只验收不发布。版本提交的 `Release` 演练用同样方式构建两个架构的候选镜像并保存；标签流水线在 GitHub Release 成功后核对两个候选的 image ID，推送 `<版本>-amd64`、`<版本>-arm64`，再合成一个多架构 index，版本号、`edge` 与 `latest` 都指向它（[ADR-0121](adr/0121-release-rehearsal-and-atomic-publication.md)）。仓库变量 `DOCKERHUB_USERNAME` 和机密 `DOCKERHUB_TOKEN` 用于 Docker Hub 发布；机密只保存在 GitHub，不进入项目文件。未配置发布身份时仍执行构建验收。
 
 Docker Hub 页面以英文为主，概览正文取自 [docs/dockerhub/README.md](dockerhub/README.md)，链接回 GitHub 的源码、本文和中文 README。简介填写 `Local-first video metadata scraper and media manager. Self-hosted web UI for VPS and NAS.`。发布流水线只推送镜像，概览与简介需要在 Docker Hub 仓库设置中手动更新；镜像、端口、目录或 Compose 示例变化时同批修改该文件。
 

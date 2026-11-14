@@ -19,8 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from peach.interface_text import dev as t
 from peach.user_agent import USER_AGENT
 
-REQUIRED_ARTIFACTS = {"desktop-candidate", "macos-candidate-arm64", "macos-candidate-x86_64", "docker-candidate"}
-REQUIRED_JOBS = {"Windows x64 独立测试包", "仅下载制品验收", "Linux amd64 镜像构建与验收",
+#: Docker 镜像按架构各在原生 runner 上构建验收，发布时合成同一个多架构 index（ADR-0121）。
+DOCKER_ARCHITECTURES = ("amd64", "arm64")
+REQUIRED_ARTIFACTS = {"desktop-candidate", "macos-candidate-arm64", "macos-candidate-x86_64",
+    *(f"docker-candidate-{arch}" for arch in DOCKER_ARCHITECTURES)}
+REQUIRED_JOBS = {"Windows x64 独立测试包", "仅下载制品验收",
+    *(f"Linux {arch} 镜像构建与验收" for arch in DOCKER_ARCHITECTURES),
     "macOS arm64 独立测试包", "macOS x86_64 独立测试包",
     "macOS arm64 仅下载制品验收", "macOS x86_64 仅下载制品验收"}
 
@@ -98,7 +102,7 @@ def extract(package: Path, destination: Path) -> None:
 def download(repo: str, sha: str, group: str, destination: Path) -> dict:
     receipt = select(repo, sha)
     names = {"desktop": {"desktop-candidate"}, "macos": {"macos-candidate-arm64", "macos-candidate-x86_64"},
-             "docker": {"docker-candidate"}}[group]
+             "docker": {f"docker-candidate-{arch}" for arch in DOCKER_ARCHITECTURES}}[group]
     destination.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="peach-candidate-") as directory:
         for name in sorted(names):
@@ -114,14 +118,16 @@ def download(repo: str, sha: str, group: str, destination: Path) -> dict:
     return {"promoted": True, "run_id": receipt["run_id"], "commit": sha, "group": group}
 
 
-def image_receipt(destination: Path, version: str, *, verify: bool) -> dict:
+def image_receipt(destination: Path, version: str, architecture: str, *, verify: bool) -> dict:
     actual = json.loads(subprocess.check_output(["docker", "image", "inspect", "--format", "{{json .}}",
-                                                "longmeidao/peach:candidate"], text=True, encoding="utf-8"))
+                                                f"longmeidao/peach:candidate-{architecture}"], text=True, encoding="utf-8"))
     labels = actual.get("Config", {}).get("Labels", {})
     sha = os.environ["GITHUB_SHA"]
     if labels.get("org.opencontainers.image.revision") != sha or labels.get("org.opencontainers.image.version") != version:
         raise ValueError(t("github_release_candidate.imageTagMismatch"))
-    expected = {"image_id": actual["Id"], "commit": sha, "version": version}
+    if actual.get("Architecture") != architecture:
+        raise ValueError(t("github_release_candidate.imageArchitectureMismatch"))
+    expected = {"image_id": actual["Id"], "commit": sha, "version": version, "architecture": architecture}
     if verify:
         if json.loads(destination.read_text(encoding="utf-8")) != expected:
             raise ValueError(t("github_release_candidate.imageDigestMismatch"))
@@ -135,11 +141,12 @@ def main() -> None:
     parser.add_argument("group", choices=("desktop", "macos", "docker", "image-record", "image-verify"))
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument("--version")
+    parser.add_argument("--arch", choices=DOCKER_ARCHITECTURES)
     args = parser.parse_args()
     if args.group.startswith("image-"):
-        if not args.version:
+        if not args.version or not args.arch:
             parser.error(t("github_release_candidate.imageVersionRequired"))
-        result = image_receipt(args.destination, args.version, verify=args.group == "image-verify")
+        result = image_receipt(args.destination, args.version, args.arch, verify=args.group == "image-verify")
     else:
         result = download(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"], args.group, args.destination)
     print(json.dumps(result))

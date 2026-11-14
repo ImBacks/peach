@@ -2173,8 +2173,9 @@
     "sameNameDiffers": "Candidate files share a name but differ in content",
     "sha256Mismatch": "The downloaded artifact's SHA-256 does not match the rehearsal",
     "imageTagMismatch": "The image tag does not match the release commit or version",
+    "imageArchitectureMismatch": "The image architecture does not match the candidate being recorded",
     "imageDigestMismatch": "The image digest does not match the rehearsal acceptance",
-    "imageVersionRequired": "Image verification needs a version",
+    "imageVersionRequired": "Image verification needs a version and an architecture",
     "description": "GitHub CI promotes accepted artifacts of the same commit through the official REST API, without calling the CLI."
   },
   "job_status": {

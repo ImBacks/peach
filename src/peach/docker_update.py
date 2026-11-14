@@ -44,6 +44,8 @@ TOKEN_NAME = "watchtower-token"
 #: compose 把 `${PEACH_VERSION:-edge}` 传进来。Watchtower 只换同一标签的新镜像，钉了版本号就换不动。
 IMAGE_TAG_ENV = "PEACH_IMAGE_TAG"
 ROLLING_TAG = "edge"
+#: 发布时 edge 与 latest 指向同一镜像（ADR-0121）；NAS 面板只认 latest，用它部署也能一键更新。
+ROLLING_TAGS = frozenset({ROLLING_TAG, "latest"})
 
 
 def image_tag() -> str:
@@ -108,7 +110,7 @@ def status(*, transport: httpx.BaseTransport | None = None) -> dict:
     tag = image_tag()
     if not tag:
         return _blocked("noImageTag")
-    if tag != ROLLING_TAG:
+    if tag not in ROLLING_TAGS:
         return _blocked("pinnedTag", tag=tag)
     if not _token():
         return _blocked("noToken")
