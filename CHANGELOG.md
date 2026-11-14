@@ -25,6 +25,8 @@ Removed / Fixed / Security。
 
 ## [未发布]
 
+## [0.58.0] - 2026-11-14
+
 ### 新增
 
 - **采集**：浏览器入库没搜到资源时自动把番号加入「想要」，可在浏览器添加设置里关闭；用户脚本也能直接加入想要。
@@ -1084,7 +1086,8 @@ Removed / Fixed / Security。
 - **桌面**：独立包使用 UTF-8 启动日志。
 - **配置**：首次设置后的跳转目标取新鲜读到的 mDNS 名。
 
-[未发布]: https://github.com/peach-mitao/peach/compare/v0.57.0...HEAD
+[未发布]: https://github.com/peach-mitao/peach/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/peach-mitao/peach/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/peach-mitao/peach/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/peach-mitao/peach/compare/v0.55.1...v0.56.0
 [0.55.1]: https://github.com/peach-mitao/peach/compare/v0.55.0...v0.55.1
