@@ -4125,12 +4125,12 @@
     "magnetChain": {
       "staleReused": "Reused the previous result: {{error}}",
       "sourceFailed": "{{source}}: {{error}}",
-      "sourceUnfetched": "{{source}}: not found",
-      "incomplete": "Some sources returned nothing. Try again later or check the source connections."
+      "sourceUnfetched": "{{source}}: couldn't be reached",
+      "incomplete": "Some sources couldn't be reached. Try again later or check the source connections."
     },
     "wantsMagnets": {
-      "linksUnfetched": "No download links found. Try again later or check the source connections.",
-      "chainUnfetched": "The magnet link search returned nothing. Try again later or check the source connections."
+      "linksUnfetched": "Couldn't get the download links. Try again later or check the source connections.",
+      "chainUnfetched": "The magnet link search couldn't reach its sources. Try again later or check the source connections."
     },
     "javBrowser": {
       "idle": "Can be added to your Peach collection",
@@ -4146,7 +4146,9 @@
       "searchUnavailable": "Torrent search is unavailable right now. Check the sources in Peach, then retry",
       "retriesExhausted": "Still not done after {{attempts}} automatic retries. The search or cloud download submission failed; check the sources and download channels in Peach, then retry",
       "submitFailed": "The search or cloud download submission failed. Check the sources and download channels in Peach, then retry",
-      "retryWaiting": "Temporarily unavailable. Waiting to retry automatically"
+      "retryWaiting": "Temporarily unavailable. Waiting to retry automatically",
+      "sourcesWaiting": "Couldn't reach {{sources}}. Waiting to retry automatically",
+      "sourcesExhausted": "Still couldn't reach {{sources}} after {{attempts}} automatic retries. Check the sources in Peach, then retry"
     },
     "followCreators": {
       "evidence": {

@@ -58,6 +58,8 @@ def q_resource_search(contract, args) -> dict:
         "warnings": warnings, **parallel("warning", warnings),
         "trace": direct["trace"] + (["indexer fallback: queried"] if indexed.get("state") != "unavailable" else []),
         "next_sources": direct["next_sources"], "reference_only": direct["reference_only"],
+        # 后备索引器答复了也补不上直连来源没查成的那部分：浏览器添加据此等来源恢复，不记成无资源。
+        "unfetched_sources": list(direct.get("unfetched_sources") or ()),
         **_merged_error(direct, indexed),
         "retry_after": max((value for value in (direct.get('retry_after'), indexed.get('retry_after'))
                             if value is not None), default=None),

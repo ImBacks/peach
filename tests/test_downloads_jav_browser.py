@@ -429,6 +429,56 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.status().json()["state"], "failed")
         self.assertEqual(self.wants(), [])
 
+    def test_an_unanswered_source_retries_on_its_cooldown_even_when_the_indexer_answered(self):
+        now = [1_800_000_000.0]
+        self.downloads.clock = lambda: now[0]
+        # 2026-11 实测形态：JavDB 冷却中未取得，后备索引器答复了但候选全被筛掉，合并后是 ready、无报错。
+        self.service.search.return_value = {
+            "ok": True, "state": "ready", "items": [], "error": "", "warnings": ["JavDB：未取得"],
+            "unfetched_sources": ["JavDB"], "retry_after": 900.0}
+        self.add()
+        self.add("ABP-616")
+        self.service.process_one()
+        status = self.status().json()
+        self.assertEqual((status["state"], status["retry_attempt"], status["message"]),
+                         ("queued", 1, "JavDB 未取得，等待自动重试"))
+        self.assertEqual(status["retry_at"], dl.iso(now[0] + 900))
+        self.assertEqual(self.wants(), [])
+        # 只是一个来源没答复，不暂停整条队列：下一个番号照常搜索。
+        self.assertTrue(self.service.process_one())
+        self.assertEqual(self.service.search.call_args.args[1]["code"], "ABP-616")
+        for _ in range(8):
+            now[0] += 1800
+            self.service.process_one()
+        self.assertEqual(self.service.search.call_count, 8)
+        status = self.status().json()
+        self.assertEqual((status["state"], status["retry_exhausted"]), ("failed", True))
+        self.assertEqual(status["message"], "JavDB 自动重试 3 次后仍未取得，请在 Peach 检查来源后重试")
+        self.assertNotIn("sources_complete", self.service.rows["ABC-123"])
+        self.assertEqual(self.wants(), [])
+        now[0] += 3600
+        self.assertFalse(self.service.process_one())
+
+    def test_no_match_recorded_before_the_source_check_is_searched_again_once(self):
+        now = [1_800_000_000.0]
+        self.downloads.clock = lambda: now[0]
+        self.service.path.parent.mkdir(parents=True, exist_ok=True)
+        self.service.path.write_text(json.dumps({
+            "ABC-123": {"state": "no_match", "provider": "115", "source_url": PAGE,
+                        "message": "未找到可自动下载的磁力，可重试", "ended_at": "2026-11-13T08:00:00+00:00"},
+            "ABP-616": {"state": "no_match", "provider": "115", "source_url": "", "sources_complete": True},
+        }), encoding="utf-8")
+        search = Mock(return_value={"items": [{"name": "ABC-123 1080p", "uri": MAGNET}]})
+        restored = JavBrowser(self.service.contract, search=search)
+        self.assertTrue(restored.process_one())
+        search.assert_called_once()
+        self.assertEqual(search.call_args.args[1]["code"], "ABC-123")
+        self.assertEqual(restored.status("ABC-123")["state"], "submitted")
+        now[0] += 120
+        self.assertFalse(restored.process_one())
+        self.assertEqual(restored.rows["ABP-616"]["state"], "no_match")
+        search.assert_called_once()
+
     def test_the_userscript_can_add_a_code_to_wants_directly(self):
         # 与想要清单「按番号添加」同一入口：登记后立即起一轮取资料。
         with patch("peach.web_wants.start_scrape") as scrape:

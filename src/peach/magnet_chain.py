@@ -23,11 +23,12 @@ from .content_words import PROMO_NAME, TRAILER_NAME
 from .downloads import parse_magnet
 from .jav_cover_fetch import HostLimitedTransport
 from .metadata import relay_args
-from .javdb_public import (_CACHE_ROOT, PUBLIC_API, PublicIdentityAmbiguous, PublicRequestBudget,
+from .javdb_public import (_CACHE_ROOT, PUBLIC_API, PublicIdentityAmbiguous, PublicNotFound, PublicRequestBudget,
                            PublicSourceUnavailable, public_cache_scope)
 from .resource_search import qualities
-from .scraping_access import SourceTransport
+from .scraping_access import SourcePaused, SourceTransport, paused_until
 from .sources import FailureReason, Session, SourceFailure
+from .sources.base import PERMANENT_REASONS
 from .task_retry import transient_delay
 from .user_messages import nested_message
 
@@ -236,7 +237,8 @@ class Fetcher:
                   page_reader(self.root, seconds=seconds) as pages, PUBLIC_API.page_reader(pages)):
                 result = PUBLIC_API.resources(code, refresh=True, review_pages=4)
         except PublicSourceUnavailable as error:
-            reason = FailureReason.PARSE_ERROR if isinstance(error, PublicIdentityAmbiguous) else FailureReason.NETWORK
+            reason = (FailureReason.PARSE_ERROR if isinstance(error, PublicIdentityAmbiguous)
+                      else FailureReason.NOT_FOUND if isinstance(error, PublicNotFound) else FailureReason.NETWORK)
             raise SourceFailure(reason, *relay_args(error)) from error
         stale = [Said("labels.magnetChain.staleReused", error=read['error']) for read in reads if read['error']]
         result["warnings"] = list(dict.fromkeys([*result["warnings"], *stale]))
@@ -286,9 +288,12 @@ class Fetcher:
 
 def search(root: Path, code: str, *, transport=None, min_size: int = 0,
            max_size: int = 1024 ** 4, goal: str = "quality", stop_on_preferred: bool = True) -> dict:
-    """有界查询三个可直连来源；直接添加允许在 manko 高清命中时结束。"""
+    """有界查询三个可直连来源；直接添加允许在 manko 高清命中时结束。
+
+    `unfetched_sources` 列出这一轮没给出答复的来源：站上没有这个番号、身份对不上属于答复，不算在内。
+    来源在冷却时，`retry_after` 至少等到冷却结束。"""
     fetcher = Fetcher(root, transport=transport)
-    trace, warnings, found, retry_delays = [], [], [], []
+    trace, warnings, found, retry_delays, unfetched = [], [], [], [], []
     try:
         for source, collect in ((CHAIN[0], fetcher.manko), (CHAIN[1], fetcher.javdb),
                                 (CHAIN[2], fetcher.sukebei)):
@@ -298,13 +303,18 @@ def search(root: Path, code: str, *, transport=None, min_size: int = 0,
                 items = []
                 warnings.append(Said("labels.magnetChain.sourceFailed", source=source.label,
                                      error=nested_message(error)))
+                if error.reason != FailureReason.NOT_FOUND and error.reason not in PERMANENT_REASONS:
+                    unfetched.append(source.label)
                 if (delay := transient_delay(error)) is not None:
                     retry_delays.append(delay)
             except Exception as error:
                 items = []
                 warnings.append(Said("labels.magnetChain.sourceUnfetched", source=source.label))
+                unfetched.append(source.label)
                 if (delay := transient_delay(error)) is not None:
                     retry_delays.append(delay)
+                elif isinstance(error, SourcePaused) and (until := paused_until(Path(root), source.key)):
+                    retry_delays.append(max(0.0, until - time.time()))
             items = [item for item in items if min_size <= item["size"] <= max_size]
             found.extend(items)
             if stop_on_preferred and source.key == "manko" and any(item["resolution"] >= HIGH_QUALITY for item in items):
@@ -315,7 +325,7 @@ def search(root: Path, code: str, *, transport=None, min_size: int = 0,
         fetcher.close()
     incomplete = bool(warnings) and not found
     result = {"items": rank_candidates(found, goal), "warnings": warnings, "trace": trace,
-            'retry_after': max(retry_delays) if retry_delays else None,
+            'retry_after': max(retry_delays) if retry_delays else None, "unfetched_sources": unfetched,
             'state': 'error' if incomplete else 'ready',
             **coded('error', Said('labels.magnetChain.incomplete') if incomplete else ''),
             "next_sources": [source.label for source in CHAIN[3:]],

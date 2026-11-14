@@ -117,6 +117,25 @@ class MagnetChainTests(unittest.TestCase):
             result = search(Path('.'), 'ABC-123', transport=object(), stop_on_preferred=False)
         self.assertEqual(result['warnings'], ['JavDB：同番号对应多个作品，请核对来源身份：Aa1、Bb2'])
 
+    def test_unanswered_sources_are_listed_with_their_cooldown_but_an_unlisted_code_is_an_answer(self):
+        from peach.javdb_public import PublicNotFound
+        from peach.magnet_chain import Fetcher, search
+        from peach.scraping_access import SourcePaused, pause_source
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve()
+        pause_source(root, 'javdb', retry_after=600)
+        with patch.object(Fetcher, 'manko', return_value=[]), patch.object(Fetcher, 'sukebei', return_value=[]), \
+                patch.object(Fetcher, 'javdb', side_effect=SourcePaused('errors.scrapingAccess.coolingDown')):
+            paused = search(root, 'ABC-123', transport=object())
+        self.assertEqual((paused['state'], paused['unfetched_sources']), ('error', ['JavDB']))
+        self.assertGreater(paused['retry_after'], 590)
+        with patch.object(Fetcher, 'manko', return_value=[]), patch.object(Fetcher, 'sukebei', return_value=[]), \
+                patch('peach.magnet_chain.PUBLIC_API.movie', side_effect=PublicNotFound('errors.javdbPublic.notFound')):
+            unlisted = search(root, 'ABC-123', transport=object())
+        self.assertEqual((unlisted['unfetched_sources'], unlisted['retry_after']), ([], None))
+        self.assertEqual(len(unlisted['warnings']), 1)
+
     def test_base91_decodes_the_api_envelope_payload(self):
         # basE91 官方示例：编码后的这一段解回 ASCII "test"。
         self.assertEqual(decode_base91("fPNKd"), b"test")

@@ -529,12 +529,15 @@ class ResourceIndexerRoutes(_App):
         Indexers(self.service.credentials).save({"indexers": [{
             "key": "one", "name": "测试源", "url": "http://indexer.test/api", "enabled": True}]})
         with mock.patch("peach.web_resource_search.direct_search", return_value={
-                "items": [], "warnings": [], "trace": [],
-                "next_sources": [], "reference_only": []}) as direct, \
+                "items": [], "warnings": ["JavDB：未取得"], "trace": [], "unfetched_sources": ["JavDB"],
+                "retry_after": 900.0, "next_sources": [], "reference_only": []}) as direct, \
              mock.patch("peach.web_resource_search._SEARCH.run", return_value={
                 "ok": True, "state": "ready", "items": [], "warnings": [], "error": ""}) as search:
             response = self.client.get("/api/resources/search?code=ABC-123&goal=chinese")
         self.assertEqual(response.status_code, 200, response.text)
+        # 索引器答复了，整体仍是 ready；没查成的直连来源单独列出，供浏览器添加等来源恢复。
+        body = response.json()
+        self.assertEqual((body["state"], body["unfetched_sources"], body["retry_after"]), ("ready", ["JavDB"], 900.0))
         args = search.call_args.args
         self.assertEqual((args[0][0]["key"], args[1], args[2].goal), ("one", "ABC-123", "chinese"))
         self.assertEqual(direct.call_args.kwargs["goal"], "chinese")
