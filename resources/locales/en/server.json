@@ -258,6 +258,27 @@
           "title": "Move out system extras"
         }
       }
+    },
+    "v0-58-0": {
+      "headline": "Full English interface, easier NAS setup",
+      "items": {
+        "browser-intake": {
+          "body": "Failed magnets switch to the next one; misses go to Wanted",
+          "title": "Smoother browser intake"
+        },
+        "docker-arm64": {
+          "body": "Images ship for linux/arm64 with a latest tag",
+          "title": "ARM NAS images"
+        },
+        "docker-nas-setup": {
+          "body": "Set the run-as user and pick server folders in the browser",
+          "title": "Easier NAS setup"
+        },
+        "english-interface": {
+          "body": "Pages, messages and task progress can all show in English",
+          "title": "Full English interface"
+        }
+      }
     }
   },
   "repairCenter": {

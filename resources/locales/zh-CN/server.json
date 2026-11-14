@@ -258,6 +258,27 @@
           "title": "移出系统附属文件"
         }
       }
+    },
+    "v0-58-0": {
+      "headline": "完整英文界面，NAS 更好装",
+      "items": {
+        "browser-intake": {
+          "body": "磁力失败自动换下一个，没搜到就加入想要",
+          "title": "浏览器入库更省心"
+        },
+        "docker-arm64": {
+          "body": "镜像提供 linux/arm64 与 latest 标签",
+          "title": "ARM NAS 可直接拉取"
+        },
+        "docker-nas-setup": {
+          "body": "可指定运行身份，网页里选择服务端目录",
+          "title": "NAS 部署更顺"
+        },
+        "english-interface": {
+          "body": "页面、提示和任务进度都能显示英文",
+          "title": "完整英文界面"
+        }
+      }
     }
   },
   "repairCenter": {

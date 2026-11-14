@@ -18,6 +18,15 @@
 from __future__ import annotations
 
 NOTICES: dict[str, dict] = {
+    "0.58.0": {
+        "level": "notice",
+        "features": [
+            {"id": "english-interface", "icon": "switch"},
+            {"id": "browser-intake", "icon": "sparkle"},
+            {"id": "docker-arm64", "icon": "stack", "platforms": ["docker"]},
+            {"id": "docker-nas-setup", "icon": "server", "platforms": ["docker"]},
+        ],
+    },
     "0.57.0": {
         "level": "notice",
         "features": [
