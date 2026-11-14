@@ -1,5 +1,6 @@
 import { initialCatalogFilters, resetCatalogFilters, homeCatalogState, homePath as pathForCatalog, onlineDefaultLoc as defaultLocations, resolveSort } from '../react/catalog-grid/catalog-state';
 import { CatalogController } from '../react/catalog-grid/catalog-controller';
+import { completeReveal } from '../react/components/server-path-dialog';
 import { nextRating, ratingStars } from '../react/components/rating-values';
 /* catalog 域控制器：本域状态与动作，启动由 Application 的生命周期统一安装。 */
 import { censorOn, preferencesState, refreshAll, replaceCatalogAddress, sidebarFacets, wireDrag } from './preferences.js';
@@ -627,7 +628,7 @@ catalogState.junkQueueActions = {
     ?window.open('/photo?id='+it.id,'_blank','noopener'):openItem(it.id,true,null,anchor),
   /* 定位成功由 Toast 报，卡上状态行留空；失败把原因写回状态行。 */
   reveal:async it=>{
-    try{await api('/api/reveal',{method:'POST',body:JSON.stringify({id:it.id})});receiptsState.toast({text:tr('shell:sourceTools.revealed')});return ''}
+    try{const result=await api('/api/reveal',{method:'POST',body:JSON.stringify({id:it.id})});await completeReveal(result,()=>receiptsState.toast({text:tr('shell:sourceTools.revealed')}));return ''}
     catch(error){return entityState.sourceHint(error.message)}
   },
   operate:(it,operation)=>runJunkOperation(it,operation),

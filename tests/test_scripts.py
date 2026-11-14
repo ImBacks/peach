@@ -2057,7 +2057,8 @@ class OperationalScriptTests(unittest.TestCase):
             if not path or not Path(path).exists():
                 continue
             probe = subprocess.run([path, "-c", "uname -s"],
-                                   capture_output=True, text=True, encoding="utf-8", check=False)
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", check=False)
             if probe.returncode == 0 and (sys.platform != "win32" or "linux" not in probe.stdout.casefold()):
                 shells.append(path)
         self.assertTrue(shells)
@@ -2534,7 +2535,7 @@ class OperationalScriptTests(unittest.TestCase):
                 self.assertEqual(self.rehome_unknown._direct_children(target), {})
 
     def test_media_batch_scripts_are_import_safe_and_keep_context_rules(self):
-        self.assertEqual(self.probe.context_fields(1920, 1080, 180), ("quick", "landscape", "2K"))
+        self.assertEqual(self.probe.context_fields(1920, 1080, 180), ("quick", "landscape", "1080P"))
         with tempfile.TemporaryDirectory() as tmp:
             output = self.sheets.output_path(Path(tmp), "local", "R:/media/one.mp4")
             self.assertFalse(output.exists())
@@ -4923,8 +4924,10 @@ class R2ArtifactTransferTests(unittest.TestCase):
         path.write_bytes(b"test double; subprocess calls are mocked")
 
     def environment(self):
+        # 清空环境后补回运行器固定的语言，否则报错文字跟系统语言走，英文 CI 上对不上中文断言。
         return {"CI_PROJECT_ID": "123", "CI_PIPELINE_ID": "456", "CI_COMMIT_SHA": "a" * 40,
-                "CI_COMMIT_TAG": "v1.2.3", "CI_COMMIT_REF_PROTECTED": "true", "CI_JOB_ID": "789"}
+                "CI_COMMIT_TAG": "v1.2.3", "CI_COMMIT_REF_PROTECTED": "true", "CI_JOB_ID": "789",
+                "PEACH_LANGUAGE": "zh-CN"}
 
     def rclone_environment(self):
         return {"PEACH_RCLONE": "rclone", "PEACH_R2_BUCKET": "peach-releases"}

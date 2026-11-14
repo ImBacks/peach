@@ -422,7 +422,7 @@
     "portrait": "Vertical"
   },
   "pathLine": {
-    "reveal": "Show in folder"
+    "reveal": "Show file location"
   },
   "pendingWork": {
     "running": "Filling in: {{tasks}}",
@@ -494,21 +494,21 @@
     "viewItem": "View {{title}}"
   },
   "requestError": {
-    "badGateway": "The Peach service didn't return a result. Try again later; if it keeps failing, check the tray log.",
+    "badGateway": "The Peach service didn't return a result. Try again later; if it keeps failing, check the Peach log.",
     "badRequest": "The submitted data is invalid. Check your input and try again.",
     "clientTimeout": "Timed out waiting for the service. Check your connection and try again.",
     "conflict": "This action isn't allowed right now. Refresh and try again.",
-    "fallback": "The action didn't finish. Try again; if it keeps failing, check the tray log.",
-    "forbidden": "This device isn't allowed to do this. Use the computer running Peach.",
+    "fallback": "The action didn't finish. Try again; if it keeps failing, check the Peach log.",
+    "forbidden": "This device isn't allowed to do this. Use the device running Peach.",
     "gatewayTimeout": "Timed out waiting for the service. Try again later.",
     "notFound": "The requested item no longer exists. Refresh the list.",
     "rateLimited": "Too many requests. Try again later.",
-    "serverError": "The Peach service couldn't process this. Try again; if it keeps failing, check the tray log.",
+    "serverError": "The Peach service couldn't process this. Try again; if it keeps failing, check the Peach log.",
     "sessionExpired": "Your session has expired. Refresh the page to sign in again.",
     "timeout": "The request timed out. Try again later.",
     "tooLarge": "The submission is too large. Select fewer items and try again.",
     "unavailable": "The Peach service is temporarily unavailable. Try again later.",
-    "unreachable": "Can't connect to the Peach service. Check your network connection and make sure the tray service is running."
+    "unreachable": "Can't connect to the Peach service. Check your network connection and make sure Peach is running."
   },
   "routeTitle": {
     "agencies": "Agencies",
@@ -747,7 +747,7 @@
     "fileMissing": "Source file not found. Click the scan button on the right to recheck the directory.",
     "libraryOffline": "The library isn't reachable, so files can't be checked. Try again once it's back.",
     "noChanges": "Directory check complete. Nothing to change.",
-    "notMapped": "This storage has no drive letter mapped on the computer running Peach.",
+    "notMapped": "This storage isn't mounted on the device running Peach.",
     "reattached_one": "Moved activity for {{count, number}} item to another version in the library.",
     "reattached_other": "Moved activity for {{count, number}} items to another version in the library.",
     "resultSeparator": " ",
@@ -851,5 +851,34 @@
     "added": "Added to watch later",
     "removed": "Removed from watch later",
     "updateAction": "Watch later update"
+  },
+  "serverPath": {
+    "dataTitle": "Data directory",
+    "dataField": "Data directory on the server",
+    "dataContainer": "The container's data location is set by the host's data volume. Configure it in the NAS container manager.",
+    "dataManual": "Enter the data directory on the server that runs Peach. It is checked when you save.",
+    "useFolder": "Use this directory",
+    "close": "Close",
+    "cancel": "Cancel",
+    "readFailed": "Couldn't read the directory. Try again.",
+    "pickTitle": "Choose a directory on the server",
+    "pickHelp": "Paths here are on the NAS or inside the container. Type a path and press Enter to read it. A newly mounted directory can also be typed straight into the media directory field.",
+    "pathField": "Directory path on the server",
+    "roots": "Mounted directories",
+    "parent": "Up one level",
+    "reading": "Reading the directory",
+    "noSubfoldersYet": "No subdirectories in this batch. You can read more.",
+    "noSubfolders": "This directory has no subdirectories to choose.",
+    "readMore": "Read more",
+    "noRoots": "No media directory is mounted yet. Enter the path inside the container first.",
+    "choose": "Choose this directory",
+    "locationTitle": "File location",
+    "locationContainer": "In the NAS file manager, open the share mounted for Peach, then find the file by its location in the directory. Container paths can differ from NAS share paths.",
+    "locationServer": "The file is on the server that runs Peach. Copy the path and find it there.",
+    "containerPath": "Path in the container",
+    "serverPath": "Path on the server",
+    "locationField": "File location on the server",
+    "mediaRoot": "Media directory",
+    "relativePath": "Location in the directory"
   }
 }

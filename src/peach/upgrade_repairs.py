@@ -327,6 +327,18 @@ JAVDB_RECORDS_KEY = f'javdb-actor-records-{upgrade_rules.JAVDB_ACTOR_RECORDS}'
 RESOLUTION_TAGS_KEY = f'source-resolution-tags-{upgrade_rules.SOURCE_RESOLUTION_TAGS}'
 
 
+VIDEO_MEDIUM_KEY = f'video-medium-{upgrade_rules.VIDEO_MEDIUM}'
+
+
+def misfiled_videos(connection) -> list[int]:
+    """记成 other、按现行扩展名规则是视频的行；已处置的行与系统元数据不算。"""
+    from .discovery_rules import system_path
+    from .scan import medium_of
+    return [row[0] for row in connection.execute(
+        "SELECT id,name,path FROM asset WHERE medium='other' AND disposal IS NULL ORDER BY id")
+        if medium_of(row[1]) == 'video' and not system_path(row[2])]
+
+
 def javdb_card_pages(contract):
     """本机缓存过的 javdb 搜索页：回填脚本的整页缓存，和补女优资料后继的取页缓存。"""
     for path in sorted((Path(contract.entry_links_root) / 'directory-links' / 'javdb').glob('*.html')):
@@ -932,7 +944,9 @@ class UpgradeRepairs:
                 self._withdraw_stale_code_evidence()
                 self._settle_dangling_candidates()
                 self._settle_javdb_records()
+                self._reclassify_videos()
                 self._settle_resolution_tags()
+                self._settle_quality()
                 self._convert_interface_text()
                 self._isolate_system_files()
                 return
@@ -983,7 +997,9 @@ class UpgradeRepairs:
             self._withdraw_stale_code_evidence()
             self._settle_dangling_candidates()
             self._settle_javdb_records()
+            self._reclassify_videos()
             self._settle_resolution_tags()
+            self._settle_quality()
             self._convert_interface_text()
             self._isolate_system_files()
 
@@ -1197,6 +1213,44 @@ class UpgradeRepairs:
         LOGGER.info('JavDB actor pages: recorded %s record types, stopped offering %s entries, disabled %s feeds',
                     len(result['recorded']), len(result['hidden']), len(result['disabled_feeds']))
 
+    def _reclassify_videos(self) -> None:
+        """记成 other、按现行扩展名规则是视频的行（`misfiled_videos`）改成视频，只做一次。
+
+        WebM 以前不在视频扩展名里（#551），旧版扫描把它登记成 other，只有完整重扫才会改正。
+        改过的 id 记进回执，撤回时按它改回 other；这些影片并进本轮补修的 `media_ids`，由自动修复
+        补时长、预览与资料。出错只记日志，下次启动再试。
+        """
+        try:
+            with self.contract.database.read_connection() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?',
+                                      (VIDEO_MEDIUM_KEY,)).fetchone():
+                    return
+            receipt = None
+            with self.contract.database.write_transaction() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?',
+                                      (VIDEO_MEDIUM_KEY,)).fetchone():
+                    return
+                ids = misfiled_videos(connection)
+                connection.execute("UPDATE asset SET medium='video' WHERE id IN (SELECT value FROM json_each(?))",
+                                   (json.dumps(ids),))
+                connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
+                                   (VIDEO_MEDIUM_KEY, str(time.time()),
+                                    json.dumps({'rule': upgrade_rules.VIDEO_MEDIUM, 'video': ids})))
+                stored = connection.execute('SELECT result_json FROM ledger_upgrade_repair WHERE id=?',
+                                            (REVISION,)).fetchone()
+                if ids and stored:
+                    receipt = json.loads(stored[0])
+                    receipt['media_ids'] = sorted(set(receipt.get('media_ids', [])) | set(ids))
+                    receipt['dispatch_complete'] = False
+                    connection.execute('UPDATE ledger_upgrade_repair SET result_json=? WHERE id=?',
+                                       (json.dumps(receipt, ensure_ascii=False), REVISION))
+            if receipt is not None:
+                atomic_write_text(self.receipt, json.dumps(receipt, ensure_ascii=False))
+        except Exception:
+            LOGGER.exception('Video medium repair failed')
+            return
+        LOGGER.info('Video medium: reclassified %s rows as video', len(ids))
+
     def _settle_resolution_tags(self) -> None:
         """解除刮削按来源 genre 挂上的分辨率标签（`settle_source_resolution_tags`），只做一次。
 
@@ -1248,6 +1302,21 @@ class UpgradeRepairs:
             return
         LOGGER.info('interface text converted to codes: %s task rows, %s follow-up records',
                     result['rows'], result['attempts'])
+
+    def _settle_quality(self) -> None:
+        """按已存尺寸修正画质分档，原值与结果在同一事务写入回执。"""
+        from . import quality_repair
+        try:
+            with self.contract.database.write_transaction() as connection:
+                if connection.execute('SELECT 1 FROM ledger_upgrade_repair WHERE id=?', (quality_repair.KEY,)).fetchone():
+                    return
+                result = quality_repair.settle(connection)
+                connection.execute('INSERT INTO ledger_upgrade_repair(id,applied_at,result_json) VALUES(?,?,?)',
+                                   (quality_repair.KEY, str(time.time()), json.dumps(result, ensure_ascii=False)))
+        except Exception:
+            LOGGER.exception('Quality classification repair failed')
+            return
+        LOGGER.info('Quality classification repair: corrected %s rows', len(result['assets']))
 
     def _clear_stale_codes(self) -> None:
         """清掉旧版从文件名误认的番号（`stale_filename_codes`），只做一次。"""

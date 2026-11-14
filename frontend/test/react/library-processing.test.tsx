@@ -352,7 +352,7 @@ it('失败时把问题清单折叠进错误提示，重试只交失败的那些�
   expect(details.parentElement?.className).toContain('border-t');
   /* 完整记录是出事之后自己去翻的东西，退回灰字，清单收着也看得见；旁边是打开它和
      导出它的两颗键，导出和这份记录排在一起。 */
-  const reveal = alert!.querySelector('button[aria-label="在资源管理器中显示"]')!;
+  const reveal = alert!.querySelector('button[aria-label="查看文件位置"]')!;
   expect(details.contains(reveal)).toBe(false);
   const logRow = reveal.closest('.text-text-secondary')!;
   expect(logRow.querySelector('p')?.textContent).toBe(`完整记录：${LOG}`);

@@ -2,12 +2,14 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from types import SimpleNamespace
 
 from peach import media_io, library_processing
@@ -22,6 +24,96 @@ class MediaIoTests(unittest.TestCase):
         # 抽帧按目录的流量保护取舍：给一个免费的本地根，`cost_for` 才读得出这批条目可抽帧。
         self.config.locations = {'local': (str(self.root),)}
         self.config.media_costs = {}
+
+    def test_nas_browser_reads_only_directories_and_refuses_escape(self):
+        from peach.nas_directories import browse
+        media = self.root / 'media'
+        media.mkdir()
+        (media / '子目录').mkdir()
+        (media / 'video.mp4').write_bytes(b'not-read')
+        config = SimpleNamespace(mounts={'local': (str(media),)}, locations={})
+        reply = browse(config, str(media))
+        self.assertEqual(reply['directories'], [{'name': '子目录', 'path': str(media / '子目录')}])
+        self.assertIsNone(reply['parent'])
+        with self.assertRaises(ValueError):
+            browse(config, str(media / '..'))
+        with self.assertRaises(ValueError):
+            browse(config, 'relative')
+        with patch('peach.media_io._request') as reader:
+            with self.assertRaises(ValueError):
+                browse(config, 'smb://example.test/share')
+            reader.assert_not_called()
+        if sys.platform != 'win32':
+            (media / 'escape').symlink_to(self.root, target_is_directory=True)
+            self.assertNotIn('escape', [entry['name'] for entry in browse(config, str(media))['directories']])
+            with self.assertRaises(ValueError):
+                browse(config, str(media / 'escape'))
+
+    def test_nas_browser_bounds_listing_and_inherits_killable_io(self):
+        from peach.nas_directories import browse, list_directory
+        entries = [SimpleNamespace(name=str(index), is_dir=lambda **kwargs: True) for index in range(502)]
+        manager = Mock()
+        manager.__enter__ = Mock(return_value=iter(entries))
+        manager.__exit__ = Mock(return_value=False)
+        with patch('peach.nas_directories.os.scandir', return_value=manager):
+            result = list_directory(self.root, [str(self.root)])
+        self.assertEqual(len(result['directories']), 500)
+        self.assertEqual(result['next_offset'], 500)
+        config = SimpleNamespace(mounts={'local': (str(self.root),)}, locations={})
+        with patch('peach.media_io.subprocess.run', side_effect=subprocess.TimeoutExpired('media-read', 10)):
+            with self.assertRaises(TimeoutError):
+                browse(config, str(self.root))
+
+    def test_nas_browser_can_reach_directories_after_a_page_of_files(self):
+        from peach.nas_directories import list_directory
+        entries = [SimpleNamespace(name=str(index), is_dir=lambda **kwargs: False) for index in range(500)]
+        entries.append(SimpleNamespace(name='后面的目录', is_dir=lambda **kwargs: True))
+        manager = Mock()
+        manager.__enter__ = Mock(side_effect=lambda: iter(entries))
+        manager.__exit__ = Mock(return_value=False)
+        with patch('peach.nas_directories.os.scandir', return_value=manager):
+            first = list_directory(self.root, [str(self.root)])
+            second = list_directory(self.root, [str(self.root)], first['next_offset'])
+        self.assertEqual(first['directories'], [])
+        self.assertEqual(second['directories'], [{'name': '后面的目录', 'path': str(self.root / '后面的目录')}])
+        self.assertIsNone(second['next_offset'])
+
+    def test_nas_browser_start_does_not_read_a_missing_initial_path(self):
+        from peach.nas_directories import browse
+        config = SimpleNamespace(mounts={'local': (str(self.root),)}, locations={})
+        with patch('peach.media_io._request') as reader:
+            result = browse(config, '/missing/old-path', start=True)
+        reader.assert_not_called()
+        self.assertEqual(result['roots'], [str(self.root)])
+        self.assertIsNone(result['path'])
+        with self.assertRaises(ValueError):
+            browse(config, str(self.root), offset=-1)
+
+    def test_nas_local_directory_does_not_probe_an_unrelated_offline_mount(self):
+        from peach.nas_directories import list_directory
+        offline = self.root.parent / 'offline-cloud'
+        resolve = Path.resolve
+        def checked(path, **kwargs):
+            if path == offline:
+                raise TimeoutError('离线挂载不能参与本地目录浏览')
+            return resolve(path, **kwargs)
+        with patch.object(Path, 'resolve', checked):
+            result = list_directory(self.root, [str(offline), str(self.root)])
+        self.assertEqual(result['path'], str(self.root))
+
+    def test_server_position_uses_the_declared_root_and_relative_location(self):
+        from peach.nas_directories import file_position
+        from peach import settings_file
+        from dataclasses import replace
+        config = replace(settings_file.load_config(),
+                         locations={'local': ('R:\\media',)},
+                         mounts={'local': (str(self.root),)})
+        with patch('peach.settings_file.active', return_value=config), \
+                patch.dict('os.environ', {'PEACH_DISTRIBUTION': 'docker'}):
+            result = file_position(self.root / 'series' / 'video.mp4', 'R:\\media\\series\\video.mp4')
+        self.assertTrue(result['container'])
+        self.assertEqual(result['media_root'], str(self.root))
+        self.assertEqual(result['relative_path'], 'series/video.mp4')
 
     def test_worker_reads_unicode_nfo_and_directory_attributes(self):
         source = self.root / '影片.nfo'
@@ -58,6 +150,67 @@ class MediaIoTests(unittest.TestCase):
             media_io.directory_files(self.root)
         self.assertEqual(len(children), 1)
         self.assertIsNotNone(children[0].poll())
+
+    @staticmethod
+    def _entry_line(name):
+        entry = dict(name=name, path=name, directory=False, symlink=False, attributes={'st_size': 1}, error='')
+        return json.dumps({'entry': entry}).encode() + b'\n'
+
+    @staticmethod
+    def _fake_reader(lines):
+        reader = Mock()
+        reader.stdout = MagicMock()
+        reader.stdout.__iter__.return_value = lines
+        return reader
+
+    def test_directory_keeps_reading_while_entries_keep_arriving(self):
+        """网络盘上的大目录：总时长超过期限，但每条间隔都在期限内，整目录照常读完。"""
+        def slow():
+            for index in range(12):
+                time.sleep(0.1)
+                yield self._entry_line(f'{index}.mp4')
+            yield b'{"end": 12}\n'
+        reader = self._fake_reader(slow())
+        started = time.monotonic()
+        with patch.object(media_io, 'TIMEOUT_SECONDS', 1.0), \
+                patch.object(media_io.subprocess, 'Popen', return_value=reader):
+            entries = media_io.directory_entries(self.root)
+        self.assertGreater(time.monotonic() - started, 1.0)
+        self.assertEqual([entry.name for entry in entries], [f'{index}.mp4' for index in range(12)])
+        reader.kill.assert_called_once_with()
+
+    def test_directory_that_stops_returning_entries_times_out_and_reaps_the_reader(self):
+        children = []
+        original_popen = subprocess.Popen
+        line = self._entry_line('first.mp4').decode()
+        def stalled(_command, **options):
+            script = f'import sys, time; sys.stdout.write({line!r}); sys.stdout.flush(); time.sleep(60)'
+            child = original_popen([sys._base_executable, '-c', script], **options)
+            children.append(child)
+            return child
+        with patch.object(media_io, 'TIMEOUT_SECONDS', 1.5), \
+                patch.object(media_io.subprocess, 'Popen', side_effect=stalled), \
+                self.assertRaises(TimeoutError):
+            media_io.directory_entries(self.root)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+
+    def test_directory_reader_that_exits_without_the_end_marker_fails_the_directory(self):
+        """中途断开的半截清单不能当成整个目录交给扫描。"""
+        lines = iter([self._entry_line('a.mp4'), self._entry_line('b.mp4')])
+        with patch.object(media_io.subprocess, 'Popen', return_value=self._fake_reader(lines)), \
+                self.assertRaisesRegex(OSError, '未完成'):
+            media_io.directory_entries(self.root)
+
+    def test_identity_is_not_read_for_files_the_scan_never_registers(self):
+        for name in ('ABW-101.mp4', 'ABW-101.nfo', 'Thumbs.db'):
+            (self.root / name).write_bytes(b'x')
+        with patch.object(media_io.os, 'stat', wraps=os.stat) as stat:
+            items = list(media_io._local_directory(self.root, 'identity'))
+        self.assertEqual(len(items), 3)
+        read = {Path(call.args[0]).name for call in stat.call_args_list}
+        # Windows 的目录快照没有文件 ID，只给会登记的文件补读；其他系统快照自带，不补读。
+        self.assertEqual(read, {'ABW-101.mp4'} if os.name == 'nt' else set())
 
     def test_packaged_cli_dispatches_the_read_only_worker(self):
         from peach.cli import main

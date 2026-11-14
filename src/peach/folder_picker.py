@@ -198,6 +198,8 @@ def command(initial: str | None, platform: str = sys.platform) -> tuple[list[str
 def pick_folder(initial: str | None = None, *, platform: str = sys.platform,
                 run=subprocess.run) -> str | None:
     """弹对话框，返回选中的绝对路径；用户取消返回 None。"""
+    if os.environ.get('PEACH_HEADLESS_MANAGED') == '1':
+        raise PickerUnsupported("errors.folderPicker.headless")
     argv, extra = command(initial, platform)
     if not _LOCK.acquire(blocking=False):
         raise PickerBusy("errors.folderPicker.busy")

@@ -1862,6 +1862,8 @@ def run_macos_menu_bar(manager: "ServiceManager", gate: "SetupGate | None" = Non
             (None, None),
             (tray_text("tray.menu.quit"), quit_now),
         ],
+        # 已在运行时再点开应用：和菜单第一项一样打开网页，图标被系统折叠时也有入口。
+        reopen=gate.open,
     )
     app["app"] = menu
     updates.sparkle = sparkle_update.start(config=lambda: gate.config, stop_services=manager.stop_owned,

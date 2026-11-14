@@ -385,7 +385,7 @@ describe('媒体库', () => {
     const { host, sent } = await open({}, { [PICK_FOLDER_URL]: { status: 200, body: { path: 'F:\\Picked' } } });
     await click(rows(host)[0]!.querySelector('button[aria-label="选择文件夹"]'));
     await settle();
-    expect(sent(PICK_FOLDER_URL)).toEqual({ initial: '' });
+    expect(sent(PICK_FOLDER_URL)).toEqual({ initial: '', purpose: 'media', start: true });
     expect(paths(host)[0]!.value).toBe('F:\\Picked');
   });
 

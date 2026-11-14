@@ -328,6 +328,8 @@ def tray_main() -> int:
 
 
 def cli_main() -> int:
+    from .docker_entrypoint import drop_root_for_cli
+    drop_root_for_cli()
     install()
     try:
         from .cli import main

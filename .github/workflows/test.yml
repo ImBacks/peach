@@ -52,6 +52,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: fork PR 不得用维护者身份提交
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_pr_identity.py --base "$BASE_SHA" --head "$HEAD_SHA"
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true

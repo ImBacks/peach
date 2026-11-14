@@ -1198,6 +1198,7 @@
     "feed": "订阅源 {{id}}",
     "uncensored": "无码",
     "censored": "有码",
+    "qualityRow": " - 画质分档 {{asset}} {{quality}} → {{previous}} {{batch}}",
     "resolutionTagRow": " - 分辨率标签 {{asset}} {{kind}} {{source}} {{batch}}",
     "dryRun": "dry-run；确认无误后加 --apply --backup <路径>",
     "deletedFiles": "删除文件",
@@ -2172,8 +2173,9 @@
     "sameNameDiffers": "候选文件同名但内容不同",
     "sha256Mismatch": "下载产物与演练的 SHA-256 不一致",
     "imageTagMismatch": "镜像标签与发布提交或版本不一致",
+    "imageArchitectureMismatch": "镜像架构与要记录的候选不一致",
     "imageDigestMismatch": "镜像与演练验收的摘要不一致",
-    "imageVersionRequired": "镜像核验需要版本",
+    "imageVersionRequired": "镜像核验需要版本与架构",
     "description": "GitHub CI 通过官方 REST 接口晋级同一提交的已验收产物，不调用 CLI。"
   },
   "job_status": {
@@ -2544,5 +2546,12 @@
     "raised": "{{file}}: {{count}}（基线 {{baseline}}）",
     "written": "已写入 {{path}}：{{files}} 个文件、{{count}} 条",
     "clean": "没有超过基线的文件"
+  },
+  "check_pr_identity": {
+    "baseHelp": "PR 的目标提交",
+    "headHelp": "PR 的头提交",
+    "notRead": "未取得提交身份：{{error}}",
+    "impersonated": "以下提交的作者是维护者：",
+    "fix": "先把自己的身份配好，再重写这些提交并强推 PR 分支：\n  git config user.name \"<your name>\"\n  git config user.email \"<your email>\"\n  git rebase -r <base> --exec \"git commit --amend --no-edit --reset-author\"\n  git push --force-with-lease\n<base> 是 PR 的目标分支，例如 upstream/master。"
   }
 }

@@ -589,17 +589,15 @@ def _ledger_stats(contract: WebContract, libraries) -> dict:
         out["tag_source"] = [dict(r) for r in c.execute(
             "SELECT source k, count(*) n, count(DISTINCT asset_id) assets "
             "FROM asset_tag GROUP BY source ORDER BY n DESC")]
-        out["tag_cov"] = one("SELECT count(DISTINCT asset_id) FROM asset_tag "
-                             f"WHERE asset_id IN (SELECT id FROM asset WHERE {PRESENT}) "
-                             "AND source IN ('name','r18','vision','vision-creator',"
-                             "'vision_creator','vision_creator_review')")
+        # 内容标签与详情页同一口径：不按写入来源挑（刮削、批次、复核、手动都算），
+        # 只去掉演员名和用户隐藏的标签；覆盖与排行用同一判据。
+        content_tags = ("FROM asset_tag t JOIN asset a ON a.id=t.asset_id "
+                        f"WHERE a.medium='video' AND {PRESENT_A} "
+                        "AND " + tag_is_not_a_performer_name("peach_normalize(t.tag)") + " "
+                        "AND " + tag_not_hidden('t.asset_id', 'peach_normalize(t.tag)') + " ")
+        out["tag_cov"] = one("SELECT count(DISTINCT t.asset_id) " + content_tags)
         out["top_tags"] = [dict(r, cat=tag_cat(r["k"])) for r in c.execute(
-            "SELECT t.tag k, count(*) n FROM asset_tag t JOIN asset a ON a.id=t.asset_id "
-            f"WHERE a.medium='video' AND {PRESENT_A} AND t.source IN ('name','r18','vision','vision-creator',"
-            "'vision_creator','vision_creator_review') "
-            "AND " + tag_is_not_a_performer_name("peach_normalize(t.tag)") + " "
-            "AND " + tag_not_hidden('t.asset_id', 'peach_normalize(t.tag)') + ' ' +
-            "GROUP BY t.tag ORDER BY n DESC LIMIT 30")]
+            "SELECT t.tag k, count(*) n " + content_tags + "GROUP BY t.tag ORDER BY n DESC LIMIT 30")]
         tables = {row[0] for row in c.execute(
             "SELECT name FROM sqlite_schema WHERE type='table'"
         )}

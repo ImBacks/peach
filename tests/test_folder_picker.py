@@ -14,6 +14,16 @@ from unittest import mock
 from peach import folder_picker
 
 
+class HeadlessPickerTests(unittest.TestCase):
+    def test_headless_service_never_launches_a_native_dialog(self):
+        from unittest.mock import patch
+        with patch.dict('os.environ', {'PEACH_HEADLESS_MANAGED': '1'}), \
+                patch('peach.folder_picker.command') as command:
+            with self.assertRaises(folder_picker.PickerUnsupported):
+                folder_picker.pick_folder(platform='darwin')
+            command.assert_not_called()
+
+
 class FakeRun:
     def __init__(self, stdout: bytes = b"", returncode: int = 0, stderr: bytes = b""):
         self.stdout, self.returncode, self.stderr = stdout, returncode, stderr

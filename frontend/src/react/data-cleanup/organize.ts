@@ -9,6 +9,7 @@ import { queryClient } from '../query';
 import { interfaceLanguage, t } from '../../i18n';
 import { serverLabel } from '../../core/server-text';
 import { PICK_FOLDER_URL } from '../../configuration-endpoints';
+import { pickServerFolder, type FolderReply } from '../components/server-path-dialog';
 /* 模板跟着数据库走（`SYNCED_SETTING_KEYS` 里的 `organizeTemplates`），写的是设置面板同一个端点。 */
 import { SETTINGS_URL } from '../settings-panel/settings-data';
 
@@ -80,7 +81,8 @@ export async function prefetchOrganize(signal: AbortSignal): Promise<void> {
 export const previewOrganize = (request: OrganizeRequest) =>
   apiSend<OrganizePlan>(ORGANIZE_PREVIEW_URL, request);
 
-export const pickOrganizeFolder = (initial: string) => apiSend<{ path: string | null }>(PICK_FOLDER_URL, { initial });
+export const pickOrganizeFolder = async (initial: string) => ({ path: await pickServerFolder(initial,
+  body => apiSend<FolderReply>(PICK_FOLDER_URL, body)) });
 
 export const startOrganize = (command: OrganizeCommand) => command.kind === 'apply'
   ? apiSend<OrganizeJob>(ORGANIZE_APPLY_URL, { ...command.request, confirm: true })

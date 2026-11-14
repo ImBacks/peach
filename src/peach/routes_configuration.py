@@ -36,7 +36,7 @@ from .jobs import JobAlreadyRunning
 from .routes_auth import (FIRST_ACCESS_DENIED_CODE, login_mode, origin_allowed, require_auth, require_authenticated_client, safe_next, same_origin,
                           set_auth_cookie, sessions as access_sessions)
 from .web_entry import field_errors, runtime_fact_entries
-from .user_messages import UserValueError, error_detail, message_fields
+from .user_messages import UserFacingError, UserOSError, UserTimeoutError, UserValueError, error_detail, message_fields
 from .web_local_access import local_client, managed_configuration
 from . import (interface_text, release_updates, standalone_update, peach_proxy, desktop_startup, desktop_uninstall,
                docker_update, media_tools)
@@ -1570,14 +1570,32 @@ def save_tunnel(request: Request, body: dict[str, Any] = Body(default_factory=di
 @router.post("/api/pick-folder")
 def pick_folder(request: Request, body: dict[str, Any] = Body(default_factory=dict),
                 _args=Depends(require_auth)):
-    """让运行 Peach 的这台电脑弹系统文件夹对话框，选中的绝对路径交回页面。
+    """桌面返回系统选择结果，无桌面返回媒体根内的只读目录快照。
 
-    只对本机连接开放：系统对话框显示在运行 Peach 的电脑上。首启页和配置页共用这一条，
-    所以不要求独立包。对话框是模态的，一次只开一个；用户取消时 `path` 为 None。
+    两种模式共用认证、本机或受管局域网访问、同源检查。首启页与配置页共用此入口。
     """
     local_only(request)
     same_origin(request)
     initial = body.get("initial")
+    purpose = body.get('purpose', 'media')
+    if not isinstance(purpose, str) or purpose not in {'media', 'data'}:
+        raise UserValueError("errors.nasDirectories.invalidPurpose")
+    from . import nas_directories
+    if not nas_directories.available():
+        if purpose == 'data':
+            # 说明文字由页面按 container 选，容器的数据卷位置在宿主机上定，页面只读。
+            container = os.environ.get('PEACH_DISTRIBUTION') == 'docker'
+            return {'mode': 'manual', 'path': initial if isinstance(initial, str) else '',
+                    'editable': not container, 'container': container}
+        try:
+            return nas_directories.browse(settings_file.load_config(), initial if isinstance(initial, str) else '',
+                                          start=body.get('start') is True, offset=body.get('offset', 0))
+        except UserFacingError:
+            raise
+        except TimeoutError as exc:
+            raise UserTimeoutError("errors.nasDirectories.timedOut", status_code=504) from exc
+        except OSError as exc:
+            raise UserOSError("errors.nasDirectories.unreadable", status_code=409) from exc
     try:
         path = folder_picker.pick_folder(initial if isinstance(initial, str) and initial else None)
     except folder_picker.PickerBusy as exc:

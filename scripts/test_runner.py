@@ -67,7 +67,7 @@ SCOPES: dict[str, tuple[str, ...]] = {
                 "test_review_mirror.py", "test_rm_web.py",
                 "test_entity_link_install.py", "test_web_links.py", "test_entry_links.py",
                 "test_feeds.py", "test_feeds_web.py", "test_wants_web.py",
-                "test_link_marks.py", "test_site_icons.py", "test_site_logos.py",
+                "test_link_marks.py", "test_site_icons.py", "test_site_logos.py", "test_public_http.py",
                 "test_avatar_face.py",
                 "test_brand_marks.py", "test_studio_icon_variants.py",
                 "test_push_discovery.py", "test_media_probe.py",
@@ -178,7 +178,8 @@ SCOPES: dict[str, tuple[str, ...]] = {
                   "test_cli.py", "test_server.py", "test_versioning.py", "test_frontend_build.py", "test_frontend_preflight.py",
                   "test_cloudflared_packaging.py", "test_desktop_installer.py",
                   "test_ffmpeg_build.py", "test_ffmpeg_bundle.py", "test_untrunc_build.py", "test_macos_media.py",
-                  "test_face_models_bundle.py", "test_metadata_amane_bridge.py", "test_release_candidate.py", "test_media_build_cache.py"),
+                  "test_face_models_bundle.py", "test_metadata_amane_bridge.py", "test_release_candidate.py",
+                  "test_media_build_cache.py", "test_docker_entrypoint.py"),
 }
 
 SCOPE_TEST_IDS: dict[str, tuple[str, ...]] = {

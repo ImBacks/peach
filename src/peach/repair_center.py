@@ -21,7 +21,7 @@ from .media_sources import CLOUD_LOCATIONS
 ITEMS = (
     ('catalog', 'auto'), ('display-local', 'auto'), ('display-cloud', 'confirm'), ('system-files', 'auto'),
     ('garbled-people', 'auto'), ('dangling-candidates', 'auto'), ('javdb-entries', 'auto'),
-    ('resolution-tags', 'auto'), ('interface-text', 'auto'), ('follow-evidence', 'confirm'),
+    ('resolution-tags', 'auto'), ('video-medium', 'auto'), ('quality-bands', 'auto'), ('interface-text', 'auto'), ('follow-evidence', 'confirm'),
 )
 #: 历史里的规则：账本行 id 的前缀、计哪个字段（`None` 为资料整理的改动合计）。
 #: 前缀去掉末尾的连字符就是规则 id，名字在 `server:repairCenter.history.<id>`。
@@ -31,6 +31,8 @@ RULES = (
     ('dangling-candidates-', ('repinned', 'withdrawn')),
     ('javdb-actor-records-', ('hidden', 'disabled_feeds')),
     ('source-resolution-tags-', ('tags',)),
+    ('video-medium-', ('video',)),
+    ('quality-resolution-', ('assets',)),
     ('interface-text-codes-', ('rows', 'attempts')),
     (follow_evidence.RECEIPT_PREFIX, ('files',)),
 )
@@ -55,6 +57,12 @@ def _latest(rows, key):
         if key in result:
             return result[key]
     return None
+
+
+def _receipt_fact(rows, prefix: str, *fields: str) -> dict:
+    """按账本行 id 前缀取最新一次补修回执：有就是做完了，`changed` 为这几个字段的条数合计。"""
+    result = next((result for row_id, _, result in rows if row_id.startswith(prefix)), {})
+    return {'state': 'done' if result else 'none', 'changed': sum(_count(result.get(field)) for field in fields)}
 
 
 def _touched(fact: dict) -> bool:
@@ -162,10 +170,6 @@ def snapshot(connection, receipt: dict, *, cloud_pending: int, backup_directorie
     included = bool(display.get('cloud_included_at'))
     isolated = _latest(rows, system_file_repair.RULE) or {}
     garbled = _latest(rows, 'garbled_people') or {}
-    dangling = next((result for row_id, _, result in rows if row_id.startswith('dangling-candidates-')), {})
-    javdb_entries = next((result for row_id, _, result in rows if row_id.startswith('javdb-actor-records-')), {})
-    resolution = next((result for row_id, _, result in rows if row_id.startswith('source-resolution-tags-')), {})
-    text_codes = next((result for row_id, _, result in rows if row_id.startswith('interface-text-codes-')), {})
     facts = {
         'catalog': {'state': local.get('state') or ('done' if local else 'none'),
                     'changed': _count({key: value for key, value in local.get('changed', {}).items()
@@ -175,13 +179,12 @@ def snapshot(connection, receipt: dict, *, cloud_pending: int, backup_directorie
         'display-cloud': _display_cloud(cloud_pending, included, cloud_done, cloud_total),
         'system-files': {'state': 'done' if isolated else 'none', 'changed': _count(isolated.get('isolated'))},
         'garbled-people': {'state': 'done' if garbled else 'none', 'changed': _count(garbled.get('links'))},
-        'dangling-candidates': {'state': 'done' if dangling else 'none',
-                                'changed': _count(dangling.get('repinned')) + _count(dangling.get('withdrawn'))},
-        'javdb-entries': {'state': 'done' if javdb_entries else 'none',
-                          'changed': _count(javdb_entries.get('hidden')) + _count(javdb_entries.get('disabled_feeds'))},
-        'resolution-tags': {'state': 'done' if resolution else 'none', 'changed': _count(resolution.get('tags'))},
-        'interface-text': {'state': 'done' if text_codes else 'none',
-                           'changed': _count(text_codes.get('rows')) + _count(text_codes.get('attempts'))},
+        'dangling-candidates': _receipt_fact(rows, 'dangling-candidates-', 'repinned', 'withdrawn'),
+        'javdb-entries': _receipt_fact(rows, 'javdb-actor-records-', 'hidden', 'disabled_feeds'),
+        'resolution-tags': _receipt_fact(rows, 'source-resolution-tags-', 'tags'),
+        'quality-bands': _receipt_fact(rows, 'quality-resolution-', 'assets'),
+        'video-medium': _receipt_fact(rows, 'video-medium-', 'video'),
+        'interface-text': _receipt_fact(rows, 'interface-text-codes-', 'rows', 'attempts'),
         'follow-evidence': _follow_evidence(follow_evidence_status, rows),
     }
     items = [{'id': key, 'title': interface_text.text(f'server:repairCenter.items.{key}.title'),

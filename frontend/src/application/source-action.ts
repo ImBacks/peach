@@ -7,6 +7,8 @@ export interface SourceActionPorts {
   request(id: number): Promise<unknown>;
   success(): void;
   failureText(error: unknown): string;
+  /** 按定位回执收尾（服务端部署弹出路径）；不给就直接 `success()`。由调用方从 React 侧注入，本模块不引用 React 组件。 */
+  complete?(result: unknown, success: () => void): Promise<void>;
 }
 export interface SourceActionStatus { textContent: string | null }
 export interface SourceActionOptions { button?: HTMLElement | null }
@@ -22,9 +24,10 @@ export function createRevealSourceAction(ports: SourceActionPorts) {
     }
     status.textContent = '';
     try {
-      await ports.request(id);
+      const result = await ports.request(id);
       status.textContent = '';
-      ports.success();
+      if (ports.complete) await ports.complete(result, ports.success);
+      else ports.success();
     } catch (error) {
       status.textContent = ports.failureText(error);
     } finally {

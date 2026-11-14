@@ -410,7 +410,7 @@ class TaskRunStore:
                      json.dumps(summary or {}, ensure_ascii=False)))
                 run_id = int(cursor.lastrowid)
                 from .task_control import initialize_speed
-                initialize_speed(self, run_id)
+                initialize_speed(self, run_id, task_key=task_key)
         except sqlite3.IntegrityError:
             if mutex_key is None:
                 # 没声明互斥还撞上约束，说明坏的是别的东西（CHECK、列约束），

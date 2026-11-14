@@ -195,7 +195,7 @@ export function SetupForm({ setup, onDone, onRestore }: { setup: SetupQuestions;
     setPickingData(true);
     setPickError('');
     try {
-      const path = await pickFolder(values[dataRoot.key] ?? '');
+      const path = await pickFolder(values[dataRoot.key] ?? '', 'data');
       if (path) setValue(dataRoot.key, path);
     } catch (cause) {
       setPickError(describeFailure(cause));

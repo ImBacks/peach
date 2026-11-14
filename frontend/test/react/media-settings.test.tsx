@@ -281,7 +281,7 @@ describe('选择文件夹', () => {
     const [url, init] = fetcher.mock.calls[0] ?? [];
     expect(url).toBe(PICK_FOLDER_URL);
     expect(init?.method).toBe('POST');
-    expect(sentBody(fetcher)).toEqual({ initial: 'D:\\Media' });
+    expect(sentBody(fetcher)).toEqual({ initial: 'D:\\Media', purpose: 'media', start: true });
     expect(paths(host)[0]?.value).toBe('E:\\Movies');
     expect(pick.getAttribute('aria-busy'), '对话框关了忙态要撤掉').toBeNull();
   });

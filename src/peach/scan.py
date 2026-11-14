@@ -254,8 +254,13 @@ def walk_root_for(
     location: str, root: str, *, declared_roots: Mapping[str, Sequence[str]],
     mounts: Mapping[str, Sequence[str | Path]], windows: bool | None = None,
 ) -> Path:
-    """取得数据库路径在本机对应的扫描目录。调用前先过 `check_scan_target`。"""
+    """取得数据库路径在本机对应的扫描目录。
+
+    先过 `check_scan_target`：不在这个来源任何数据库路径前缀下的目录，`resolve_root` 给的
+    序号是 -1，拿它取挂载表会越界或落到最后一个挂载点，所以在这里就报可读的错误。
+    """
     windows = os.name == "nt" if windows is None else windows
+    check_scan_target(location, root, declared_roots=declared_roots)
     _location, index, tail = resolve_root(root, declared_roots)
     location_mounts = tuple(mounts.get(location, ()))
     from .smb_media import is_address, resolve

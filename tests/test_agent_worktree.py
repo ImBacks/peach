@@ -13,6 +13,8 @@ from pathlib import Path
 from threading import Event
 from unittest import mock
 
+import psutil
+
 from scripts import agent_worktree, check_public_text, release_tag, test_evidence
 from scripts.agent_worktree import (
     WorkspaceError, _git, _lines, create, integrate, processes_under, prune, ready,
@@ -23,6 +25,15 @@ from support.gitrepo import seed_repository
 #: 仓库里版本化的 git hook，测试原样装进临时仓库。
 HOOKS = Path(__file__).resolve().parents[1] / agent_worktree.HOOKS_PATH
 AUTHOR = "Co-Authored-By: Codex (GPT-6) <noreply@openai.com>"
+MAINTAINER = sorted(agent_worktree.co_author.MAINTAINER_MAILS)[0]
+
+
+def process_tree_ids(process: subprocess.Popen) -> set[int]:
+    """包含 Windows venv 启动器后面的解释器进程。"""
+    try:
+        return {process.pid, *(child.pid for child in psutil.Process(process.pid).children(recursive=True))}
+    except psutil.Error:
+        return {process.pid}
 
 
 def install_commit_hooks(repo: Path) -> None:
@@ -449,6 +460,23 @@ class PullRequestIntegrationTests(_WorktreeCase):
             with self.github(json.dumps({**self.pr, "body": "只修 ZZQ-101 的前缀。"})):
                 self.assertRaisesRegex(WorkspaceError, "提交 [0-9a-f]+（人物 2 个", integrate, self.repo, self.branch)
 
+    def test_a_fork_pull_request_committed_as_the_maintainer_is_refused(self):
+        """贡献者照 `git log` 把作者配成维护者时，本机集成和 CI 一样拒收；同仓库分支不查。"""
+        _git(self.worker, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty",
+             "-m", "fix(tooling): 冒用维护者身份")
+        self.pr["headRefOid"] = _git(self.worker, "rev-parse", "HEAD").stdout.strip()
+        with self.github(json.dumps({**self.pr, "isCrossRepository": True})):
+            self.assert_refused("作者是维护者")
+        with self.github(json.dumps({**self.pr, "isCrossRepository": False})):
+            integrate(self.repo, self.branch)
+        self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
+
+    def test_a_fork_pull_request_with_the_contributor_s_own_identity_integrates(self):
+        with self.github(json.dumps({**self.pr, "isCrossRepository": True})) as query:
+            integrate(self.repo, self.branch)
+        self.assertIn("isCrossRepository", query.call_args.args[0][-1])
+        self.assertEqual((self.repo / "worker.txt").read_text(encoding="utf-8"), "worker\n")
+
     def test_insider_terms_in_the_pr_body_are_refused_but_commit_messages_may_name_the_tooling(self):
         with mock.patch.object(check_public_text, "load_library", return_value=None):
             self.assertRaisesRegex(WorkspaceError, "内部用语.*合批", agent_worktree.require_public_text,
@@ -735,15 +763,16 @@ class PruneTests(_WorktreeCase):
     def test_a_worktree_a_process_is_working_in_is_kept(self):
         """会话、终端或预览服务还开在里面的工作树不回收：分支合入了，人还在用。"""
         worker = self._integrated("in-use")
-        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=worker)
+        process = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                   cwd=worker, stdin=subprocess.PIPE)
         try:
             report = prune(self.repo, apply=True)
+            pids = process_tree_ids(process)
         finally:
-            process.kill()
-            process.wait(timeout=15)
+            process.communicate(timeout=15)
         self.assertTrue(worker.is_dir())
         why = next(row["why"] for row in report["kept"] if row["path"] == str(worker))
-        self.assertIn(str(process.pid), why)
+        self.assertTrue(any(f"PID {pid}" in why for pid in pids), why)
 
     def test_a_dirty_worktree_is_refused_even_when_its_branch_is_merged(self):
         """分支已合入不等于工作区里没东西。
@@ -1041,7 +1070,7 @@ class LeftoverProcessTests(_WorktreeCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             rows = processes_under([cwd])
-            if any(row["pid"] == child.pid for row in rows):
+            if any(row["pid"] in process_tree_ids(child) for row in rows):
                 break
             time.sleep(0.1)
         return child
@@ -1054,9 +1083,10 @@ class LeftoverProcessTests(_WorktreeCase):
         child = self.sleeper(self.repo.parent / agent_worktree.WORKTREE_ROOT / "busy")
         try:
             report = agent_worktree.processes(self.repo)
+            pids = process_tree_ids(child)
         finally:
             self.stop(child)
-        row = next(row for row in report["processes"] if row["pid"] == child.pid)
+        row = next(row for row in report["processes"] if row["pid"] in pids)
         self.assertFalse(row["orphan"], "父进程（测试本身）还在")
         self.assertFalse(row["caller"])
         self.assertGreaterEqual(row["age_minutes"], 0)
@@ -1067,10 +1097,11 @@ class LeftoverProcessTests(_WorktreeCase):
         child = self.sleeper(self.root / "elsewhere")
         try:
             rows = processes_under([self.root / "elsewhere", Path(os.getcwd())])
+            pids = process_tree_ids(child)
         finally:
             self.stop(child)
-        self.assertIn(child.pid, [row["pid"] for row in rows])
-        self.assertNotIn(child.pid, [row["pid"] for row in processes_under([self.repo])])
+        self.assertTrue(any(row["pid"] in pids for row in rows))
+        self.assertFalse(any(row["pid"] in pids for row in processes_under([self.repo])))
         mine = [row for row in rows if row["pid"] == os.getpid()]
         self.assertEqual([row["caller"] for row in mine], [True], "调用者自己这条链要标出来")
 
@@ -1081,10 +1112,11 @@ class LeftoverProcessTests(_WorktreeCase):
             with mock.patch.object(agent_worktree, "_delete_tree",
                                    return_value="PermissionError: 目录被别的进程占着"):
                 report = prune(self.repo, apply=True)
+            pids = process_tree_ids(child)
         finally:
             self.stop(child)
         self.assertEqual([row["path"] for row in report["residue"]], [str(held)])
-        self.assertIn(child.pid, [row["pid"] for row in report["residue"][0]["holders"]])
+        self.assertTrue(any(row["pid"] in pids for row in report["residue"][0]["holders"]))
 
     def test_without_psutil_the_scan_says_it_was_not_obtained(self):
         with mock.patch.dict(sys.modules, {"psutil": None}):
@@ -1307,6 +1339,63 @@ class CoAuthorTests(unittest.TestCase):
             with self.assertRaisesRegex(agent_worktree.WorkspaceError, "Co-Authored-By"):
                 agent_worktree.require_verified(self.repo, "master", {"tests/example.py"})
             key.assert_not_called()
+
+
+from scripts import check_pr_identity
+
+
+class PullRequestIdentityTests(unittest.TestCase):
+    """fork PR 的提交不得记在维护者名下；维护者已在目标分支上的提交不算。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve()
+        git(self.repo, "init", "-b", "master")
+        git(self.repo, "config", "user.name", "Contributor")
+        git(self.repo, "config", "user.email", "contributor@example.invalid")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "base")
+        git(self.repo, "checkout", "-b", "worker")
+
+    def test_the_contributor_s_own_commits_pass(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "fix(web): 贡献者自己的提交")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
+
+    def test_the_maintainer_as_author_is_refused(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "作者冒用",
+            "--author", f"Maintainer <{MAINTAINER.upper()}>")
+        found = check_pr_identity.problems(self.repo, "master")
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].endswith("作者冒用"), found)
+
+    def test_the_maintainer_rebasing_a_contributor_s_commit_is_not_impersonation(self):
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "维护者 rebase 过",
+            "--author", "Contributor <contributor@example.invalid>")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
+
+    def test_maintainer_commits_merged_from_the_target_branch_are_not_the_contributor_s(self):
+        git(self.repo, "checkout", "master")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "上游的提交")
+        git(self.repo, "checkout", "worker")
+        git(self.repo, "commit", "--allow-empty", "-m", "贡献者自己的提交")
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "merge", "--no-ff", "-m", "Merge master", "master")
+        self.assertEqual(check_pr_identity.problems(self.repo, "master"), [])
+
+    def test_the_ci_entry_runs_as_a_bare_script_and_explains_the_fix_in_the_local_language(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "check_pr_identity.py"
+
+        def run(language="en"):
+            return subprocess.run([sys.executable, str(script), "--base", "master"], cwd=self.repo,
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  env={**os.environ, "PYTHONIOENCODING": "utf-8", "PEACH_LANGUAGE": language})
+
+        self.assertEqual(run().returncode, 0)
+        git(self.repo, "-c", f"user.email={MAINTAINER}", "commit", "--allow-empty", "-m", "冒用")
+        for language, said in (("en", "authored as the maintainer"), ("zh-CN", "作者是维护者")):
+            result = run(language)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            for expected in (said, "--reset-author", "冒用"):
+                self.assertIn(expected, result.stderr)
 
 
 from scripts import commit_subject

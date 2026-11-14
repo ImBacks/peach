@@ -4,14 +4,14 @@ import {noteHtml,configurationSkeletonHtml} from '../src/ui-kit';
 
 describe('中文错误反馈',()=>{
   it.each(['Failed to fetch','NetworkError when attempting to fetch resource.','Load failed'])('网络异常 %s 给出连接检查方法',message=>{
-    expect(requestErrorMessage(new TypeError(message))).toBe('无法连接到 Peach 服务，请确认网络连接和托盘服务已启动。');
+    expect(requestErrorMessage(new TypeError(message))).toBe('无法连接到 Peach 服务，请确认网络连接正常、Peach 正在运行。');
   });
   it.each([[401,'登录已失效'],[403,'没有执行此操作的权限'],[404,'已不存在'],[429,'过于频繁'],[503,'暂时不可用'],[504,'超时']])('HTTP %s 使用明确原因', (code,reason)=>{
     expect(requestErrorMessage('request failed',code)).toContain(reason);
   });
   it('正文里的 timeout 字样不把 500 读成超时',()=>{
     expect(requestErrorMessage('Traceback: httpx.ReadTimeout raised in handler (timeout=30)',500))
-      .toBe('Peach 服务处理失败，请重试；持续失败时查看托盘日志。');
+      .toBe('Peach 服务处理失败，请重试；持续失败时查看 Peach 运行日志。');
     expect(requestErrorMessage('read timed out')).toContain('超时');
   });
   it('本机接口的 502 说的是 Peach 服务，不提代理',()=>{

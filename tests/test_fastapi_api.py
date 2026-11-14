@@ -873,6 +873,26 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(restore)
         return fake
 
+    def _swap_public_resources(self, upstream):
+        """站点圆标经 `public_http` 出网：在它的边界按 `upstream(httpx.Request)` 应答。
+
+        网络层失败照 curl 的形状抛 `RequestException`；地址核验、固定连接与重定向另有
+        `test_public_http` 覆盖。
+        """
+        from peach import public_http
+        from peach.http import HttpResponse
+
+        def fetch(url, **_options):
+            try:
+                response = upstream(httpx.Request("GET", url))
+            except httpx.TransportError as error:
+                raise public_http.requests.exceptions.ConnectionError(str(error)) from error
+            return HttpResponse(response.status_code, {key.lower(): value for key, value in response.headers.items()},
+                                response.content, url)
+        stub = patch.object(public_http, "get", side_effect=fetch)
+        stub.start()
+        self.addCleanup(stub.stop)
+
     async def test_follow_avatar_is_fetched_once_and_then_served_from_disk(self):
         """头像是元数据，落在本机：浏览器不直接碰 pixiv，第二次显示也不再问上游。"""
         denied = await self.client.get("/follow-avatar?service=fanbox&id=30917150")
@@ -1243,7 +1263,7 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
             hosts.append(request.url.host)
             return httpx.Response(200, content=png, request=request,
                                   headers={"content-type": "image/png"})
-        self._swap_http_client(upstream)
+        self._swap_public_resources(upstream)
 
         denied = await self.client.get("/site-mark?source=airav")
         self.assertEqual(denied.status_code, 401)
@@ -1268,7 +1288,7 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         def upstream(request):
             reached.append(str(request.url))
             return httpx.Response(502, request=request)
-        self._swap_http_client(upstream)
+        self._swap_public_resources(upstream)
         for name in ('avsox', 'manko', 'sukebei', 'mgstage', 'dmm', 'fc2'):
             response = await self.client.get(f'/site-mark?source={name}&t=secret')
             self.assertEqual(response.status_code, 200, name)
@@ -1373,7 +1393,8 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
             image.save(buffer, format="PNG")
             return httpx.Response(200, content=buffer.getvalue(), request=request,
                                   headers={"content-type": "image/png"})
-        self._swap_http_client(upstream)
+        self._swap_public_resources(upstream)
+        self.archive_upstream = upstream
         with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.executemany(
                 "INSERT INTO entity_link(id,entity_id,link_kind,label,url,hostname)"
@@ -1419,12 +1440,12 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         from peach import follow_assets
 
         asked = self._archive_links(lambda url: "red")
-        serving = self.app.state.http_transport.client
+        serving = self.archive_upstream
 
         def offline(request):
             asked.append(str(request.url))
             raise httpx.ConnectError("offline", request=request)
-        self._swap_http_client(offline)
+        self._swap_public_resources(offline)
 
         first = await self.client.get("/link-mark?t=secret&id=901")
         self.assertEqual(first.status_code, 404)
@@ -1437,21 +1458,21 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         marker, = (self.root / "generated" / "link-marks").glob("*.failed")
         past = time.time() - follow_assets.RETRY_SECONDS - 1
         os.utime(marker, (past, past))
-        self.app.state.http_transport.client = serving
+        self._swap_public_resources(serving)
         recovered = await self.client.get("/link-mark?t=secret&id=901")
         self.assertEqual(recovered.status_code, 200)
         self.assertGreater(len(asked), reached)
         self.assertFalse(marker.exists())
 
     async def test_a_site_redirecting_to_an_unusable_address_counts_as_unreachable(self):
-        """重定向目标的主机名过不了 IDNA 时传输层抛 ValueError，地址本身不合法时抛 InvalidURL。
+        """重定向到内网、明文或主机名过不了 IDNA 的地址时，`public_http` 抛 ValueError。
 
-        两者都不是 `httpx.HTTPError`，都按取不到处理：回 404 露出地球图标，失败窗口内不再出网。
+        都按取不到处理：回 404 露出地球图标，失败窗口内不再出网。
         """
         self._archive_links(lambda url: "red")
-        for failure in (ValueError("encoding with 'idna' codec failed (UnicodeError: label empty or too long)"),
-                        httpx.InvalidURL("Invalid port: 'abc'")):
-            with self.subTest(failure=type(failure).__name__):
+        for failure in (ValueError("public resource host must resolve only to public addresses"),
+                        ValueError("public resource address is not valid")):
+            with self.subTest(failure=str(failure)):
                 for marker in (self.root / "generated" / "link-marks").glob("*.failed"):
                     marker.unlink()
                 asked = []
@@ -1459,7 +1480,7 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
                 def broken(request, failure=failure, asked=asked):
                     asked.append(str(request.url))
                     raise failure
-                self._swap_http_client(broken)
+                self._swap_public_resources(broken)
                 answer = await self.client.get("/link-mark?t=secret&id=901")
                 self.assertEqual(answer.status_code, 404)
                 reached = len(asked)
@@ -3805,6 +3826,16 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         # 410 与 403 在页面那层的通用错误映射里都没有说法，原因得由这条自己写成中文。
         self.assertEqual(gone.json()["message"], "这个位置已经不在了")
         self.assertIn("不归 Peach 管", refused.json()["message"])
+
+    async def test_headless_reveal_returns_the_server_resolved_asset_path(self):
+        source = self._seed_photo()
+        headers = {'X-Token': 'secret'}
+        with patch('peach.routes_api.reveal_path', return_value=False):
+            response = await self.client.post('/api/reveal', headers=headers,
+                json={'id': 9, 'path': '/client-controlled'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['mode'], 'server')
+        self.assertEqual(response.json()['path'], str(source))
 
     async def test_photo_thumbnail_is_generated_once_and_cached(self):
         source = self._seed_photo()
