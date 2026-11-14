@@ -5235,6 +5235,31 @@ class R2ArtifactTransferTests(unittest.TestCase):
             module.identity()
 
 
+class DownloadOnlySmokeCheckoutTests(unittest.TestCase):
+    def test_the_sparse_checkout_carries_every_module_the_smoke_host_imports(self):
+        """仅下载制品验收只稀疏检出几个目录，宿主是没装依赖的 Python。
+
+        0.58.0 的发布演练就断在这里：`build_amane_runtime` 开始读 `peach.interface_text`，检出里没有
+        `src/peach`，三个平台的验收都报 ModuleNotFoundError。按工作流里的清单拷目录，只用标准库导入。
+        """
+        text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        blocks = re.findall(r"sparse-checkout: \|\n((?:            \S.*\n)+)", text)
+        self.assertGreaterEqual(len(blocks), 2)
+        for block in blocks:
+            folders = [line.strip() for line in block.splitlines()]
+            with self.subTest(folders=folders), tempfile.TemporaryDirectory() as temporary:
+                source = Path(temporary) / "source"
+                for folder in folders:
+                    shutil.copytree(ROOT / folder, source / folder,
+                                    ignore=shutil.ignore_patterns("__pycache__", "node_modules", ".venv"))
+                completed = subprocess.run(
+                    [sys.executable, "-I", "-S", "-c",
+                     "import sys; sys.path.insert(0, sys.argv[1]); import smoke_desktop, build_amane_runtime",
+                     str(source / "scripts")],
+                    capture_output=True, text=True, encoding="utf-8", timeout=60)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+
 class R2ReleaseTests(unittest.TestCase):
     def test_publication_preserves_existing_index_and_verifies_published_metadata(self):
         module = load_script("release_r2")

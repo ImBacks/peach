@@ -194,6 +194,7 @@ jobs:
           path: source
           sparse-checkout: |
             scripts
+            src/peach
             tools/amane-bridge
       - uses: actions/download-artifact@v8
         with:
@@ -362,6 +363,7 @@ jobs:
           path: source
           sparse-checkout: |
             scripts
+            src/peach
             tools/amane-bridge
       - uses: actions/download-artifact@v8
         with:
