@@ -2,18 +2,13 @@ import { esc } from '../core';
 import { setActionBusy } from '../ui-kit/controls';
 import { spinnerHtml } from '../ui-kit/markup';
 import { t } from '../i18n';
-import { showServerPath, type ServerPathReply } from '../react/components/server-path-dialog';
-
-export async function completeReveal(result: unknown, success: () => void): Promise<void> {
-  const reply = result as (ServerPathReply & { mode?: string }) | undefined;
-  if (reply?.mode === 'server' && reply.path) await showServerPath(reply);
-  else success();
-}
 
 export interface SourceActionPorts {
   request(id: number): Promise<unknown>;
   success(): void;
   failureText(error: unknown): string;
+  /** 按定位回执收尾（服务端部署弹出路径）；不给就直接 `success()`。由调用方从 React 侧注入，本模块不引用 React 组件。 */
+  complete?(result: unknown, success: () => void): Promise<void>;
 }
 export interface SourceActionStatus { textContent: string | null }
 export interface SourceActionOptions { button?: HTMLElement | null }
@@ -31,7 +26,8 @@ export function createRevealSourceAction(ports: SourceActionPorts) {
     try {
       const result = await ports.request(id);
       status.textContent = '';
-      await completeReveal(result, ports.success);
+      if (ports.complete) await ports.complete(result, ports.success);
+      else ports.success();
     } catch (error) {
       status.textContent = ports.failureText(error);
     } finally {

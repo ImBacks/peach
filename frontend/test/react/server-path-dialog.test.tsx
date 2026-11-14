@@ -1,7 +1,6 @@
 import { act } from 'react';
 import { expect, it, vi } from 'vitest';
-import { pickServerFolder, showServerPath } from '../../src/react/components/server-path-dialog';
-import { completeReveal } from '../../src/application/source-action';
+import { completeReveal, pickServerFolder, showServerPath } from '../../src/react/components/server-path-dialog';
 import { buttonNamed, click, settle, type } from './render';
 
 it('桌面选择直接沿用系统结果，服务端选择支持取消与只读浏览', async () => {

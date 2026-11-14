@@ -143,3 +143,10 @@ export function showServerPath(reply: ServerPathReply): Promise<void> {
     </div>
   </PathModalFrame>);
 }
+
+/** 定位回执收尾：服务端部署弹出路径，桌面部署照常 `success()`。 */
+export async function completeReveal(result: unknown, success: () => void): Promise<void> {
+  const reply = result as (ServerPathReply & { mode?: string }) | undefined;
+  if (reply?.mode === 'server' && reply.path) await showServerPath(reply);
+  else success();
+}

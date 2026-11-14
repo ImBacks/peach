@@ -1,4 +1,5 @@
 import { createRevealSourceAction } from './source-action';
+import { completeReveal } from '../react/components/server-path-dialog';
 import { emptyEntityFilters, parseEntityFilters, entityFilterSearch, parseMediaView, entityViewSearch } from '../react/entity-page/entity-route';
 import { photoViewActive as hasPhotoView } from '../react/entity-page/photo-surface';
 import { createEntityApplication } from '../react/entity-page/entity-application';
@@ -76,6 +77,7 @@ export function setPhotoSize(value){entityState.photos.setSize(value)}
 export const revealSource = createRevealSourceAction({
   request:id=>api('/api/reveal',{method:'POST',body:JSON.stringify({id})}),
   success:()=>receiptsState.toast({text:t('shell:sourceTools.revealed')}),
+  complete:completeReveal,
   failureText:error=>entityState.sourceHint(error instanceof Error?error.message:String(error)),
 });
 

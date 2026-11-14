@@ -1,6 +1,6 @@
 import { initialCatalogFilters, resetCatalogFilters, homeCatalogState, homePath as pathForCatalog, onlineDefaultLoc as defaultLocations, resolveSort } from '../react/catalog-grid/catalog-state';
 import { CatalogController } from '../react/catalog-grid/catalog-controller';
-import { completeReveal } from './source-action';
+import { completeReveal } from '../react/components/server-path-dialog';
 import { nextRating, ratingStars } from '../react/components/rating-values';
 /* catalog 域控制器：本域状态与动作，启动由 Application 的生命周期统一安装。 */
 import { censorOn, preferencesState, refreshAll, replaceCatalogAddress, sidebarFacets, wireDrag } from './preferences.js';
