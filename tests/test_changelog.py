@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from peach.release_updates import changelog_notes
 from scripts import changelog
 from scripts.changelog import Commit, entry_for, group_entries, has_section, promote, render_body
 from scripts.version_bump import VersionError
@@ -364,6 +365,36 @@ class NotesTests(unittest.TestCase):
             "Lead. / 导语。\n\n### Fixed / 修复\n\n- **Interface**: Pages A/B fixed (#1). / **界面**：甲／乙页修好（#1）。")
         self.assertEqual(english, "Lead.\n\n### Fixed\n\n- **Interface**: Pages A/B fixed (#1).")
         self.assertEqual(chinese, "导语。\n\n### 修复\n\n- **界面**：甲／乙页修好（#1）。")
+
+    def test_patch_highlights_include_selected_fixes_and_urgent_changes(self):
+        unreleased = DOCUMENT.replace(f"- {FIXED}", f"- {FIXED}\n"
+                                      "- **Playback**: Restore resume. / **播放**：恢复续播。"
+                                      + changelog.HIGHLIGHT_MARKER)
+        unreleased = unreleased.replace("## [0.27.1]", "### Security / 安全\n\n"
+                                       "- **Settings**: Protect saved tokens (#5). / **配置**：保护已保存的令牌（#5）。\n\n"
+                                       "### Breaking / 破坏性变化\n\n"
+                                       "- **Library**: Back up storage before upgrading (#6). / **馆藏**：升级前备份存储（#6）。\n\n"
+                                       "## [0.27.1]")
+        reference = mock.Mock(return_value="8")
+        released = promote(unreleased, "0.63.1", date="2026-11-28", repo=REPO,
+                           previous="v0.63.0", reference=reference)
+        reference.assert_any_call("- **Playback**: Restore resume. / **播放**：恢复续播。")
+        changelog.require_labeled_entries(released, "0.63.1")
+        body = changelog.notes(released, "0.63.1")
+        self.assertNotIn(changelog.HIGHLIGHT_MARKER, body)
+        self.assertIn("### Fixed\n\n- **Interface**: Busy hints say what is running (#8).", body)
+        self.assertEqual(changelog_notes(body), {
+            "en": [
+                {"title": "Settings", "text": "Protect saved tokens (#5)."},
+                {"title": "Library", "text": "Back up storage before upgrading (#6)."},
+                {"title": "Playback", "text": "Restore resume (#8)."},
+            ],
+            "zh-CN": [
+                {"title": "配置", "text": "保护已保存的令牌（#5）。"},
+                {"title": "馆藏", "text": "升级前备份存储（#6）。"},
+                {"title": "播放", "text": "恢复续播（#8）。"},
+            ],
+        })
 
     def test_a_version_without_a_section_cannot_be_released(self):
         with self.assertRaisesRegex(VersionError, "0.28.0"):

@@ -1,8 +1,8 @@
 """每个发布版本给使用者看的更新公告；不是变更日志的副本。
 
 一版一条，只写使用者需要知道的：新入口、更新后自动进行的事、需要自己动手的事。每条说明一句短话；
-修复与完整清单留给 Release 页的变更日志。`features` 同时是 Release 正文开头的重点（`scripts/changelog.py`
-的 `highlights()`），旧版本检查更新时只显示这一组。
+修复与完整清单留给 Release 页的变更日志。`features` 也会列入 Release 正文的重点（`scripts/changelog.py`
+的 `highlights()`）。发布说明中的重要修复独立选入重点，应用检查更新时显示这一组。
 
 放哪些条目（0.58.0 起由 `tests/test_release_updates.py` 检查）：
 - `features` 只放使用者一打开就能明显感知的变化：新入口、默认行为变了、换了用法。修复、提速、内部改进、

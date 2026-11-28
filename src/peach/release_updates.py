@@ -135,7 +135,7 @@ def changelog_notes(body: object) -> dict | None:
     """Release 正文里这一版的重点，英文与中文各一份（格式见 `scripts/changelog.py`）。
 
     英文是正文，中文在「简体中文」折叠段里；重点分组之外的完整变更不显示，去 Release 页看。
-    没有重点分组的版本（只有修复，或 0.59.0 之前的旧正文）返回 None。
+    没有重点分组的版本返回 None。
     """
     if not isinstance(body, str) or not body.strip():
         return None

@@ -57,6 +57,7 @@ SEPARATOR = " / "
 CHINESE_SUMMARY = release_words.CHINESE_SUMMARY
 DOWNLOADS_SUMMARY = release_words.DOWNLOAD_SUMMARIES
 HIGHLIGHTS = release_words.HIGHLIGHTS
+HIGHLIGHT_MARKER = " <!-- release-highlight -->"
 
 #: Conventional Commits 的主题形状：`type(scope)!: 描述`。
 SUBJECT = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s*(?P<text>.+)$")
@@ -185,6 +186,7 @@ def _label(scope: str, text: str) -> str:
 
 def split(line: str) -> tuple[str, str]:
     """一行双语文字按第一个 ` / ` 拆成（英文，中文）；没有分隔的两边相同。"""
+    line = line.removesuffix(HIGHLIGHT_MARKER)
     english, found, chinese = line.partition(SEPARATOR)
     return (english.strip(), chinese.strip()) if found else (line.strip(), line.strip())
 
@@ -310,7 +312,7 @@ def require_labeled_entries(document: str, version: str) -> None:
     不能把提交 scope 或 `TODO` 直接发给使用者。全部已发布版本的条目都不超过长度上限，改旧版本时也守住。"""
     lines = [line for line in section_of(document, version).splitlines() if line.strip()]
     entries = [line for line in lines if line.startswith("- ")]
-    matched = [(line, ENTRY.match(line)) for line in entries]
+    matched = [(line, ENTRY.match(line.removesuffix(HIGHLIGHT_MARKER))) for line in entries]
     _refuse("changelog.unlabeledEntries", [line for line, found in matched
                                            if found is None or found["area"] not in AREAS
                                            or AREAS[found["area"]] != found["english_area"]], version=version)
@@ -453,20 +455,35 @@ def fold(summary: str, body: str) -> str:
     return f"<details>\n<summary>{summary}</summary>\n\n{body.strip()}\n\n</details>"
 
 
-def highlights(version: str) -> tuple[str, str] | None:
-    """这一版升级公告的 `features` 写成英文、中文两段重点；没有公告条目时返回 None。
+def highlights(version: str, section: str) -> tuple[str, str] | None:
+    """重点包含破坏性变化、安全条目、标记的变更和升级公告的 `features`。
 
     每条是 `- **标题**: 说明 (#1).`，带 `refs` 的在句末附编号，GitHub 会把编号显示成链接。
     """
+    urgent_headings = {f"### {group}{SEPARATOR}{GROUPS[group]}" for group in URGENT}
+    urgent, selected = [], []
+    heading = ""
+    for line in section.splitlines():
+        if line.startswith("### "):
+            heading = line
+        elif ENTRY.match(line.removesuffix(HIGHLIGHT_MARKER)):
+            if heading in urgent_headings:
+                urgent.append(line)
+            elif line.endswith(HIGHLIGHT_MARKER):
+                selected.append(line)
+    important = bilingual("\n".join(urgent + selected))
     features = release_notices.NOTICES.get(version, {}).get("features") or []
-    if not features:
+    if not (urgent or selected or features):
         return None
     base = f"server:releaseNotes.v{version.replace('.', '-')}.items"
     parts = []
-    for language, heading, colon, refs, end in (("en", HIGHLIGHTS[0], ": ", " ({})", "."),
-                                                ("zh-CN", HIGHLIGHTS[1], "：", "（{}）", "。")):
+    for (language, heading, colon, refs, end), entries in zip(
+        (("en", HIGHLIGHTS[0], ": ", " ({})", "."), ("zh-CN", HIGHLIGHTS[1], "：", "（{}）", "。")),
+        important, strict=True,
+    ):
         joiner = ", " if language == "en" else "、"
         lines = [f"### {heading}", ""]
+        lines.extend(entries.splitlines())
         for item in features:
             title = interface_text.text(f"{base}.{item['id']}.title", language=language)
             body = interface_text.text(f"{base}.{item['id']}.body", language=language)
@@ -488,7 +505,7 @@ def _before_groups(section: str, inserted: str) -> str:
 def notes(document: str, version: str, downloads: tuple[str, str] | None = None) -> str:
     """Release 页的正文，按语言分开：外面是英文更新说明与折叠的 Downloads，中文更新说明与折叠的
     「下载」一起放进折叠的「简体中文」段，末尾是到上一版的完整变更链接。更新说明在开头说明段之后
-    先列这一版公告的重点（`highlights()`），检查更新只显示这一组。
+    先列这一版的重点（`highlights()`），检查更新只显示这一组。
 
     `downloads` 是下载段的（英文，中文），由 `package_windows_release.download_sections()` 生成。
     使用者在 GitHub 上读到的就是这段，所以那一节或它的链接缺了不能静默发一段固定文案顶上，
@@ -501,7 +518,7 @@ def notes(document: str, version: str, downloads: tuple[str, str] | None = None)
     if link is None:
         raise version_bump.VersionError(t("changelog.noLinkForNotes", file=CHANGELOG, version=version))
     english, chinese = bilingual(section)
-    picked = highlights(version)
+    picked = highlights(version, section)
     if picked:
         english, chinese = _before_groups(english, picked[0]), _before_groups(chinese, picked[1])
     if downloads:
@@ -537,13 +554,14 @@ def regroup(body: str) -> str:
 
 def with_reference(line: str, number: str) -> str:
     """给一条没有来源编号的条目两半句末补上 `#编号`，放在句号之前。"""
-    found = ENTRY.match(line)
+    entry = line.removesuffix(HIGHLIGHT_MARKER)
+    found = ENTRY.match(entry)
     if found is None:
         return line
     english, chinese = found["english"].rstrip(), found["chinese"].rstrip()
     english = f"{english[:-1]} (#{number})." if english.endswith(".") else f"{english} (#{number})"
     chinese = f"{chinese[:-1]}（#{number}）。" if chinese.endswith("。") else f"{chinese}（#{number}）"
-    return f"- **{found['english_area']}**: {english}{SEPARATOR}**{found['area']}**：{chinese}"
+    return f"- **{found['english_area']}**: {english}{SEPARATOR}**{found['area']}**：{chinese}{line[len(entry):]}"
 
 
 def merged_reference(root: Path, line: str) -> str | None:
@@ -568,7 +586,7 @@ def cite_entries(body: str, reference) -> str:
         found = ENTRY.match(line)
         if found is None or cited(found["english"]) or cited(found["chinese"]):
             continue
-        number = reference(line) if reference else None
+        number = reference(line.removesuffix(HIGHLIGHT_MARKER)) if reference else None
         if number is None:
             missing.append(line)
         else:
